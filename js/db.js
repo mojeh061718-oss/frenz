@@ -102,14 +102,19 @@ const DB = {
 };
 
 /* settings live in localStorage */
+const DEFAULT_SETTINGS = {
+  provider: 'anthropic',            // 'anthropic' | 'ollama' | 'openai'
+  apiKey: '', model: 'claude-opus-5', effort: 'low',
+  ollamaUrl: 'http://localhost:11434', ollamaModel: '',
+  oaiBaseUrl: '', oaiModel: '', oaiKey: '',
+  contextTokens: 8000               // history budget for non-Anthropic providers
+};
+
 const Settings = {
   get() {
     try {
-      return Object.assign(
-        { apiKey: '', model: 'claude-opus-5', effort: 'low' },
-        JSON.parse(localStorage.getItem('frenz-settings') || '{}')
-      );
-    } catch { return { apiKey: '', model: 'claude-opus-5', effort: 'low' }; }
+      return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem('frenz-settings') || '{}'));
+    } catch { return Object.assign({}, DEFAULT_SETTINGS); }
   },
   set(s) { localStorage.setItem('frenz-settings', JSON.stringify(s)); }
 };
