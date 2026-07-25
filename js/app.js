@@ -179,6 +179,7 @@ async function startConversation(e) {
     backstory: $('#c-backstory').value.trim(),
     userName: $('#c-username').value.trim(),
     userGender: $('#c-usergender').value,
+    plist: t.plist || '',
     color: t.color
   };
   localStorage.setItem('frenz-user-name', profile.userName);
@@ -200,7 +201,15 @@ async function startConversation(e) {
     lastActivity: Date.now(),
     lastPreview: ''
   };
+
+  // Her opening text seeds the register — the model picks up style and length
+  // from the first message more than from anything else.
+  const greeting = t.greeting || [];
+  if (greeting.length) friend.lastPreview = greeting[greeting.length - 1];
   await DB.saveFriend(friend);
+  for (const g of greeting) {
+    await DB.addMessage({ friendId: friend.id, role: 'assistant', text: g, ts: Date.now() });
+  }
   await renderFriendsList();
   customizeTemplate = null;
   openChat(friend.id);
@@ -268,6 +277,7 @@ async function saveFriendFromForm(e) {
   let friend;
   if (editingId) {
     friend = await DB.getFriend(editingId);
+    profile.plist = friend.profile.plist || ''; // keep the compact trait list templates carry
     friend.profile = profile;
   } else {
     friend = {
@@ -351,8 +361,8 @@ async function sendMessage() {
   if (!text) return;
 
   const settings = Settings.get();
-  if (!settings.apiKey) {
-    toast('Add your Anthropic API key in Settings first');
+  if (!ClaudeAPI.activeEntries(settings).length) {
+    toast('No provider configured — add a key in Settings');
     showView('view-settings');
     return;
   }
@@ -365,6 +375,10 @@ async function sendMessage() {
   const friend = currentFriend;
   const priorMsgs = await DB.getMessages(friend.id);
   const lastTs = priorMsgs.length ? priorMsgs[priorMsgs.length - 1].ts : null;
+
+  // a multi-day silence cools her comfort a little before we even ask —
+  // she noticed the absence
+  if (lastTs) ClaudeAPI.applyAbsenceDrift(friend, Date.now() - lastTs);
 
   // show + persist the user's message
   const startHint = $('#chat-start-hint');
@@ -415,24 +429,47 @@ async function sendMessage() {
       await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
     }
 
-    // save the friend's private state — persisted, never displayed
+    // apply the friend's private state deltas — the model proposes, the app
+    // disposes (clamps, dampens, gates, caps). Persisted, never displayed.
+    // A missing state simply carries the previous state forward unchanged.
     if (result.state) {
-      friend.state = {
-        mood: result.state.mood,
-        comfort: result.state.comfort,
-        closeness: result.state.closeness,
-        attraction: result.state.attraction,
-        opinion_notes: result.state.opinion_notes
-      };
+      const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, {
+        history,
+        gapMs: lastTs ? Date.now() - lastTs : null
+      });
+      friend.state = outcome.state;
+      // every delta + reason lands in the ledger — the debugging window
+      DB.addEvent(Object.assign({ friendId: friend.id, ts: Date.now() }, outcome.event)).catch(() => {});
       if (result.state.new_memories.length) {
-        // Memories are the friend's long-term memory of him — never trimmed.
-        friend.memories = (friend.memories || []).concat(result.state.new_memories);
+        const now = Date.now();
+        friend.memories = (friend.memories || []).concat(
+          result.state.new_memories.map(m => Object.assign({ ts: now, lastAccessed: now, pinned: false }, m))
+        );
       }
     }
     friend.lastActivity = Date.now();
     friend.lastPreview = result.bubbles.length ? result.bubbles[result.bubbles.length - 1] : text;
     await DB.saveFriend(friend);
     renderFriendsList();
+
+    // fold old chapters into an immutable scene record when enough history
+    // has slipped past the context window — fire-and-forget, best-effort
+    const fullLen = history.length + result.bubbles.length;
+    if (ClaudeAPI.sceneStale(friend, fullLen)) {
+      const fullHistory = history.concat(result.bubbles.map(b => ({ role: 'assistant', text: b })));
+      ClaudeAPI.recordScene(friend, fullHistory, settings).then(async (rec) => {
+        if (!rec) return;
+        const f = await DB.getFriend(friend.id);
+        if (!f) return;
+        f.scenes = (f.scenes || []).concat([rec.scene]);
+        f.scenesCovered = rec.covered;
+        await DB.saveFriend(f);
+        if (currentFriend && currentFriend.id === f.id) {
+          currentFriend.scenes = f.scenes;
+          currentFriend.scenesCovered = f.scenesCovered;
+        }
+      }).catch(() => { /* next turn will try again */ });
+    }
   } catch (err) {
     $('#typing').classList.add('hidden');
     toast(err.message || 'Something went wrong', 5000);
@@ -443,24 +480,155 @@ async function sendMessage() {
   }
 }
 
-/* ---------------- settings ---------------- */
+/* ---------------- settings: provider pool ---------------- */
+
+let poolDraft = null;       // working copy of the provider list while settings are open
+let selectedEntryId = null; // pool entry being edited
+
+function draftEntry(id) {
+  return (poolDraft || []).find(e => e.id === id) || null;
+}
 
 function openSettings() {
   const s = Settings.get();
+  poolDraft = JSON.parse(JSON.stringify(s.pool));
+  selectedEntryId = null;
   $('#s-apikey').value = s.apiKey;
   $('#s-model').value = s.model;
   $('#s-effort').value = s.effort;
+  $('#entry-editor').classList.add('hidden');
+  $('#e-test-result').textContent = '';
+  renderPool();
+  renderPoolStatus();
   showView('view-settings');
 }
 
 function saveSettings() {
-  Settings.set({
-    apiKey: $('#s-apikey').value.trim(),
-    model: $('#s-model').value,
-    effort: $('#s-effort').value
-  });
+  const s = Settings.get();
+  s.apiKey = $('#s-apikey').value.trim();
+  s.model = $('#s-model').value;
+  s.effort = $('#s-effort').value;
+  if (poolDraft) s.pool = poolDraft;
+  Settings.set(s);
   toast('Settings saved');
   showView('view-friends');
+}
+
+function renderPool() {
+  const list = $('#pool-list');
+  list.innerHTML = '';
+  poolDraft.forEach((e, i) => {
+    const row = document.createElement('div');
+    row.className = 'pool-row' + (e.id === selectedEntryId ? ' selected' : '');
+    const info = ClaudeAPI.usageInfo(e);
+    let sub;
+    if (e.kind === 'anthropic') {
+      sub = $('#s-apikey').value.trim() ? $('#s-model').value : 'no key yet — add it below';
+    } else {
+      sub = e.model || 'not configured yet';
+    }
+    if (info.rpdHint) sub += ` · ${info.requestsToday}/${info.rpdHint} today`;
+    else if (info.requestsToday) sub += ` · ${info.requestsToday} today`;
+    if (info.blockedUntil) sub += ' · capped until ' + fmtTime(info.blockedUntil);
+    row.innerHTML = `
+      <input type="checkbox" ${e.enabled ? 'checked' : ''} title="Enabled">
+      <div class="pool-meta">
+        <div class="pool-name">${escapeHtml(e.label || e.id)}</div>
+        <div class="pool-sub">${escapeHtml(sub)}</div>
+      </div>
+      <div class="pool-actions">
+        <button type="button" class="icon-btn" data-act="up" title="Higher priority">↑</button>
+        <button type="button" class="icon-btn" data-act="down" title="Lower priority">↓</button>
+        ${e.kind === 'anthropic' ? '' : '<button type="button" class="icon-btn" data-act="edit" title="Configure">⚙</button>'}
+      </div>`;
+    row.querySelector('input[type=checkbox]').addEventListener('change', (ev) => { e.enabled = ev.target.checked; });
+    row.querySelector('[data-act=up]').addEventListener('click', () => movePoolEntry(i, -1));
+    row.querySelector('[data-act=down]').addEventListener('click', () => movePoolEntry(i, 1));
+    const edit = row.querySelector('[data-act=edit]');
+    if (edit) edit.addEventListener('click', () => openEntryEditor(e.id));
+    list.appendChild(row);
+  });
+}
+
+function movePoolEntry(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= poolDraft.length) return;
+  const [e] = poolDraft.splice(i, 1);
+  poolDraft.splice(j, 0, e);
+  renderPool();
+}
+
+function addPreset(name) {
+  const preset = ClaudeAPI.POOL_PRESETS[name];
+  if (!preset) return;
+  const entry = {
+    id: uid(),
+    kind: preset.kind,
+    label: preset.label,
+    baseUrl: preset.baseUrl,
+    apiKey: '',
+    model: '',
+    contextTokens: preset.contextTokens,
+    enabled: true
+  };
+  if (name !== 'custom') entry.preset = name;
+  poolDraft.push(entry);
+  renderPool();
+  openEntryEditor(entry.id);
+}
+
+function openEntryEditor(id) {
+  selectedEntryId = id;
+  const e = draftEntry(id);
+  if (!e) return;
+  const preset = e.preset ? ClaudeAPI.POOL_PRESETS[e.preset] : null;
+  $('#entry-editor').classList.remove('hidden');
+  $('#e-label').value = e.label || '';
+  $('#e-url').value = e.baseUrl || '';
+  $('#e-key').value = e.apiKey || '';
+  $('#e-keyhint').textContent = preset ? preset.keyHint : (e.kind === 'ollama' ? 'No key needed.' : 'Some local endpoints need no key.');
+  $('#e-key-label').classList.toggle('hidden', e.kind === 'ollama');
+  $('#e-model').value = e.model || '';
+  $('#e-ctx').value = e.contextTokens || 8000;
+  $('#e-test-result').textContent = '';
+  renderPool();
+  if (e.kind === 'openai' && e.baseUrl) refreshEntryModels(!e.model);
+}
+
+async function refreshEntryModels(pickDefault) {
+  const e = draftEntry(selectedEntryId);
+  if (!e || e.kind !== 'openai' || !e.baseUrl) return;
+  let models;
+  try { models = await ClaudeAPI.listModels(e.baseUrl, e.apiKey); }
+  catch { models = ClaudeAPI.FALLBACK_OAI_MODELS; }
+  if (!models.length) models = ClaudeAPI.FALLBACK_OAI_MODELS;
+  const dl = $('#e-models');
+  dl.innerHTML = '';
+  for (const m of models) {
+    const o = document.createElement('option');
+    o.value = m.id;
+    dl.appendChild(o);
+  }
+  if ((pickDefault || !e.model) && models.length) {
+    e.model = ClaudeAPI.pickDefaultModel(models, e.preset);
+    $('#e-model').value = e.model;
+    renderPool();
+  }
+}
+
+function renderPoolStatus() {
+  const parts = [];
+  const last = ClaudeAPI.lastServed();
+  if (last) parts.push('Last message served by ' + last.label + '.');
+  for (const e of poolDraft) {
+    if (e.kind === 'anthropic') continue;
+    const info = ClaudeAPI.usageInfo(e);
+    if (info.requestsToday || info.rpdHint) {
+      parts.push(`${e.label}: ${info.requestsToday}${info.rpdHint ? ' of ~' + info.rpdHint : ''} requests today.`);
+    }
+  }
+  parts.push('Free-tier limits change without warning — the app reads each provider\'s live rate-limit headers and adapts rather than trusting fixed numbers.');
+  $('#pool-status').textContent = parts.join(' ');
 }
 
 async function exportBackup() {
@@ -515,6 +683,56 @@ function init() {
   $('#btn-settings').addEventListener('click', openSettings);
   $('#btn-settings-back').addEventListener('click', () => showView('view-friends'));
   $('#btn-save-settings').addEventListener('click', saveSettings);
+
+  // provider pool editor
+  document.querySelectorAll('.btn-preset').forEach(b => {
+    b.addEventListener('click', () => addPreset(b.dataset.preset));
+  });
+  $('#e-label').addEventListener('input', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) { e.label = $('#e-label').value.trim() || e.label; renderPool(); }
+  });
+  $('#e-url').addEventListener('change', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) { e.baseUrl = $('#e-url').value.trim(); refreshEntryModels(!e.model); }
+  });
+  $('#e-key').addEventListener('change', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) { e.apiKey = $('#e-key').value.trim(); if (e.kind === 'openai') refreshEntryModels(!e.model); }
+  });
+  $('#e-model').addEventListener('input', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) { e.model = $('#e-model').value.trim(); renderPool(); }
+  });
+  $('#e-ctx').addEventListener('input', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) e.contextTokens = parseInt($('#e-ctx').value, 10) || 8000;
+  });
+  $('#btn-test-entry').addEventListener('click', async () => {
+    const e = draftEntry(selectedEntryId);
+    if (!e) return;
+    const out = $('#e-test-result');
+    out.textContent = 'Testing…';
+    try {
+      const r = await ClaudeAPI.testConnection(e, Settings.get());
+      out.textContent = r.message;
+      // never discover a too-small window mid-conversation: shrink the budget
+      // to the detected context if needed
+      if (r.context && r.context < (parseInt($('#e-ctx').value, 10) || 8000)) {
+        e.contextTokens = Math.max(2000, r.context - 1024);
+        $('#e-ctx').value = e.contextTokens;
+        out.textContent += ' · budget lowered to fit';
+      }
+    } catch (err) {
+      out.textContent = '✗ ' + err.message;
+    }
+  });
+  $('#btn-remove-entry').addEventListener('click', () => {
+    poolDraft = poolDraft.filter(e => e.id !== selectedEntryId);
+    selectedEntryId = null;
+    $('#entry-editor').classList.add('hidden');
+    renderPool();
+  });
   $('#btn-export').addEventListener('click', exportBackup);
   $('#btn-import').addEventListener('click', () => $('#import-file').click());
   $('#import-file').addEventListener('change', async (e) => {

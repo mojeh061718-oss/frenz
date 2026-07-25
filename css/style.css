@@ -78,6 +78,27 @@ body {
 }
 @media (max-width: 680px) { .fab { right: 20px; } }
 
+/* ---------- provider pool (settings) ---------- */
+.pool-list { display: flex; flex-direction: column; gap: 8px; }
+.pool-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg2); border: 1px solid #232838; border-radius: 12px;
+  padding: 10px 12px;
+}
+.pool-row.selected { border-color: var(--accent); }
+.pool-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); flex-shrink: 0; }
+.pool-meta { flex: 1; min-width: 0; }
+.pool-name { font-weight: 600; font-size: 0.95rem; }
+.pool-sub { color: var(--muted); font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.pool-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.pool-actions .icon-btn { font-size: 0.95rem; padding: 4px 6px; min-width: 30px; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.preset-row .btn-secondary { padding: 8px 12px; font-size: 0.85rem; }
+.entry-editor {
+  display: flex; flex-direction: column; gap: 14px;
+  background: var(--bg2); border: 1px solid #2b3247; border-radius: 14px; padding: 14px;
+}
+
 /* ---------- template gallery ---------- */
 .template-gallery {
   padding: 14px 14px calc(30px + var(--safe-bottom));

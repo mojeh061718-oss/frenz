@@ -2,7 +2,7 @@
    internal state live in IndexedDB on this device only. */
 
 const DB_NAME = 'frenz';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const DB = {
   _db: null,
@@ -19,6 +19,12 @@ const DB = {
         if (!db.objectStoreNames.contains('messages')) {
           const ms = db.createObjectStore('messages', { keyPath: 'id', autoIncrement: true });
           ms.createIndex('byFriend', 'friendId', { unique: false });
+        }
+        if (!db.objectStoreNames.contains('events')) {
+          // state-delta ledger: every applied delta + reason, for debugging,
+          // later rollups, and recomputing state if curves are retuned
+          const ev = db.createObjectStore('events', { keyPath: 'id', autoIncrement: true });
+          ev.createIndex('byFriend', 'friendId', { unique: false });
         }
       };
       req.onsuccess = () => { this._db = req.result; resolve(this._db); };
@@ -65,6 +71,12 @@ const DB = {
     });
   },
 
+  // ---- state-delta event ledger ----
+  addEvent(ev) { return this._tx('events', 'readwrite', s => s.add(ev)); },
+  getEvents(friendId) {
+    return this._tx('events', 'readonly', s => s.index('byFriend').getAll(friendId));
+  },
+
   // ---- backup ----
   async exportAll() {
     const friends = await this.listFriends();
@@ -92,9 +104,10 @@ const DB = {
   async wipe() {
     const db = await this.open();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['friends', 'messages'], 'readwrite');
+      const tx = db.transaction(['friends', 'messages', 'events'], 'readwrite');
       tx.objectStore('friends').clear();
       tx.objectStore('messages').clear();
+      tx.objectStore('events').clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
