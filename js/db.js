@@ -101,20 +101,32 @@ const DB = {
   }
 };
 
-/* settings live in localStorage */
+/* settings live in localStorage.
+
+   Providers are a POOL, not a picker: an ordered list of entries tried top to
+   bottom, with automatic failover on rate limits / daily caps / outages (never
+   on a content refusal — that's the provider's call and it stands). The
+   Anthropic entry's credentials live in the top-level apiKey/model/effort
+   fields; free-pool entries carry their own config. */
 const DEFAULT_SETTINGS = {
-  provider: 'anthropic',            // 'anthropic' | 'ollama' | 'openai'
   apiKey: '', model: 'claude-opus-5', effort: 'low',
-  ollamaUrl: 'http://localhost:11434', ollamaModel: '',
-  oaiBaseUrl: '', oaiModel: '', oaiKey: '',
-  contextTokens: 8000               // history budget for non-Anthropic providers
+  pool: [
+    { id: 'anthropic', kind: 'anthropic', label: 'Anthropic (Claude)', enabled: true }
+  ]
 };
 
 const Settings = {
   get() {
-    try {
-      return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem('frenz-settings') || '{}'));
-    } catch { return Object.assign({}, DEFAULT_SETTINGS); }
+    let stored;
+    try { stored = JSON.parse(localStorage.getItem('frenz-settings') || '{}'); } catch { stored = {}; }
+    const s = Object.assign({}, DEFAULT_SETTINGS, stored);
+    if (!Array.isArray(s.pool) || !s.pool.length) {
+      s.pool = DEFAULT_SETTINGS.pool.map(e => Object.assign({}, e));
+    }
+    if (!s.pool.some(e => e.kind === 'anthropic')) {
+      s.pool.unshift({ id: 'anthropic', kind: 'anthropic', label: 'Anthropic (Claude)', enabled: true });
+    }
+    return s;
   },
   set(s) { localStorage.setItem('frenz-settings', JSON.stringify(s)); }
 };
