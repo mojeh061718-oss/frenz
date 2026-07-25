@@ -613,7 +613,7 @@ const ClaudeAPI = {
     } else if (h >= 17) {
       flavor = ' The workday is done — texting is leisure now: more time, more warmth, more play than midday.';
     } else {
-      flavor = ' Daytime texting: squeezed between things, lighter and quicker — the loaded stuff mostly waits for later.';
+      flavor = ' Daytime texting: squeezed between things, so the PACE is quicker and lighter — but pace is not a gate. The same person is in there, and a line that lands, lands at noon too; big conversations just tend to get their full airtime later.';
     }
     return `It's ${clock} on a ${wd}.` + flavor;
   },
