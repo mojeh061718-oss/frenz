@@ -320,6 +320,67 @@ async function openChat(friendId) {
   await renderMessages();
   showView('view-chat');
   scrollChat(false);
+  maybeOpener(currentFriend);
+}
+
+/* Some days, when he opens a chat after a real gap, she's already typing —
+   she texts FIRST, seeded from her day, her life, and hanging threads.
+   Fire-and-forget; any failure is silent (the chat is simply as he left it). */
+async function maybeOpener(friend) {
+  if (sending) return;
+  try {
+    const msgs = await DB.getMessages(friend.id);
+    const last = msgs[msgs.length - 1];
+    if (!ClaudeAPI.openerDue(friend, msgs)) return;
+    // mark first so a slow request can't double-fire
+    friend.lastOpenerDay = ClaudeAPI._dayKey(Date.now());
+    await DB.saveFriend(friend);
+
+    sending = true;
+    $('#typing').classList.remove('hidden');
+    $('#chat-status').textContent = 'typing…';
+    scrollChat();
+
+    const settings = Settings.get();
+    const history = msgs.map(m => ({ role: m.role, text: m.text }));
+    // The nudge rides as an unsaved synthetic turn — it exists only in this
+    // one request, never in stored history.
+    const nudge = { role: 'user', text: ClaudeAPI.openerNudge(Date.now() - last.ts, last.role === 'assistant') };
+    const result = await ClaudeAPI.chat(friend, history.concat([nudge]), settings, last.ts, null);
+    if (!currentFriend || currentFriend.id !== friend.id) {
+      // he left the chat mid-generation — save quietly, no rendering
+      for (const b of result.bubbles) await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
+    } else {
+      $('#typing').classList.add('hidden');
+      for (let i = 0; i < result.bubbles.length; i++) {
+        const b = result.bubbles[i];
+        if (i > 0) {
+          $('#typing').classList.remove('hidden');
+          scrollChat();
+          await new Promise(r => setTimeout(r, Math.min(2200, 400 + b.length * 18)));
+          $('#typing').classList.add('hidden');
+        }
+        $('#chat-messages').appendChild(bubbleEl('assistant', b));
+        refreshTails();
+        scrollChat();
+        await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
+      }
+    }
+    if (result.state) {
+      const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, { history, gapMs: Date.now() - last.ts });
+      friend.state = outcome.state;
+      DB.addEvent(Object.assign({ friendId: friend.id, ts: Date.now() }, outcome.event)).catch(() => {});
+      if (result.state.new_memories.length) ClaudeAPI.mergeMemories(friend, result.state.new_memories);
+    }
+    friend.lastActivity = Date.now();
+    if (result.bubbles.length) friend.lastPreview = result.bubbles[result.bubbles.length - 1];
+    await DB.saveFriend(friend);
+    renderFriendsList();
+  } catch { /* silent — she just didn't text first today */ } finally {
+    sending = false;
+    $('#typing').classList.add('hidden');
+    $('#chat-status').textContent = '';
+  }
 }
 
 async function renderMessages() {
@@ -481,10 +542,8 @@ async function sendMessage() {
       // every delta + reason lands in the ledger — the debugging window
       DB.addEvent(Object.assign({ friendId: friend.id, ts: Date.now() }, outcome.event)).catch(() => {});
       if (result.state.new_memories.length) {
-        const now = Date.now();
-        friend.memories = (friend.memories || []).concat(
-          result.state.new_memories.map(m => Object.assign({ ts: now, lastAccessed: now, pinned: false }, m))
-        );
+        // near-duplicates strengthen the original instead of piling up
+        ClaudeAPI.mergeMemories(friend, result.state.new_memories);
       }
     }
     friend.lastActivity = Date.now();

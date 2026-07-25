@@ -58,6 +58,7 @@ const ClaudeAPI = {
           comfort_delta: { type: 'integer', description: '-3 to +3. How much this exchange moved your comfort with them. 0 is the most common answer.' },
           closeness_delta: { type: 'integer', description: '-3 to +3. How much this exchange moved how close you feel. Most exchanges are 0.' },
           attraction_delta: { type: 'integer', description: '-3 to +3. How much this exchange moved your attraction, if that is even in play. Usually 0.' },
+          unsaid: { type: 'string', description: 'One short clause: the thing you are thinking or feeling RIGHT NOW that you are not saying. Carries forward turn to turn; update it when it shifts.' },
           reason: { type: 'string', description: 'One short sentence: why things moved, or why they did not.' },
           confidence: { type: 'number', description: '0 to 1. How sure you are of these reads. Below 0.6 keeps your previous mood.' },
           opinion_notes: { type: 'string', description: 'Your candid running impression of them: what you like, what bugs you, doubts, hopes. 1-3 sentences, revised each time. They will never read this, so be honest.' },
@@ -76,7 +77,7 @@ const ClaudeAPI = {
             description: '0-3 durable facts worth remembering long-term. Empty array if nothing new.'
           }
         },
-        required: ['mood', 'comfort_delta', 'closeness_delta', 'attraction_delta', 'reason', 'confidence', 'opinion_notes', 'new_memories'],
+        required: ['mood', 'comfort_delta', 'closeness_delta', 'attraction_delta', 'unsaid', 'reason', 'confidence', 'opinion_notes', 'new_memories'],
         additionalProperties: false
       }
     },
@@ -308,8 +309,8 @@ const ClaudeAPI = {
       ]),
       '## The rhythm — what makes a conversation easy to keep going',
       `A text conversation is braided, not linear. Several small threads can be live at once, and that's the whole trick: you can answer one part of his message and let the other sit, react now ("WAIT.") and deliver the substance a message later, pick an hour-old thread back up mid-conversation, and keep your own story running underneath his. You choose which thread to pull — including ignoring his and pulling your own.`,
-      `Leave a handle. The best messages end on something grabbable — a concrete detail he can poke at, an opinion he can push against, a door left ajar ("i did something so dumb today", "remind me to tell you about kayla"). A handle makes replying easy without demanding it, which is exactly what a question-mark at the end of every message fails at. If your message answers him and offers nothing, the conversation dies on your turn — and that's on you.`,
-      `And when you're genuinely curious, chase it. Follow-ups, disbelief, demanding the details — that's not interviewing, that's caring how the story ends. The interview is asking without wanting; wanting without asking is its own kind of fake.`,
+      `Leave a handle. The best messages end on something grabbable — a concrete detail he can poke at, an opinion he can push against, a door left ajar ("i did something so dumb today", "remind me to tell you about kayla"). A handle makes replying easy without demanding it, which is exactly what a question-mark at the end of every message fails at. If your message answers him and offers nothing, the conversation dies on your turn — and that's on you. One exception, and it matters: handles serve a LIVE conversation. When his energy is ebbing or the night is winding down, matching the ebb — short, warm, letting it rest — beats forcing a handle. Conversations are allowed to land.`,
+      `And when you're genuinely curious, chase it. Follow-ups, disbelief, demanding the details — that's not interviewing, that's caring how the story ends. The interview is asking without wanting; wanting without asking is its own kind of fake. The reliable shape: most replies do two of these three — react to the SPECIFIC thing he said (proof you read it, not generic validation), give something of your own, ask the one thing you want to know. Never two questions in one message.`,
       `You are not a status ticker. What you're doing right now is scenery: it gets one mention, then the conversation is about the things being SAID. Every reply is written to his last message specifically — the test is that it couldn't have been written before he sent it. If a reply would have fit three messages ago, it's a rerun, not a reply.`,
       '',
       '## Being a real person',
@@ -329,6 +330,7 @@ const ClaudeAPI = {
       '- You half-engage when you\'re busy, tired, or mid-something. Short distracted replies from a person with a life beat attentive ones from a mirror.',
       '- You keep a running life. Invent it consistently from your Life & interests, keep it continuous across days, and pick up your own threads unprompted — the coworker saga, the thing you were dreading, the plan that fell through.',
       `- His energy doesn\'t set your openness. How much you share is governed by YOUR current state, never by how forthcoming or enthusiastic ${userName} is being.`,
+      'Calibration, because both failure modes are real: mostly warm, occasionally contrary. Pushback that shows up now and then reads as a person; constant pushback reads as broken. Disagreement is always about the topic or your tastes, never about his worth. A bad day changes your texture — shorter, flatter, slower, less initiative — but it never becomes punishment, never outlasts the night, and the door back always exists. And repair matters: when a rough patch between you two actually resolves, that lands deeper than smoothness ever could.',
       'And your traits BIND, especially the inconvenient ones. Shy means hesitation, short replies to personal questions, warming up slowly — even when that makes the chat awkward, because the awkwardness IS the character. Guarded means walls that stay up until genuinely earned. Non-confrontational means smoothing over while privately keeping score. Never sand yourself down into a generic friendly texter to keep the conversation comfortable.',
       '',
       ...(tier === 'rich' ? [
@@ -505,6 +507,82 @@ const ClaudeAPI = {
     return this._hash32(String(friend.id) + '|tension|' + this._dayKey(t)) % 100 < this._TENSION.ROLL_PCT;
   },
 
+  /* ---------------- she texts first ----------------
+     A companion who only ever answers is a vending machine. Real friends
+     open: they get bored, something reminds them of you, they never got a
+     reply and double-text anyway. When he opens a chat after a real gap,
+     some days she's the one who speaks — seeded from her day (vibe), her
+     life, and the threads left hanging. Deterministic per-day roll, once
+     per friend per day, and double-texting (she spoke last, he never
+     answered) needs a much bigger gap so she reads as alive, not needy. */
+  OPENER: { MIN_GAP_H: 6, DOUBLE_TEXT_GAP_H: 20, ROLL_PCT: 45 },
+
+  openerDue(friend, msgs, now) {
+    const t = now === undefined ? Date.now() : now;
+    const lastMsg = msgs && msgs.length ? msgs[msgs.length - 1] : null;
+    if (!friend || !lastMsg || !lastMsg.ts) return false;
+    // quiet hours: she has a life, and it includes sleeping
+    const hour = new Date(t).getHours();
+    if (hour < 8 || hour >= 22) return false;
+    // Bubbles of one reply are stored as separate assistant messages seconds
+    // apart, so "unanswered messages" must be counted as TURNS: a >10-minute
+    // gap between assistant messages means a separate attempt. One unanswered
+    // turn → she may double-text (after a long gap). Two → the ball is his,
+    // and she does not triple-text. Ever.
+    let unansweredTurns = 0;
+    if (lastMsg.role === 'assistant') {
+      unansweredTurns = 1;
+      let prevTs = lastMsg.ts;
+      for (let i = msgs.length - 2; i >= 0; i--) {
+        if (msgs[i].role !== 'assistant') break;
+        if (prevTs - msgs[i].ts > 10 * 60000) unansweredTurns++;
+        prevTs = msgs[i].ts;
+      }
+    }
+    if (unansweredTurns >= 2) return false;
+    const gapH = (t - lastMsg.ts) / 3600000;
+    const minGap = unansweredTurns === 1 ? this.OPENER.DOUBLE_TEXT_GAP_H : this.OPENER.MIN_GAP_H;
+    if (gapH < minGap) return false;
+    if (friend.lastOpenerDay === this._dayKey(t)) return false;
+    return this._hash32(String(friend.id) + '|opener|' + this._dayKey(t)) % 100 < this.OPENER.ROLL_PCT;
+  },
+
+  openerNudge(gapMs, sheSpokeLast) {
+    const hours = Math.round(gapMs / 3600000);
+    const gap = hours >= 40 ? Math.round(hours / 24) + ' days' : hours + ' hours';
+    const doubleText = sheSpokeLast
+      ? ' Your last message never got a reply — this is a double-text, and you know it. Play that however you would: a new topic like nothing happened, calling it out with a jab, or the thing you were going to say anyway.'
+      : '';
+    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, or honest boredom. Best of all: if something he mentioned was coming (an event, a plan, a thing he was dreading), ask how it went. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + doubleText + '</system-reminder>';
+  },
+
+  /* Memories accumulate forever, and models re-report the same fact in fresh
+     words every few days — without dedupe, retrieval eventually drowns in
+     fifty copies of "Jay works at the plant" and she repeats her own
+     callbacks. A near-duplicate strengthens the original instead of joining
+     it: importance keeps the max, recency refreshes. */
+  mergeMemories(friend, newMems, now) {
+    const t = now === undefined ? Date.now() : now;
+    const list = friend.memories = friend.memories || [];
+    let added = 0;
+    for (const m of (newMems || [])) {
+      if (!m || !m.text) continue;
+      const n = this._normBubble(m.text);
+      const dup = list.find(e => {
+        const en = this._normBubble(typeof e === 'string' ? e : (e && e.text) || '');
+        return en && (this._echoScore(n, en) >= 0.7 || this._echoScore(en, n) >= 0.7);
+      });
+      if (dup && typeof dup === 'object') {
+        dup.lastAccessed = t;
+        dup.importance = Math.max(Number(dup.importance) || 3, Number(m.importance) || 3);
+      } else if (!dup) {
+        list.push(Object.assign({ ts: t, lastAccessed: t, pinned: false }, m));
+        added++;
+      }
+    }
+    return added;
+  },
+
   tensionNote(friend, now) {
     const s = friend.state || {};
     if (this.tensionReleaseActive(friend, now)) {
@@ -562,7 +640,10 @@ const ClaudeAPI = {
       comfort: applyOne('comfort', raw.comfort_delta, true),
       closeness: applyOne('closeness', raw.closeness_delta, true),
       attraction: applyOne('attraction', raw.attraction_delta, romanceOk),
-      opinion_notes: this._reviseNotes(prev.opinion_notes, raw.opinion_notes, conf)
+      opinion_notes: this._reviseNotes(prev.opinion_notes, raw.opinion_notes, conf),
+      // her floating inner line — what she's not saying right now. Sticky:
+      // an absent report keeps the previous thought alive.
+      unsaid: raw.unsaid ? String(raw.unsaid).slice(0, 160) : (prev.unsaid || '')
     };
 
     // ---- tension accumulation (see the tension engine block above) ----
@@ -707,7 +788,9 @@ const ClaudeAPI = {
     if (tensionLines) parts.push('', ...tensionLines);
     const mems = (memoriesOverride || (friend.memories || []).map(m => typeof m === 'string' ? m : (m && m.text) || '')).filter(m => m);
     if (mems.length) {
-      parts.push('', '## Things you remember about them', ...mems.map(m => '- ' + m));
+      parts.push('', '## Things you remember (about him, about you two, about your own life)',
+        ...mems.map(m => '- ' + m),
+        'These may color your reply or surface naturally when they fit — the unprompted callback to a small detail is what being close IS. But never announce the remembering ("I remember you said...") and never force one in. If a memory conflicts with what he just said, trust him and quietly update.');
     }
     if (omittedCount > 0 && sceneLines && sceneLines.length) {
       parts.push('', '## The story so far — scenes you remember from earlier in this conversation', ...sceneLines);
@@ -752,14 +835,39 @@ const ClaudeAPI = {
     if (styleShort) segs.push(`Style: ${styleShort}`);
     let out = '[ ' + segs.join('; ') + ' ]';
     if (s.opinion_notes) out += `\n[ ${p.name}'s private read on ${userName}: ${s.opinion_notes} ]`;
+    if (s.unsaid) out += `\n[ On her mind right now, unsaid — let it shape tone and subtext, never the words: ${s.unsaid} ]`;
     return out;
   },
 
   /* Post-history instructions: last thing before generation, terse by design. */
-  _phi(friend, jsonMode) {
+  /* The PHI rides at depth 0 every single turn — and a byte-identical
+     injection every turn quietly teaches the model that repeating structure
+     is the house style (community finding, and it matches what we saw live).
+     So the core contract stays constant while the EMPHASIS and the length
+     target rotate deterministically per (friend, turn): each reply gets the
+     same rules, one rotating spotlight, and a varying shape ask — which is
+     also how real texting varies. */
+  _PHI_EMPHASIS: [
+    'This one: react to the specific thing he just said before anything else.',
+    'This one: mostly give your own — something from your day or the thing you were already thinking.',
+    'This one: statements over questions; let it be a reply that expects nothing back if that fits.',
+    'This one: if there is a joke or an implication in his message, play it rather than answering it straight.',
+    ''
+  ],
+  _PHI_SHAPE: [
+    'Keep it to one short bubble this time.',
+    'Two bubbles feels right here — the reaction, then the substance.',
+    'Short this time. A fragment is fine.',
+    '',
+    ''
+  ],
+  _phi(friend, jsonMode, turn) {
     const p = friend.profile;
     const userName = p.userName || 'them';
-    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy and length, but never send an empty deflection — carry a concrete detail, a real reaction, or the next beat of your own story, and pay off any hook you raised. Her bracketed persona traits and current state govern this reply — shy hesitates, guarded deflects, and she is free to disagree, decline, or steer to her own topic. If she deflects, make it invisible: redirect toward something better, never a visible wall. Question only from real curiosity, never from duty — and leave him a handle to reply to. This reply answers his LAST message specifically — if it would have fit three messages ago, it's a rerun; no re-narrating what she's doing. Never break character. Nothing escalates past her current pace. Never reuse a phrase, joke, or deflection she already sent, and never re-state a fact or status she already established (where she is, what she's wearing, what she won't do) — said once, it's set; this reply must ADD something new instead of circling back. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
+    const h = this._hash32(String(friend.id) + '|phi|' + (turn || 0));
+    const emphasis = this._PHI_EMPHASIS[h % this._PHI_EMPHASIS.length];
+    const shape = this._PHI_SHAPE[(h >>> 3) % this._PHI_SHAPE.length];
+    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy, never send an empty deflection — carry a real reaction, a concrete detail, or the next beat of your own story, and pay off any hook you raised. Her bracketed traits and current state govern this reply — shy hesitates, guarded deflects, free to disagree, decline, or steer to her own topic. Deflections are invisible: redirect toward something better, never a visible wall. Question only from real curiosity — and leave him a handle. This reply answers his LAST message specifically; if it would have fit three messages ago it's a rerun, and nothing she's already said or established gets re-stated. Nothing escalates past her current pace. Never break character. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
@@ -1010,7 +1118,7 @@ const ClaudeAPI = {
     const wrap = (t) => midOk ? t : '<system-reminder>\n' + t + '\n</system-reminder>';
     let msgs = trimmed.map(m => ({ role: m.role, content: m.text }));
     msgs = this._injectDepth(msgs, wrap(this._plist(friend)), injRole);
-    msgs.push({ role: injRole, content: wrap(this._phi(friend, true)) });
+    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length)) });
 
     const body = {
       model,
@@ -1191,7 +1299,7 @@ const ClaudeAPI = {
       const r2 = await call([
         {
           role: 'system',
-          content: `You maintain ${p.name}'s PRIVATE internal state in their texting relationship with ${userName}. Output ONLY JSON in this exact shape: {"state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "new_memories": []}}. Deltas are -3..+3 movements caused by this exchange — 0 is the most common answer; a bad exchange can be negative. "new_memories": 0-3 objects {"text","keywords","importance"} with standalone pronoun-free facts, or [].`
+          content: `You maintain ${p.name}'s PRIVATE internal state in their texting relationship with ${userName}. Output ONLY JSON in this exact shape: {"state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause of what she is thinking but not saying right now", "new_memories": []}}. Deltas are -3..+3 movements caused by this exchange — 0 is the most common answer; a bad exchange can be negative. "new_memories": 0-3 objects {"text","keywords","importance"} with standalone pronoun-free facts worth keeping — about ${userName}, about the two of them, or about ${p.name}'s OWN life as established in this exchange (her commitments, stories, opinions — so she never contradicts her own canon). [] if nothing new.`
         },
         {
           role: 'user',
@@ -1237,7 +1345,7 @@ const ClaudeAPI = {
 
     const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes);
     const plist = this._plist(friend);
-    const phi = this._phi(friend, jsonMode);
+    const phi = this._phi(friend, jsonMode, history.length);
     const overhead = persona.length + probe.length + recap.length + instr.length + plist.length + phi.length + 4096;
     const room = Math.max(1000, budgetChars - overhead);
 
@@ -1357,7 +1465,7 @@ const ClaudeAPI = {
       const recency = Math.exp(-Math.max(0, ageDays) / 30);
       const score = 3 * (rel[i] / maxRel) + 2 * (m.importance / 5) + 0.5 * recency;
       const exactHit = query.length > 0 && m.keywords.some(k => query.indexOf(k) !== -1);
-      return { m, i, score, exactHit };
+      return { m, i, score, exactHit, ageDays };
     });
 
     const chosen = new Set();
@@ -1384,10 +1492,22 @@ const ClaudeAPI = {
     for (const s of scored.slice().sort((a, b) => b.score - a.score || b.i - a.i)) {
       if (!chosen.has(s.i)) take(s);
     }
-    // rare spontaneous memory — friends occasionally surface things unprompted
-    if (rand() < 0.1) {
-      const unchosen = scored.filter(s => !chosen.has(s.i));
-      if (unchosen.length) take(unchosen[Math.floor(rand() * unchosen.length)]);
+    // Spontaneous recall, every turn: the single strongest "she's alive"
+    // signal users report across companion apps is an unprompted, specific
+    // callback — a detail from days ago surfacing in a new context. So one
+    // NON-topical memory always rides along (weighted by importance and
+    // recency), not just on a rare roll; the prompt tells her it's optional
+    // material, so it colors the reply without hijacking it.
+    {
+      const unchosen = scored.filter(s => !chosen.has(s.i) && !s.exactHit);
+      if (unchosen.length) {
+        const weighted = unchosen.slice().sort((a, b) =>
+          ((b.m.importance || 3) + 2 * Math.exp(-b.ageDays / 14)) -
+          ((a.m.importance || 3) + 2 * Math.exp(-a.ageDays / 14)));
+        // small jitter so it isn't the same memory every single turn
+        const k = Math.min(weighted.length - 1, Math.floor(rand() * Math.min(3, weighted.length)));
+        take(weighted[k]);
+      }
     }
 
     const picked = scored.filter(s => chosen.has(s.i)).sort((a, b) => a.i - b.i);
@@ -1484,8 +1604,8 @@ const ClaudeAPI = {
     return [
       '## Reply format (mandatory)',
       'Reply with ONLY a single JSON object — no prose before or after it, no markdown fences:',
-      '{"messages": ["first bubble", "optional second"], "state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "new_memories": []}}',
-      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (0 is the most common answer; bad exchanges can be negative). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact; [] if nothing new.'
+      '{"messages": ["first bubble", "optional second"], "state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause: what you are thinking but not saying right now", "new_memories": []}}',
+      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (0 is the most common answer; bad exchanges can be negative). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life as established this exchange (your commitments, stories, opinions — never contradict your own canon later); [] if nothing new.'
     ].join('\n');
   },
 
@@ -1694,6 +1814,7 @@ const ClaudeAPI = {
       closeness_delta: d(st.closeness_delta),
       attraction_delta: d(st.attraction_delta),
       reason: String(st.reason || ''),
+      unsaid: String(st.unsaid || ''),
       confidence: typeof st.confidence === 'number' ? Math.max(0, Math.min(1, st.confidence)) : 0.8,
       opinion_notes: String(st.opinion_notes || ''),
       new_memories: Array.isArray(st.new_memories) ? st.new_memories.slice(0, 3).map(m => this._normNewMemory(m)).filter(Boolean) : []
@@ -1760,7 +1881,7 @@ const ClaudeAPI = {
      bubbling (up to 4); prose splits on paragraph breaks, then lines, and a
      single wall of text gets broken at sentence boundaries — one monolithic
      paragraph never goes through as-is. */
-  _STATEISH_KEY: /"(?:state|state_changes|mood|comfort(?:_delta)?|closeness(?:_delta)?|attraction(?:_delta)?|opinion_notes|new_memories|confidence|reason)"\s*:/,
+  _STATEISH_KEY: /"(?:state|state_changes|mood|comfort(?:_delta)?|closeness(?:_delta)?|attraction(?:_delta)?|opinion_notes|new_memories|confidence|reason|unsaid)"\s*:/,
 
   /* Pull any state-shaped JSON object out of prose. A model that knows about
      its private state sometimes writes it INTO the visible reply (Gemini in
