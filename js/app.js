@@ -679,6 +679,9 @@ function openEntryEditor(id) {
   const isBedrock = e.kind === 'bedrock';
   $('#e-region-label').classList.toggle('hidden', !isBedrock);
   $('#e-url').parentElement.classList.toggle('hidden', isBedrock);
+  $('#e-modelhint').textContent = isBedrock
+    ? 'Claude models are listed. For anything else on Bedrock — Grok, GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'
+    : 'Fetched live from the provider, so the list is never stale.';
   if (isBedrock) {
     $('#e-region').value = e.region || 'us-east-1';
     const dl = $('#e-models');

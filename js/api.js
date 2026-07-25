@@ -131,10 +131,14 @@ const ClaudeAPI = {
       contextTokens: 10000, rpd: 14400, tpm: 6000
     },
     bedrock: {
-      kind: 'bedrock', label: 'Claude via AWS Bedrock',
+      kind: 'bedrock', label: 'AWS Bedrock',
       baseUrl: '', // built from region
       keyUrl: 'console.aws.amazon.com/bedrock',
       keyHint: 'New AWS accounts get $200 in credits, and they work here. Bedrock console → API keys → generate a long-term key.',
+      // Claude ids are stable and known, so they're offered directly. Every
+      // other model on Bedrock is reached by pasting the Model ID printed on
+      // its page in the console — guessing vendor prefixes here would just
+      // produce 404s the user can't diagnose.
       models: ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5'],
       contextTokens: 60000, rpd: null, tpm: null
     },
@@ -722,10 +726,31 @@ const ClaudeAPI = {
     throw lastErr;
   },
 
+  /* Bedrock's Mantle endpoint hosts two dialects behind one host: Anthropic's
+     Messages API for Claude, and an OpenAI-compatible route for everyone else
+     (Grok, GLM, Kimi, MiniMax…). Which one an entry needs is decided by its
+     model id, so a single pool entry covers the whole catalog. */
+  _bedrockHost(entry) {
+    return `https://bedrock-mantle.${(entry && entry.region) || 'us-east-1'}.api.aws`;
+  },
+  _bedrockIsClaude(model) { return /claude/i.test(String(model || '')); },
+  _bedrockOaiEntry(entry) {
+    return Object.assign({}, entry, {
+      kind: 'openai',
+      preset: null, // preset-specific quirks (Gemini's, Groq's) don't apply here
+      baseUrl: this._bedrockHost(entry) + '/openai/v1'
+    });
+  },
+
   _sendEntry(entry, friend, history, settings, lastMessageTs) {
     if (entry.kind === 'ollama') {
       const call = (messages, format) => this._ollamaRequest(entry, messages, format);
       return this._plainProviderChat(entry, call, friend, history, lastMessageTs);
+    }
+    if (entry.kind === 'bedrock' && !this._bedrockIsClaude(entry.model)) {
+      const oai = this._bedrockOaiEntry(entry);
+      const call = (messages, format) => this._openaiRequest(oai, messages, format);
+      return this._plainProviderChat(oai, call, friend, history, lastMessageTs);
     }
     if (entry.kind === 'openai') {
       const call = (messages, format) => this._openaiRequest(entry, messages, format);
@@ -1826,6 +1851,34 @@ const ClaudeAPI = {
       if (!entry.apiKey) throw new Error('Paste your Bedrock API key first.');
       if (!entry.model) throw new Error('Pick a model first.');
       const region = entry.region || 'us-east-1';
+
+      // Non-Claude models live on the OpenAI-compatible route, so the probe
+      // has to speak that dialect — but the failures are still AWS's, so they
+      // get the same plain-language classification.
+      if (!this._bedrockIsClaude(entry.model)) {
+        const oai = this._bedrockOaiEntry(entry);
+        let r;
+        try {
+          r = await this._openaiRequest(oai, [{ role: 'user', content: 'Reply with the single word: ok' }], 'text');
+        } catch (e) {
+          // The OpenAI path's own errors are phrased for keyed providers with
+          // a fetchable model list; Bedrock has neither, so the two that would
+          // mislead get re-pointed at what the user actually has to check.
+          if (e && (e.status === 401 || e.status === 403)) {
+            throw new Error(`Bedrock rejected the key. Check it was created in ${region} — a key from another region fails exactly like this.`);
+          }
+          if (e && e.status === 404) {
+            throw new Error(`Bedrock has no model called "${entry.model}" in ${region}. Open the model's page in the Bedrock console and copy its Model ID exactly.`);
+          }
+          if (e && e.transport) {
+            throw new Error(`Can't reach Bedrock in ${region} — check the region and your connection.`);
+          }
+          throw e;
+        }
+        if (!r || (!r.text && !r.refusal)) throw new Error(`${entry.model} didn't answer. Check the Model ID matches the one on its page in the Bedrock console.`);
+        return { message: `Bedrock ✓ · ${entry.model} in ${region} answered`, context: null };
+      }
+
       const model = 'anthropic.' + String(entry.model).replace(/^anthropic\./, '');
       let res;
       try {

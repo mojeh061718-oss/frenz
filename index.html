@@ -183,7 +183,7 @@
         <p class="muted small"><b>Optional upgrade:</b> keyless models are smaller, so personas are simpler and the subtext lands less reliably. Adding a free key (Gemini, Groq, Cerebras, OpenRouter — no card required) makes them sharper; an Anthropic key below is the full experience.</p>
         <div id="pool-list" class="pool-list"></div>
         <div class="preset-row">
-          <button type="button" class="btn-secondary btn-preset" data-preset="bedrock">+ Claude (AWS)</button>
+          <button type="button" class="btn-secondary btn-preset" data-preset="bedrock">+ AWS Bedrock</button>
           <button type="button" class="btn-secondary btn-preset" data-preset="gemini">+ Gemini</button>
           <button type="button" class="btn-secondary btn-preset" data-preset="groq">+ Groq</button>
           <button type="button" class="btn-secondary btn-preset" data-preset="cerebras">+ Cerebras</button>
@@ -210,7 +210,7 @@
           <label>Model
             <input type="text" id="e-model" list="e-models" placeholder="pick or type a model id">
             <datalist id="e-models"></datalist>
-            <small>Fetched live from the provider, so the list is never stale.</small>
+            <small id="e-modelhint">Fetched live from the provider, so the list is never stale.</small>
           </label>
           <label>Context budget (tokens)
             <input type="number" id="e-ctx" min="2000" step="1000">
