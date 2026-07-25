@@ -39,6 +39,9 @@ body {
 }
 .topbar h1 { font-size: 1.1rem; font-weight: 600; }
 .logo { font-weight: 800; letter-spacing: 0.5px; background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: 1.4rem; }
+/* The gradient trick above makes h1 text transparent, so the version needs its
+   own opaque fill to escape it. */
+.app-version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0; color: var(--muted); -webkit-text-fill-color: var(--muted); vertical-align: 2px; }
 .icon-btn {
   background: none; border: none; color: var(--text); font-size: 1.25rem;
   cursor: pointer; padding: 6px 10px; border-radius: 10px; min-width: 42px;
