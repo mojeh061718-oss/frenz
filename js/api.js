@@ -1768,6 +1768,42 @@ const ClaudeAPI = {
     return usable ? usable.id : (models[0] ? models[0].id : '');
   },
 
+  /* AWS answers a rejected Bedrock call with the actual reason, and a message
+     that lists three guesses is worse than one that names the cause. A bad key
+     and a key that isn't allowed to invoke the model need opposite fixes, so
+     they're separated here rather than collapsed into "check your key". */
+  async _bedrockError(res, region, model) {
+    let raw = '';
+    try { raw = await res.text(); } catch { /* body already consumed */ }
+    let detail = '';
+    try {
+      const j = JSON.parse(raw);
+      detail = (j.error && j.error.message) || j.message || j.Message || '';
+    } catch { detail = raw.slice(0, 200); }
+    // x-amzn-errortype is not readable cross-origin without an expose-headers
+    // grant, so classification has to survive on the body text alone; the
+    // header is folded in only as a bonus when a proxy does expose it.
+    const kind = (res.headers.get('x-amzn-errortype') || '') + ' ' + detail;
+    const tail = detail ? ` AWS said: "${detail.trim()}"` : '';
+
+    if (res.status === 401 || res.status === 403) {
+      if (/expired|invalid.{0,30}(token|key|signature)|UnrecognizedClient|IncompleteSignature|InvalidSignature/i.test(kind)) {
+        return `Bedrock doesn't recognize this key. A short-term key expires after 12 hours — generate a long-term one. Otherwise re-copy it; a truncated paste fails exactly like this.${tail}`;
+      }
+      if (/AccessDenied|not authorized|no.{0,3}access|Forbidden/i.test(kind)) {
+        return `The key is valid, but it can't call ${model} in ${region}. Usually one of two things: the key was created in a different region, or model access for this model hasn't been enabled in the Bedrock console.${tail}`;
+      }
+      return `Bedrock rejected the key (${res.status}). Check it was created in ${region}, and that model access is enabled for ${model}.${tail}`;
+    }
+    if (res.status === 404) {
+      return `${model} isn't available in ${region}. Enable it in the Bedrock console, or switch regions.${tail}`;
+    }
+    if (res.status === 429) {
+      return `Bedrock is throttling, or the account is out of credit.${tail}`;
+    }
+    return `Bedrock error (${res.status}).${tail}`;
+  },
+
   /* One cheap round trip that reports plainly: key valid, model reachable,
      context window detected. Returns { message, context }. */
   async testConnection(entry, settings) {
@@ -1806,13 +1842,7 @@ const ClaudeAPI = {
       } catch {
         throw new Error(`Can't reach Bedrock in ${region} — check the region and your connection.`);
       }
-      if (res.status === 401 || res.status === 403) throw new Error('Bedrock rejected the key — check it was created in ' + region + ' and has Bedrock access.');
-      if (res.status === 404) throw new Error(`${model} isn't available in ${region}. Enable model access in the Bedrock console, or try another region.`);
-      if (!res.ok) {
-        let m = 'Bedrock error (' + res.status + ')';
-        try { const j = await res.json(); if (j.error && j.error.message) m = j.error.message; } catch { /* keep */ }
-        throw new Error(m);
-      }
+      if (!res.ok) throw new Error(await this._bedrockError(res, region, model));
       return { message: `Bedrock ✓ · ${model} in ${region} answered`, context: null };
     }
 
