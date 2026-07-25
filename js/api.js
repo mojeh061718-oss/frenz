@@ -1207,9 +1207,13 @@ const ClaudeAPI = {
     if (entry.apiKey) headers.authorization = 'Bearer ' + entry.apiKey;
     if (!(base in this._oaiFormat)) this._oaiFormat[base] = 2;
 
+    // Heal ids already saved with Gemini's "models/" prefix — those 404 on
+    // every send, and the user has no way to see why.
+    const modelId = String(entry.model || '').replace(/^models\//, '');
+
     while (true) {
       const level = format === 'json' ? this._oaiFormat[base] : 0;
-      const body = { model: entry.model, messages, max_tokens: 1024 };
+      const body = { model: modelId, messages, max_tokens: 1024 };
       if (level === 2) body.response_format = { type: 'json_schema', json_schema: { name: 'reply', schema: this.REPLY_SCHEMA } };
       else if (level === 1) body.response_format = { type: 'json_object' };
 
@@ -1244,6 +1248,16 @@ const ClaudeAPI = {
           const err = new Error(`Invalid API key for ${entry.label || 'this provider'} — check Settings.`);
           err.status = res.status;
           err.retryable = false; // config error: surfaces, no failover
+          throw err;
+        }
+        if (res.status === 404) {
+          // Almost always a model name this provider doesn't serve, not a bad
+          // key or URL. Say so — a bare "404" tells the user nothing.
+          const err = new Error(
+            `${entry.label || 'This provider'} has no model called "${modelId}". Open Settings, tap ${entry.label || 'the provider'}, and pick one from the list.`
+          );
+          err.status = 404;
+          err.retryable = false; // config error: surfaces rather than failing over
           throw err;
         }
         if (res.status === 429) {
@@ -1514,7 +1528,10 @@ const ClaudeAPI = {
       // paid/pro tiers listed on otherwise-keyless endpoints (LLM7) would 402
       .filter(m => !m.usage_based_only && !(m.tier && /pro/i.test(String(m.tier))))
       .map(m => ({
-        id: m.id,
+        // Gemini lists ids as "models/gemini-3.6-flash" but /chat/completions
+        // wants the bare name — passing the prefix straight through 404s every
+        // message. No OpenAI-compatible provider expects the prefix on send.
+        id: String(m.id || '').replace(/^models\//, ''),
         // context_window is a number on most providers, {tokens} on LLM7
         context: (m.context_window && m.context_window.tokens) || (typeof m.context_window === 'number' ? m.context_window : null) || m.context_length || null
       }))
