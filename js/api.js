@@ -275,6 +275,7 @@ const ClaudeAPI = {
       p.style ? `Your texting style: ${p.style}` : 'You text like a normal person: casual, lowercase sometimes, short messages.',
       'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. Typos, lowercase, dropped punctuation, and stretched words ("tireddddd") are correct when they fit your voice.',
       'This is texting, not roleplay: never narrate actions, never use asterisks (*smiles*), never write stage directions. Only words you would actually type into a phone.',
+      `The conversation moves FORWARD. Once you've said where you are, what you're doing, or what you're not going to do, it's established — ${userName} read it. Mention it again only when it changes or something makes it newly relevant. Re-announcing the same status at the end of every message ("still on the couch", "still not changing") is a loop, and loops are the second-loudest bot tell after the interview. Each message adds something that wasn't there before: a new beat, a new thought, a reaction, the next part of the story.`,
       '',
       ...(tier === 'rich' ? [
         '## Register',
@@ -664,7 +665,7 @@ const ClaudeAPI = {
   _phi(friend, jsonMode) {
     const p = friend.profile;
     const userName = p.userName || 'them';
-    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy and length, but never send an empty deflection — carry a concrete detail, a real reaction, or the next beat of your own story, and pay off any hook you raised. Her bracketed persona traits and current state govern this reply — shy hesitates, guarded deflects, and she is free to disagree, decline, or steer to her own topic. Statements over questions, never break character. Nothing escalates past her current pace. Never reuse a phrase, joke, or deflection she already sent in this conversation — a repeated line is the loudest possible tell, so make a genuinely different move. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
+    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy and length, but never send an empty deflection — carry a concrete detail, a real reaction, or the next beat of your own story, and pay off any hook you raised. Her bracketed persona traits and current state govern this reply — shy hesitates, guarded deflects, and she is free to disagree, decline, or steer to her own topic. Statements over questions, never break character. Nothing escalates past her current pace. Never reuse a phrase, joke, or deflection she already sent, and never re-state a fact or status she already established (where she is, what she's wearing, what she won't do) — said once, it's set; this reply must ADD something new instead of circling back. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
@@ -809,6 +810,7 @@ const ClaudeAPI = {
       try {
         const result = await this._chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry);
         this._noteServed(entry);
+        if (result.bubbles) result.bubbles = this._dropEchoes(result.bubbles, history);
         result.provider = entry.label || entry.id;
         return result;
       } catch (err) {
@@ -1702,6 +1704,52 @@ const ClaudeAPI = {
       /^[\s{}\[\]"',:.]+$/.test(s) ||             // pure structural characters
       /^"[^"]*",$/.test(s) ||                     // dangling quoted fragment
       /"(?:state_changes|state|comfort_delta|closeness_delta|attraction_delta|opinion_notes|new_memories)"/.test(s);
+  },
+
+  /* ---------------- echo guard ----------------
+     Models loop by re-asserting things they already said — observed live as a
+     persona re-announcing the same scene status ("on the couch", "not
+     changing out of scrubs") at the end of every message. The prompt now
+     forbids it, but prompts are advisory; this is the backstop. Any new
+     bubble that substantially overlaps one of her recent messages is dropped
+     before it renders — which also keeps the loop OUT of the saved history,
+     so it can't feed the next reply. Tiny reactions ("lol", "same") get a
+     pass: repeating those is how people actually text. */
+  _normBubble(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  },
+  _echoScore(a, b) {
+    const ta = a.split(' ').filter(Boolean);
+    const tb = new Set(b.split(' ').filter(Boolean));
+    if (!ta.length || !tb.size) return 0;
+    let hit = 0;
+    for (const t of ta) if (tb.has(t)) hit++;
+    // Denominator is the NEW bubble: the question is "how much of this reply
+    // is recycled?" A long fresh message that mentions the couch once scores
+    // low; a reply that is mostly the old status scores high. Normalizing by
+    // the shorter side instead would delete fresh messages for containing one
+    // old phrase.
+    return hit / ta.length;
+  },
+  _dropEchoes(bubbles, history) {
+    const recent = (history || [])
+      .filter(m => m.role === 'assistant').slice(-6)
+      .map(m => this._normBubble(m.text))
+      // 1-2 word refs ("lol", "same") are noise, not established status
+      .filter(r => r.split(' ').length >= 3);
+    if (!recent.length || !bubbles || bubbles.length === 0) return bubbles;
+    const scored = bubbles.map(b => {
+      const n = this._normBubble(b);
+      const words = n.split(' ').filter(Boolean).length;
+      const score = words <= 2 ? 0 : Math.max(...recent.map(r => this._echoScore(n, r)));
+      return { b, score };
+    });
+    const kept = scored.filter(s => s.score < 0.8).map(s => s.b);
+    if (kept.length) return kept;
+    // Everything echoed. Silence isn't an option (never leave them on read),
+    // so keep the single least-repetitive bubble.
+    scored.sort((a, b) => a.score - b.score);
+    return [scored[0].b];
   },
 
   _splitBubbles(text) {
