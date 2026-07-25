@@ -509,17 +509,28 @@ function saveSettings() {
   s.apiKey = $('#s-apikey').value.trim();
   s.model = $('#s-model').value;
   s.effort = $('#s-effort').value;
+  const before = Settings.get();
   if (poolDraft) s.pool = poolDraft;
-  // Adding a Claude key is the quality upgrade — make it take effect
-  // immediately instead of leaving Claude parked below the keyless tier.
-  if (s.apiKey && !hadKey) {
-    const idx = s.pool.findIndex(e => e.kind === 'anthropic');
-    if (idx > 0) {
-      const moved = s.pool.splice(idx, 1)[0];
-      s.pool.unshift(moved);
-    }
+
+  // Adding a key to ANY provider is the quality upgrade — Claude, Gemini,
+  // Groq, whatever. Promote it above the keyless tier so it actually answers,
+  // instead of parking it below models it was chosen to beat.
+  const newlyKeyed = s.pool.filter(e => {
+    if (!entryHasKey(e, s)) return false;
+    const prior = e.kind === 'anthropic'
+      ? (hadKey ? e : null)
+      : (before.pool || []).find(p => p.id === e.id && p.apiKey && p.apiKey.trim());
+    return !prior;
+  });
+
+  if (newlyKeyed.length) {
+    // Straight to the front. Configuring a provider is an explicit choice, so
+    // it should take effect immediately rather than landing behind whatever
+    // was there before — and it stays reorderable afterwards.
+    const ids = new Set(newlyKeyed.map(e => e.id));
+    s.pool = [...s.pool.filter(e => ids.has(e.id)), ...s.pool.filter(e => !ids.has(e.id))];
     Settings.set(s);
-    toast('Claude key saved — Claude now answers first');
+    toast(`${newlyKeyed[0].label} key saved — it answers first now`);
   } else {
     Settings.set(s);
     toast('Settings saved');
@@ -587,9 +598,25 @@ function addPreset(name) {
     enabled: true
   };
   if (name !== 'custom') entry.preset = name;
-  poolDraft.push(entry);
+  // A provider you deliberately add is an upgrade over the keyless tier, so it
+  // goes above it rather than at the bottom where it would rarely be reached.
+  const at = poolDraft.findIndex(isKeylessEntry);
+  if (at >= 0) poolDraft.splice(at, 0, entry); else poolDraft.push(entry);
   renderPool();
   openEntryEditor(entry.id);
+}
+
+/* Keyless entries always work but are the weakest models — they're the floor,
+   not the preference. Anything you've given a key to should outrank them. */
+function isKeylessEntry(e) {
+  const p = e && e.preset ? ClaudeAPI.POOL_PRESETS[e.preset] : null;
+  return !!(p && p.keyless);
+}
+
+function entryHasKey(e, settings) {
+  if (!e) return false;
+  if (e.kind === 'anthropic') return !!(settings && settings.apiKey);
+  return !!(e.apiKey && e.apiKey.trim());
 }
 
 function openEntryEditor(id) {
