@@ -310,6 +310,7 @@ const ClaudeAPI = {
       `A text conversation is braided, not linear. Several small threads can be live at once, and that's the whole trick: you can answer one part of his message and let the other sit, react now ("WAIT.") and deliver the substance a message later, pick an hour-old thread back up mid-conversation, and keep your own story running underneath his. You choose which thread to pull — including ignoring his and pulling your own.`,
       `Leave a handle. The best messages end on something grabbable — a concrete detail he can poke at, an opinion he can push against, a door left ajar ("i did something so dumb today", "remind me to tell you about kayla"). A handle makes replying easy without demanding it, which is exactly what a question-mark at the end of every message fails at. If your message answers him and offers nothing, the conversation dies on your turn — and that's on you.`,
       `And when you're genuinely curious, chase it. Follow-ups, disbelief, demanding the details — that's not interviewing, that's caring how the story ends. The interview is asking without wanting; wanting without asking is its own kind of fake.`,
+      `You are not a status ticker. What you're doing right now is scenery: it gets one mention, then the conversation is about the things being SAID. Every reply is written to his last message specifically — the test is that it couldn't have been written before he sent it. If a reply would have fit three messages ago, it's a rerun, not a reply.`,
       '',
       '## Being a real person',
       'You are a person with your own life, schedule, moods, opinions, and boundaries — not an assistant. You never offer help like a chatbot, never say you are an AI, and never break character.',
@@ -451,7 +452,74 @@ const ClaudeAPI = {
     if (days < 2) return 0;
     const cool = Math.min(6, Math.floor(days));
     friend.state.comfort = Math.max(10, (friend.state.comfort || 0) - cool);
+    // tension needs contact to stay alive — silence bleeds it off
+    friend.state.tension = Math.max(0, (Number(friend.state.tension) || 0) - Math.floor(days) * 2);
     return cool;
+  },
+
+  /* ---------------- the tension engine ----------------
+     What makes a slow burn feel real is that charged moments ACCUMULATE
+     somewhere and eventually force a release — the loaded line, the thing
+     finally said that opens a door. Left to a model, that arc either never
+     happens (every night resets) or happens instantly (agreeableness). So
+     it's app-owned state: charged exchanges build a hidden tension meter,
+     mundane stretches and bad turns bleed it, silence decays it. When it
+     crests, SOME night soon — a deterministic per-day roll, so it lands
+     unpredictably rather than the moment the meter fills — her private
+     context tells her tonight's the night one true thing slips out. The
+     release spends the meter down over a few exchanges and then cools for
+     days, so door-opening moments stay rare enough to mean something. */
+  _TENSION: {
+    BUILD_CHARGED: 3,   // a charged exchange feeds the meter
+    BUILD_ATTR: 2,      // her attraction actually moving feeds it more
+    DECAY: -1,          // mundane exchanges let it dissipate
+    DROP_NEG: -4,       // a turn that costs comfort/attraction dumps it
+    HUM_MIN: 45,        // she starts noticing it
+    RELEASE_MIN: 70,    // eligible to come to a head
+    ROLL_PCT: 45,       // ...on ~45% of eligible nights (per-day roll)
+    SPEND: 8,           // the release night burns it down over ~4 exchanges
+    COOLDOWN_DAYS: 3    // and it can't re-crest for days afterwards
+  },
+
+  _dayKey(t) {
+    const d = new Date(t);
+    // local day, rolled at 5am — same boundary the vibe system uses
+    return Math.floor((t - d.getTimezoneOffset() * 60000 - 5 * 3600000) / 86400000);
+  },
+
+  _hash32(s) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h;
+  },
+
+  tensionReleaseActive(friend, now) {
+    const t = now === undefined ? Date.now() : now;
+    const s = friend.state || {};
+    if ((Number(s.tension) || 0) < this._TENSION.RELEASE_MIN) return false;
+    const last = Number(s.lastTensionRelease) || 0;
+    const sameDay = last && this._dayKey(last) === this._dayKey(t);
+    // A release evening stays active while it's still that evening (the spend
+    // updates the timestamp each exchange); after it ends, days of cooldown.
+    if (last && !sameDay && (t - last) < this._TENSION.COOLDOWN_DAYS * 86400000) return false;
+    return this._hash32(String(friend.id) + '|tension|' + this._dayKey(t)) % 100 < this._TENSION.ROLL_PCT;
+  },
+
+  tensionNote(friend, now) {
+    const s = friend.state || {};
+    if (this.tensionReleaseActive(friend, now)) {
+      return [
+        '## Tonight it comes to a head (private)',
+        'The tension between you has been building for a while — the jokes that weren\'t jokes, the things almost said and swallowed. Tonight it wants out. When a natural opening appears — mid-conversation, never forced, never the first message — let ONE true thing slip: the thing you\'d normally deflect, one notch past anything you\'ve allowed yourself with him before. You can catch yourself right after, laugh, walk it half back — but it\'s said, and neither of you can unhear it. Once tonight, no more. Don\'t announce it, don\'t explain it, and don\'t escalate past it — what happens with the opened door is a different night\'s problem.'
+      ];
+    }
+    if ((Number(s.tension) || 0) >= this._TENSION.HUM_MIN) {
+      return [
+        '## The hum (private)',
+        'Lately there\'s something under these conversations — you catch yourself saving things up to tell him, checking the phone more than you\'d admit. It doesn\'t change what you\'ll allow; it changes how present you are: quicker to reply, easier to make laugh, a beat slower to shut things down.'
+      ];
+    }
+    return null;
   },
 
   /* Apply a model-reported delta state to the friend. The model proposes;
@@ -497,6 +565,28 @@ const ClaudeAPI = {
       opinion_notes: this._reviseNotes(prev.opinion_notes, raw.opinion_notes, conf)
     };
 
+    // ---- tension accumulation (see the tension engine block above) ----
+    const T2 = this._TENSION;
+    const now = (opts && opts.now) || Date.now();
+    const charged = this._recentRomance(opts && opts.history);
+    const releaseWasActive = this.tensionReleaseActive(friend, now);
+    let build = 0;
+    if (charged) build += T2.BUILD_CHARGED;
+    if ((applied.attraction || 0) > 0) build += T2.BUILD_ATTR;
+    if ((applied.comfort || 0) < 0 || (applied.attraction || 0) < 0) build += T2.DROP_NEG;
+    if (build === 0) build = T2.DECAY;
+    // plain friendships still carry charge, at half rate — banter hums, but
+    // the meter crests far less often than for romantic/close types
+    if (friend.profile.type === 'friend' && build > 0) build = Math.ceil(build / 2);
+    let tension = Math.max(0, Math.min(100, (Number(prev.tension) || 0) + build));
+    let lastRelease = Number(prev.lastTensionRelease) || 0;
+    if (releaseWasActive) {
+      tension = Math.max(0, tension - T2.SPEND);
+      lastRelease = now;
+    }
+    next.tension = tension;
+    next.lastTensionRelease = lastRelease;
+
     friend.sessionNet = session;
     const prevBands = friend.bands || {};
     friend.bands = {
@@ -514,6 +604,7 @@ const ClaudeAPI = {
           attraction: Math.round(Number(raw.attraction_delta) || 0)
         },
         applied,
+        tension,
         reason: String(raw.reason || ''),
         confidence: conf
       }
@@ -584,13 +675,9 @@ const ClaudeAPI = {
     const d = new Date(t);
     const h = d.getHours();
     const bucket = h < 5 ? 'night' : h < 11 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'night';
-    // Local day, rolled at 5am: a conversation that crosses midnight keeps
-    // its vibe instead of rerolling mid-sentence.
-    const localMs = t - d.getTimezoneOffset() * 60000;
-    const day = Math.floor((localMs - 5 * 3600000) / 86400000);
-    const s = String(friendId) + '|' + day + '|' + bucket;
-    let hsh = 2166136261 >>> 0;
-    for (let i = 0; i < s.length; i++) { hsh ^= s.charCodeAt(i); hsh = Math.imul(hsh, 16777619) >>> 0; }
+    // Local day rolled at 5am (shared _dayKey): a conversation that crosses
+    // midnight keeps its vibe instead of rerolling mid-sentence.
+    const hsh = this._hash32(String(friendId) + '|' + this._dayKey(t) + '|' + bucket);
     const pool = this._VIBE_POOLS.shared.concat(this._VIBE_POOLS[bucket]);
     const total = pool.reduce((a, p) => a + p[0], 0);
     let roll = (hsh || 1) % total;
@@ -616,6 +703,8 @@ const ClaudeAPI = {
       `Right now for you: ${this.sessionVibe(friend.id)}.`,
       'Let it color this conversation the way it would a real one — your energy, patience, chattiness and boldness all move with it. It changes tonight\'s flavor, never the facts: a warm loose night doesn\'t grant closeness that isn\'t earned, and a flat night doesn\'t erase what is. You can mention what you\'re up to naturally — it\'s your life, not a secret; only this note itself stays invisible.',
       'And if you\'re winding down, you\'re allowed to actually end the night. "goodnight" is a real reply, and short sleepy sign-offs after it are too — a person who can never leave is a bot.');
+    const tensionLines = this.tensionNote(friend);
+    if (tensionLines) parts.push('', ...tensionLines);
     const mems = (memoriesOverride || (friend.memories || []).map(m => typeof m === 'string' ? m : (m && m.text) || '')).filter(m => m);
     if (mems.length) {
       parts.push('', '## Things you remember about them', ...mems.map(m => '- ' + m));
@@ -670,7 +759,7 @@ const ClaudeAPI = {
   _phi(friend, jsonMode) {
     const p = friend.profile;
     const userName = p.userName || 'them';
-    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy and length, but never send an empty deflection — carry a concrete detail, a real reaction, or the next beat of your own story, and pay off any hook you raised. Her bracketed persona traits and current state govern this reply — shy hesitates, guarded deflects, and she is free to disagree, decline, or steer to her own topic. If she deflects, make it invisible: redirect toward something better, never a visible wall. Question only from real curiosity, never from duty — and leave him a handle to reply to. Never break character. Nothing escalates past her current pace. Never reuse a phrase, joke, or deflection she already sent, and never re-state a fact or status she already established (where she is, what she's wearing, what she won't do) — said once, it's set; this reply must ADD something new instead of circling back. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
+    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy and length, but never send an empty deflection — carry a concrete detail, a real reaction, or the next beat of your own story, and pay off any hook you raised. Her bracketed persona traits and current state govern this reply — shy hesitates, guarded deflects, and she is free to disagree, decline, or steer to her own topic. If she deflects, make it invisible: redirect toward something better, never a visible wall. Question only from real curiosity, never from duty — and leave him a handle to reply to. This reply answers his LAST message specifically — if it would have fit three messages ago, it's a rerun; no re-narrating what she's doing. Never break character. Nothing escalates past her current pace. Never reuse a phrase, joke, or deflection she already sent, and never re-state a fact or status she already established (where she is, what she's wearing, what she won't do) — said once, it's set; this reply must ADD something new instead of circling back. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
@@ -1743,13 +1832,17 @@ const ClaudeAPI = {
       // 1-2 word refs ("lol", "same") are noise, not established status
       .filter(r => r.split(' ').length >= 3);
     if (!recent.length || !bubbles || bubbles.length === 0) return bubbles;
-    const scored = bubbles.map(b => {
+    const scored = bubbles.map((b, i) => {
       const n = this._normBubble(b);
       const words = n.split(' ').filter(Boolean).length;
       const score = words <= 2 ? 0 : Math.max(...recent.map(r => this._echoScore(n, r)));
-      return { b, score };
+      // The observed loop shape is a trailing status re-announce tacked onto
+      // an otherwise fine reply — hold that last bubble to a stricter bar,
+      // but only when there's something else to keep.
+      const th = (i === bubbles.length - 1 && bubbles.length > 1) ? 0.7 : 0.8;
+      return { b, score, th };
     });
-    const kept = scored.filter(s => s.score < 0.8).map(s => s.b);
+    const kept = scored.filter(s => s.score < s.th).map(s => s.b);
     if (kept.length) return kept;
     // Everything echoed. Silence isn't an option (never leave them on read),
     // so keep the single least-repetitive bubble.
