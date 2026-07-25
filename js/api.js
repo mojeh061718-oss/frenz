@@ -745,6 +745,10 @@ const ClaudeAPI = {
         },
         applied,
         tension,
+        // absolute values after application — the relationship graph reads
+        // these directly; older events without them are reconstructed by
+        // walking `applied` backward from the current state
+        after: { comfort: next.comfort, closeness: next.closeness, attraction: next.attraction, tension: next.tension },
         reason: String(raw.reason || ''),
         confidence: conf
       }

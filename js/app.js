@@ -3,7 +3,7 @@
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
 const $ = (sel) => document.querySelector(sel);
-const views = ['view-friends', 'view-gallery', 'view-customize', 'view-editor', 'view-chat', 'view-settings'];
+const views = ['view-friends', 'view-gallery', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
 
 let currentFriend = null;       // friend object while chatting/editing
 let editingId = null;           // friend id being edited, null = creating
@@ -335,6 +335,141 @@ async function openChat(friendId) {
   showView('view-chat');
   scrollChat(false);
   maybeOpener(currentFriend);
+}
+
+/* ---------------- relationship graph (tap her name in chat) ----------------
+   The state-delta ledger is replayed into per-element time series: newer
+   events carry absolute `after` values; older ones are reconstructed by
+   walking their `applied` deltas backward from the current state. */
+
+const REL_DIMS = [
+  { key: 'closeness', label: 'Closeness', color: '#5aa9ff' },
+  { key: 'comfort', label: 'Comfort', color: '#4dc6a8' },
+  { key: 'attraction', label: 'Attraction', color: '#ff8fb3' },
+  { key: 'tension', label: 'Tension', color: '#ffb454' }
+];
+let relSelected = null; // highlighted dim key, null = all
+
+function relSeries(friend, events) {
+  const clamp = v => Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  const evs = (events || [])
+    .filter(e => e && (e.after || e.applied || typeof e.tension === 'number') && e.ts)
+    .sort((a, b) => a.ts - b.ts)
+    .slice(-400);
+  const cur = friend.state || {};
+  const nowPt = { ts: Date.now(), closeness: clamp(cur.closeness), comfort: clamp(cur.comfort), attraction: clamp(cur.attraction), tension: clamp(cur.tension) };
+  let vals = Object.assign({}, nowPt);
+  const pts = new Array(evs.length);
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.after) {
+      vals = { closeness: clamp(e.after.closeness), comfort: clamp(e.after.comfort), attraction: clamp(e.after.attraction), tension: clamp(e.after.tension) };
+    } else if (typeof e.tension === 'number') {
+      vals = Object.assign({}, vals, { tension: clamp(e.tension) });
+    }
+    pts[i] = Object.assign({ ts: e.ts }, vals);
+    const ap = e.applied || {};
+    vals = {
+      closeness: clamp(vals.closeness - (ap.closeness || 0)),
+      comfort: clamp(vals.comfort - (ap.comfort || 0)),
+      attraction: clamp(vals.attraction - (ap.attraction || 0)),
+      tension: vals.tension
+    };
+  }
+  pts.push(nowPt);
+  return pts;
+}
+
+function relTrend(pts, key) {
+  const now = pts[pts.length - 1];
+  if (pts.length < 2) return { word: 'just starting', arrow: '·', delta: 0, cls: 'steady' };
+  const weekAgo = Date.now() - 7 * 86400000;
+  let base = pts[0];
+  for (const p of pts) { if (p.ts <= weekAgo) base = p; else break; }
+  const delta = now[key] - base[key];
+  const lastEvent = pts.length >= 2 ? pts[pts.length - 2].ts : 0;
+  if (Date.now() - lastEvent > 5 * 86400000) return { word: 'gone quiet', arrow: '…', delta, cls: 'stale' };
+  if (delta >= 3) return { word: 'progressing', arrow: '↑', delta, cls: 'up' };
+  if (delta <= -3) return { word: 'declining', arrow: '↓', delta, cls: 'down' };
+  return { word: 'holding steady', arrow: '→', delta, cls: 'steady' };
+}
+
+function drawRelChart(pts) {
+  const svg = $('#rel-chart');
+  const W = 640, H = 240, L = 34, R = 8, T = 10, B = 22;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const t0 = pts[0].ts, t1 = pts[pts.length - 1].ts;
+  const span = Math.max(t1 - t0, 3600000);
+  // anchor NOW to the right edge so a young history hugs the right side
+  // instead of stranding everything at the left of a padded axis
+  const x = ts => (W - R) - ((t1 - ts) / span) * (W - L - R);
+  const y = v => T + (1 - v / 100) * (H - T - B);
+  let out = '';
+  for (const g of [0, 25, 50, 75, 100]) {
+    out += `<line x1="${L}" y1="${y(g)}" x2="${W - R}" y2="${y(g)}" class="rel-grid"/>` +
+           `<text x="${L - 6}" y="${y(g) + 3}" class="rel-axis" text-anchor="end">${g}</text>`;
+  }
+  const left = t1 - span;
+  const sameDay = new Date(left).toDateString() === new Date(t1).toDateString();
+  const fmtDay = ts => sameDay
+    ? new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  out += `<text x="${L}" y="${H - 6}" class="rel-axis">${fmtDay(left)}</text>` +
+         `<text x="${W - R}" y="${H - 6}" class="rel-axis" text-anchor="end">${sameDay ? 'now' : fmtDay(t1)}</text>`;
+  for (const d of REL_DIMS) {
+    const path = pts.map((p, i) => (i ? 'L' : 'M') + x(p.ts).toFixed(1) + ' ' + y(p[d.key]).toFixed(1)).join(' ');
+    const dim = relSelected && relSelected !== d.key;
+    out += `<path d="${path}" fill="none" stroke="${d.color}" class="rel-line${dim ? ' dim' : ''}" data-dim="${d.key}"/>`;
+    const last = pts[pts.length - 1];
+    out += `<circle cx="${x(last.ts).toFixed(1)}" cy="${y(last[d.key]).toFixed(1)}" r="3.5" fill="${d.color}" class="${dim ? 'dim' : ''}"/>`;
+  }
+  svg.innerHTML = out;
+  svg.querySelectorAll('.rel-line').forEach(p => p.addEventListener('click', () => {
+    relSelected = relSelected === p.dataset.dim ? null : p.dataset.dim;
+    renderRelationship();
+  }));
+}
+
+let relPts = null; // cached series while the view is open
+
+function renderRelationship() {
+  const friend = currentFriend;
+  if (!friend || !relPts) return;
+  const pts = relPts;
+  drawRelChart(pts);
+  const cards = $('#rel-cards');
+  cards.innerHTML = '';
+  const now = pts[pts.length - 1];
+  const first = pts[0];
+  for (const d of REL_DIMS) {
+    const t = relTrend(pts, d.key);
+    const sel = relSelected === d.key;
+    const card = document.createElement('div');
+    card.className = 'rel-card' + (sel ? ' selected' : '');
+    const total = now[d.key] - first[d.key];
+    const sign = n => (n > 0 ? '+' : '') + n;
+    card.innerHTML = `
+      <div class="rel-card-head"><span class="rel-dot" style="background:${d.color}"></span>${d.label}
+        <span class="rel-trend ${t.cls}">${t.arrow} ${t.word}</span></div>
+      <div class="rel-card-detail${sel ? '' : ' hidden'}">${now[d.key]} now · ${sign(t.delta)} this week · ${sign(total)} since the graph began</div>`;
+    card.addEventListener('click', () => {
+      relSelected = sel ? null : d.key;
+      renderRelationship();
+    });
+    cards.appendChild(card);
+  }
+}
+
+async function openRelationship() {
+  if (!currentFriend) return;
+  $('#rel-title').textContent = currentFriend.profile.name;
+  let events = [];
+  try { events = await DB.getEvents(currentFriend.id); } catch { /* graph just starts today */ }
+  relPts = relSeries(currentFriend, events);
+  $('#rel-empty').classList.toggle('hidden', relPts.length > 1);
+  relSelected = null;
+  renderRelationship();
+  showView('view-relationship');
 }
 
 /* Some days, when he opens a chat after a real gap, she's already typing —
@@ -939,6 +1074,8 @@ function init() {
 
   $('#btn-chat-back').addEventListener('click', () => { renderFriendsList(); showView('view-friends'); });
   $('#btn-chat-edit').addEventListener('click', () => openEditor(currentFriend));
+  $('#chat-title-wrap').addEventListener('click', openRelationship);
+  $('#btn-rel-back').addEventListener('click', () => { if (currentFriend) openChat(currentFriend.id); else showView('view-friends'); });
 
   const composer = $('#composer');
   const input = $('#composer-input');
