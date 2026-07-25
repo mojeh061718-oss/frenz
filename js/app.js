@@ -263,6 +263,7 @@ function openEditor(friend) {
   $('#f-age').value = p.age || 25;
   $('#f-gender').value = p.gender || '';
   $('#f-personality').value = p.personality || '';
+  $('#f-plist').value = p.plist || '';
   $('#f-interests').value = p.interests || '';
   $('#f-style').value = p.style || '';
   $('#f-backstory').value = p.backstory || '';
@@ -281,6 +282,7 @@ async function saveFriendFromForm(e) {
     age: parseInt($('#f-age').value, 10) || null,
     gender: $('#f-gender').value.trim(),
     personality: $('#f-personality').value.trim(),
+    plist: $('#f-plist').value.trim(),
     interests: $('#f-interests').value.trim(),
     style: $('#f-style').value.trim(),
     backstory: $('#f-backstory').value.trim(),
@@ -293,8 +295,9 @@ async function saveFriendFromForm(e) {
   let friend;
   if (editingId) {
     friend = await DB.getFriend(editingId);
-    profile.plist = friend.profile.plist || ''; // keep the compact trait list templates carry
-    friend.profile = profile;
+    // MERGE, never replace: the form covers only some fields — a wholesale
+    // swap silently destroyed reveals, sliders, and greetings on every edit.
+    Object.assign(friend.profile, profile);
   } else {
     friend = {
       id: uid(),
@@ -315,7 +318,12 @@ async function saveFriendFromForm(e) {
   }
   await DB.saveFriend(friend);
   await renderFriendsList();
-  if (editingId) openChat(friend.id); else showView('view-friends');
+  if (editingId) {
+    toast('Saved — takes effect on her next reply.');
+    openChat(friend.id);
+  } else {
+    showView('view-friends');
+  }
   editingId = null;
 }
 
