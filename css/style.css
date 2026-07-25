@@ -156,6 +156,10 @@ details.tune label { margin-top: 12px; }
 .rel-trend.stale { color: #ffb454; }
 .rel-card-detail { color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
 .chat-title { cursor: pointer; }
+
+.img-preview { max-width: 160px; border-radius: 12px; margin-top: 8px; }
+.photo-viewer { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.92); display: flex; align-items: center; justify-content: center; }
+.photo-viewer img { max-width: 100%; max-height: 100%; }
 .form { padding: 18px 18px calc(30px + var(--safe-bottom)); display: flex; flex-direction: column; gap: 16px; }
 .form label { display: flex; flex-direction: column; gap: 6px; font-size: 0.88rem; color: var(--muted); font-weight: 500; }
 .form input, .form textarea, .form select {
@@ -246,6 +250,11 @@ details.tune label { margin-top: 12px; }
   width: 10px; height: 20px; background: var(--ios-chat-bg);
   border-bottom-left-radius: 10px;
 }
+
+/* photo bubbles: the image IS the bubble — no background, no tail blobs */
+.msg.photo-msg, .msg.photo-msg.them, .msg.photo-msg.me { padding: 0; background: none; max-width: 72%; }
+.msg.photo-msg img { display: block; width: 100%; border-radius: 18px; cursor: pointer; }
+.msg.photo-msg.tail::before, .msg.photo-msg.tail::after { content: none; }
 
 .msg.sys { align-self: center; background: none; color: var(--ios-gray-text); font-size: 0.78rem; text-align: center; max-width: 92%; }
 .msg-time { align-self: center; color: var(--ios-gray-text); font-size: 0.7rem; font-weight: 500; margin: 14px 0 2px; }

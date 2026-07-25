@@ -880,6 +880,11 @@ const ClaudeAPI = {
         parts.push('', `(It has been about ${gap} since the last message. React to the gap naturally if it matters to you.)`);
       }
     }
+    // Settings is a page global (db.js); guarded so headless tests that load
+    // api.js alone still work. No image model configured → she never hears
+    // that photos are a thing.
+    const photo = this.photoNote(typeof Settings !== 'undefined' ? Settings.get() : null);
+    if (photo) parts.push('', ...photo);
     return parts.join('\n');
   },
 
@@ -1130,6 +1135,101 @@ const ClaudeAPI = {
       preset: null, // preset-specific quirks (Gemini's, Groq's) don't apply here
       baseUrl: this._bedrockHost(entry) + '/openai/v1'
     });
+  },
+
+  /* ---------------- photos (Bedrock image models — Nova Canvas) ----------
+     Separate model family from the chat models: text-to-image via the same
+     Bedrock API key. Two candidate routes, tried in order, because browser
+     reachability differs by account/region and only a live call settles it:
+       1. native bedrock-runtime InvokeModel (Bearer API key, Nova body)
+       2. the Mantle host's OpenAI-compatible images route
+     Fidelity note: these models generate a NEW person every time, so photo
+     prompts steer toward partial/candid shots — which is also exactly what
+     a careful married woman would send. */
+
+  imageEntry(settings) {
+    return ((settings && settings.pool) || []).find(e =>
+      e && e.enabled && e.kind === 'bedrock' && e.apiKey && e.imageModel) || null;
+  },
+
+  _IMAGE_NEGATIVE: 'professional studio photography, posed fashion model, perfect makeup, watermark, text, caption, logo, cartoon, illustration, 3d render, oversaturated, hdr, extra fingers, deformed hands',
+
+  _imagePrompt(desc) {
+    return 'Candid amateur smartphone photo: ' + desc +
+      '. Realistic, natural lighting, slight grain, ordinary lived-in home detail, shot casually on a phone.';
+  },
+
+  async generateImage(entry, description, opts) {
+    const o = opts || {};
+    const model = entry.imageModel;
+    const region = entry.imageRegion || entry.region || 'us-east-1';
+    const width = o.width || 768, height = o.height || 1280;
+    const prompt = (o.raw ? description : this._imagePrompt(description)).slice(0, 1000);
+
+    const attempts = [
+      {
+        url: `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(model)}/invoke`,
+        body: {
+          taskType: 'TEXT_IMAGE',
+          textToImageParams: { text: prompt, negativeText: this._IMAGE_NEGATIVE },
+          imageGenerationConfig: { numberOfImages: 1, width, height, quality: o.quality || 'standard', cfgScale: 6.5 }
+        },
+        parse: d => d && d.images && d.images[0]
+      },
+      {
+        url: `https://bedrock-mantle.${region}.api.aws/openai/v1/images/generations`,
+        body: { model, prompt, n: 1, size: `${width}x${height}`, response_format: 'b64_json' },
+        parse: d => d && d.data && d.data[0] && d.data[0].b64_json
+      }
+    ];
+
+    let lastErr = null, allTransport = true;
+    for (const a of attempts) {
+      let res;
+      try {
+        res = await fetch(a.url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + entry.apiKey },
+          body: JSON.stringify(a.body)
+        });
+      } catch {
+        lastErr = null; // transport/CORS — the next route may still work
+        continue;
+      }
+      allTransport = false;
+      if (!res.ok) {
+        lastErr = new Error(await this._bedrockError(res, region, model));
+        // a missing route (404/405) on one host says nothing about the other
+        if (res.status === 404 || res.status === 405) continue;
+        throw lastErr;
+      }
+      let data = null;
+      try { data = await res.json(); } catch { /* falls through to no-image error */ }
+      const b64 = a.parse(data);
+      if (b64) return 'data:image/png;base64,' + b64;
+      const detail = data && (data.error || data.message);
+      lastErr = new Error('Bedrock answered but returned no image.' + (detail ? ' ' + String(typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 180) : ''));
+    }
+    if (allTransport) {
+      throw new Error(`Couldn't reach Bedrock's image endpoints in ${region} from the browser (likely CORS). The chat models are unaffected. Check the region, and if it persists this route may need a proxy.`);
+    }
+    throw lastErr || new Error('Image generation failed.');
+  },
+
+  /* Cheap 512px probe for the settings screen: proves key + model access +
+     browser reachability in one shot, and shows the actual picture. */
+  testImage(entry) {
+    return this.generateImage(entry, 'a coffee mug on a kitchen counter, morning light', { width: 512, height: 512 });
+  },
+
+  /* Prompt section injected ONLY when an image model is configured — she
+     gains the ability the moment it exists, and never hears about it before. */
+  photoNote(settings) {
+    if (!this.imageEntry(settings)) return null;
+    return [
+      '## Sending photos',
+      'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now — the room, the light, what of you is in frame. Keep it consistent with your day, your body, and anything you\'ve already told him. You\'re careful about what exists on his phone, so you favor candid partial shots — hands, outfit, mirror crops, the scene — over clear face pics. Photos are RARE: most conversations have none, you never announce or offer one unprompted twice, and you never send one just because he pushed — same rules as everything else about what you will and won\'t give.'
+    ];
   },
 
   _sendEntry(entry, friend, history, settings, lastMessageTs) {
@@ -1984,6 +2084,7 @@ const ClaudeAPI = {
      line by line. Patterns are strict so real texts ("update: he did it
      again") are never eaten. */
   _isArtifactBubble(s) {
+    if (/^\s*\[\s*photo\b/i.test(s)) return false; // her photo marker — the one bracket-opener that's a real bubble
     return /^[{}\[\]]/.test(s) ||                 // starts with JSON structure
       /^"[A-Za-z_]+"\s*:/.test(s) ||              // "key": ...
       /^[\s{}\[\]"',:.]+$/.test(s) ||             // pure structural characters

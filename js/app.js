@@ -496,11 +496,15 @@ async function maybeOpener(friend) {
     // one request, never in stored history.
     const nudge = { role: 'user', text: ClaudeAPI.openerNudge(Date.now() - last.ts, last.role === 'assistant') };
     const result = await ClaudeAPI.chat(friend, history.concat([nudge]), settings, last.ts, null);
+    let openerPreviews = result.bubbles.filter(b => !PHOTO_MARKER.test(b));
     if (!currentFriend || currentFriend.id !== friend.id) {
-      // he left the chat mid-generation — save quietly, no rendering
-      for (const b of result.bubbles) await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
+      // he left the chat mid-generation — save quietly, no rendering. Photo
+      // markers are dropped: generating into a chat nobody is watching
+      // spends money on an image she can simply take next time.
+      for (const b of openerPreviews) await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
     } else {
       $('#typing').classList.add('hidden');
+      openerPreviews = [];
       for (let i = 0; i < result.bubbles.length; i++) {
         const b = result.bubbles[i];
         if (i > 0) {
@@ -509,10 +513,8 @@ async function maybeOpener(friend) {
           await new Promise(r => setTimeout(r, Math.min(2200, 400 + b.length * 18)));
           $('#typing').classList.add('hidden');
         }
-        $('#chat-messages').appendChild(bubbleEl('assistant', b));
-        refreshTails();
-        scrollChat();
-        await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
+        const p = await deliverBubble(friend, b);
+        if (p) openerPreviews.push(p);
       }
     }
     if (result.state) {
@@ -522,7 +524,7 @@ async function maybeOpener(friend) {
       if (result.state.new_memories.length) ClaudeAPI.mergeMemories(friend, result.state.new_memories);
     }
     friend.lastActivity = Date.now();
-    if (result.bubbles.length) friend.lastPreview = result.bubbles[result.bubbles.length - 1];
+    if (openerPreviews.length) friend.lastPreview = openerPreviews[openerPreviews.length - 1];
     await DB.saveFriend(friend);
     renderFriendsList();
   } catch { /* silent — she just didn't text first today */ } finally {
@@ -545,7 +547,7 @@ async function renderMessages() {
       box.appendChild(t);
     }
     lastTs = m.ts;
-    box.appendChild(bubbleEl(m.role, m.text));
+    box.appendChild(bubbleEl(m.role, m.text, m));
   }
   if (!msgs.length) {
     const hint = document.createElement('div');
@@ -557,11 +559,63 @@ async function renderMessages() {
   refreshTails();
 }
 
-function bubbleEl(role, text) {
+function bubbleEl(role, text, msg) {
   const div = document.createElement('div');
   div.className = 'msg ' + (role === 'user' ? 'me' : role === 'sys' ? 'sys' : 'them');
-  div.textContent = text;
+  if (msg && msg.photo) {
+    div.classList.add('photo-msg');
+    const img = document.createElement('img');
+    img.src = msg.photo;
+    img.alt = 'photo';
+    img.addEventListener('click', () => {
+      const viewer = $('#photo-viewer');
+      viewer.querySelector('img').src = msg.photo;
+      viewer.classList.remove('hidden');
+    });
+    div.appendChild(img);
+  } else {
+    div.textContent = text;
+  }
   return div;
+}
+
+/* ---- her photos (Bedrock image model, optional) ----
+   The model marks a photo by making one bubble "[photo] <what it shows>".
+   The marker never renders: it either becomes a generated image bubble or,
+   when no image model is configured / generation fails, disappears. */
+const PHOTO_MARKER = /^\s*\[\s*photo\s*\]?\s*[:\-—]?\s*/i;
+
+async function deliverBubble(friend, b) {
+  const isPhoto = PHOTO_MARKER.test(b);
+  if (!isPhoto) {
+    $('#chat-messages').appendChild(bubbleEl('assistant', b));
+    refreshTails();
+    scrollChat();
+    await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
+    return b;
+  }
+  const desc = b.replace(PHOTO_MARKER, '').trim();
+  const entry = ClaudeAPI.imageEntry(Settings.get());
+  if (!entry || !desc) return null;
+  $('#typing').classList.remove('hidden');
+  $('#chat-status').textContent = 'sending a photo…';
+  scrollChat();
+  try {
+    const dataUrl = await ClaudeAPI.generateImage(entry, desc);
+    $('#typing').classList.add('hidden');
+    const msg = { friendId: friend.id, role: 'assistant', text: '', photo: dataUrl, photoDesc: desc, ts: Date.now() };
+    $('#chat-messages').appendChild(bubbleEl('assistant', '', msg));
+    refreshTails();
+    scrollChat();
+    await DB.addMessage(msg);
+    return '📷 Photo';
+  } catch (e) {
+    $('#typing').classList.add('hidden');
+    toast('Her photo didn\'t send — ' + e.message, 6000);
+    return null;
+  } finally {
+    $('#chat-status').textContent = fmtClock();
+  }
 }
 
 /* iMessage grouping: consecutive bubbles from the same side sit 2px apart and
@@ -665,6 +719,7 @@ async function sendMessage() {
     $('#typing').classList.add('hidden');
 
     // reveal bubbles one by one with human-ish pacing
+    const previews = [];
     for (let i = 0; i < result.bubbles.length; i++) {
       const b = result.bubbles[i];
       if (i > 0) {
@@ -673,10 +728,8 @@ async function sendMessage() {
         await new Promise(r => setTimeout(r, Math.min(2200, 400 + b.length * 18)));
         $('#typing').classList.add('hidden');
       }
-      $('#chat-messages').appendChild(bubbleEl('assistant', b));
-      refreshTails();
-      scrollChat();
-      await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
+      const p = await deliverBubble(friend, b);
+      if (p) previews.push(p);
     }
 
     // apply the friend's private state deltas — the model proposes, the app
@@ -696,7 +749,7 @@ async function sendMessage() {
       }
     }
     friend.lastActivity = Date.now();
-    friend.lastPreview = result.bubbles.length ? result.bubbles[result.bubbles.length - 1] : text;
+    friend.lastPreview = previews.length ? previews[previews.length - 1] : text;
     await DB.saveFriend(friend);
     renderFriendsList();
 
@@ -704,7 +757,7 @@ async function sendMessage() {
     // has slipped past the context window — fire-and-forget, best-effort
     const fullLen = history.length + result.bubbles.length;
     if (ClaudeAPI.sceneStale(friend, fullLen)) {
-      const fullHistory = history.concat(result.bubbles.map(b => ({ role: 'assistant', text: b })));
+      const fullHistory = history.concat(result.bubbles.filter(b => !PHOTO_MARKER.test(b)).map(b => ({ role: 'assistant', text: b })));
       ClaudeAPI.recordScene(friend, fullHistory, settings).then(async (rec) => {
         if (!rec) return;
         const f = await DB.getFriend(friend.id);
@@ -887,6 +940,13 @@ function openEntryEditor(id) {
   const isBedrock = e.kind === 'bedrock';
   $('#e-region-label').classList.toggle('hidden', !isBedrock);
   $('#e-url').parentElement.classList.toggle('hidden', isBedrock);
+  $('#e-image-wrap').classList.toggle('hidden', !isBedrock);
+  $('#btn-test-image').classList.toggle('hidden', !isBedrock);
+  $('#e-img-preview').classList.add('hidden');
+  if (isBedrock) {
+    $('#e-img-model').value = e.imageModel || '';
+    $('#e-img-region').value = e.imageRegion || '';
+  }
   $('#e-modelhint').textContent = isBedrock
     ? 'Claude models are listed. For anything else on Bedrock — Grok, GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'
     : 'Fetched live from the provider, so the list is never stale.';
@@ -1020,7 +1080,7 @@ async function purgeStateArtifacts() {
   for (const f of friends) {
     const msgs = await DB.getMessages(f.id);
     for (const m of msgs) {
-      if (m.role === 'assistant' && ClaudeAPI._isArtifactBubble(String(m.text || '').trim())) {
+      if (m.role === 'assistant' && !m.photo && ClaudeAPI._isArtifactBubble(String(m.text || '').trim())) {
         await DB.deleteMessage(m.id);
         removed++;
       }
@@ -1075,6 +1135,7 @@ function init() {
   $('#btn-chat-back').addEventListener('click', () => { renderFriendsList(); showView('view-friends'); });
   $('#btn-chat-edit').addEventListener('click', () => openEditor(currentFriend));
   $('#chat-title-wrap').addEventListener('click', openRelationship);
+  $('#photo-viewer').addEventListener('click', () => $('#photo-viewer').classList.add('hidden'));
   $('#btn-rel-back').addEventListener('click', () => { if (currentFriend) openChat(currentFriend.id); else showView('view-friends'); });
 
   const composer = $('#composer');
@@ -1116,6 +1177,35 @@ function init() {
   $('#e-region').addEventListener('input', () => {
     const e = draftEntry(selectedEntryId);
     if (e) e.region = $('#e-region').value.trim() || 'us-east-1';
+  });
+  $('#e-img-model').addEventListener('input', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) e.imageModel = $('#e-img-model').value.trim();
+  });
+  $('#e-img-region').addEventListener('input', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) e.imageRegion = $('#e-img-region').value.trim();
+  });
+  $('#btn-test-image').addEventListener('click', async () => {
+    const e = draftEntry(selectedEntryId);
+    if (!e) return;
+    const out = $('#e-test-result');
+    if (!e.apiKey) { out.textContent = '✗ Paste your Bedrock API key first.'; return; }
+    if (!e.imageModel) {
+      e.imageModel = 'amazon.nova-canvas-v1:0';
+      $('#e-img-model').value = e.imageModel;
+    }
+    out.textContent = 'Generating a test image (can take ~15s)…';
+    $('#e-img-preview').classList.add('hidden');
+    try {
+      const url = await ClaudeAPI.testImage(e);
+      const img = $('#e-img-preview');
+      img.src = url;
+      img.classList.remove('hidden');
+      out.textContent = `✓ ${e.imageModel} works — she can send photos now. Save settings to keep it.`;
+    } catch (err) {
+      out.textContent = '✗ ' + err.message;
+    }
   });
   $('#btn-test-entry').addEventListener('click', async () => {
     const e = draftEntry(selectedEntryId);
