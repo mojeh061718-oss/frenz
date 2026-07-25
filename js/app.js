@@ -640,10 +640,18 @@ function openEntryEditor(id) {
 async function refreshEntryModels(pickDefault) {
   const e = draftEntry(selectedEntryId);
   if (!e || e.kind !== 'openai' || !e.baseUrl) return;
-  let models;
+  let models, listFailed = false;
   try { models = await ClaudeAPI.listModels(e.baseUrl, e.apiKey); }
-  catch { models = ClaudeAPI.FALLBACK_OAI_MODELS; }
-  if (!models.length) models = ClaudeAPI.FALLBACK_OAI_MODELS;
+  catch { models = []; listFailed = true; }
+  if (!models.length) {
+    // Fall back only to THIS provider's own models — never a generic list,
+    // which is how a Gemini entry ended up set to a Llama model.
+    models = ClaudeAPI.fallbackModelsFor(e.preset);
+    listFailed = true;
+  }
+  if (listFailed && !models.length) {
+    toast(`Couldn't load ${e.label || 'provider'} models — check the key or base URL, or type a model name.`, 5000);
+  }
   const dl = $('#e-models');
   dl.innerHTML = '';
   for (const m of models) {
@@ -651,7 +659,11 @@ async function refreshEntryModels(pickDefault) {
     o.value = m.id;
     dl.appendChild(o);
   }
-  if ((pickDefault || !e.model) && models.length) {
+  // A model belonging to another provider is left over from the old shared
+  // fallback list — replace it instead of making the user spot it.
+  const contaminated = ClaudeAPI.isCrossProviderModel(e.preset, e.model);
+  if (contaminated) toast(`${e.model} isn't a ${e.label || 'provider'} model — picking a valid one.`, 4500);
+  if ((pickDefault || !e.model || contaminated) && models.length) {
     e.model = ClaudeAPI.pickDefaultModel(models, e.preset);
     $('#e-model').value = e.model;
     renderPool();

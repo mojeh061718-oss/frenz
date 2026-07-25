@@ -1512,6 +1512,39 @@ const ClaudeAPI = {
     { id: 'llama-3.1-8b-instant', context: 131072 }
   ],
 
+  /* Per-provider fallbacks. A shared list is actively harmful here: if the
+     live call fails, a generic list hands Gemini a Llama model, which then
+     404s on every message with nothing pointing at the cause. A provider may
+     only ever fall back to its own models. */
+  PRESET_FALLBACK_MODELS: {
+    gemini: ['gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-2.5-flash'],
+    groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'],
+    cerebras: ['gpt-oss-120b', 'glm-4.7'],
+    llm7: ['gpt-oss:20b', 'minimax-m2.7'],
+    pollinations: ['openai-fast'],
+    zen: ['big-pickle']
+  },
+
+  /* Empty for an unknown/custom endpoint — better to admit we don't know and
+     let the user type a model than to guess one that cannot work. */
+  fallbackModelsFor(preset) {
+    const ids = (preset && this.PRESET_FALLBACK_MODELS[preset]) || null;
+    return ids ? ids.map(id => ({ id, context: null })) : [];
+  },
+
+  /* True when a model demonstrably belongs to a DIFFERENT provider — the
+     signature of an earlier bad auto-pick. Deliberately conservative: only
+     flags ids we know belong elsewhere, so a legitimate unlisted model is
+     never thrown away. */
+  isCrossProviderModel(preset, model) {
+    if (!preset || !model) return false;
+    const mine = this.PRESET_FALLBACK_MODELS[preset];
+    if (!mine || mine.includes(model)) return false;
+    return Object.keys(this.PRESET_FALLBACK_MODELS).some(
+      p => p !== preset && this.PRESET_FALLBACK_MODELS[p].includes(model)
+    );
+  },
+
   async listModels(baseUrl, key) {
     const base = (baseUrl || '').replace(/\/+$/, '');
     const headers = key ? { authorization: 'Bearer ' + key } : {};
