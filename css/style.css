@@ -251,6 +251,9 @@ details.tune label { margin-top: 12px; }
   border-bottom-left-radius: 10px;
 }
 
+/* long-press delete needs the native iOS text callout out of the way */
+.msg { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+
 /* photo bubbles: the image IS the bubble — no background, no tail blobs */
 .msg.photo-msg, .msg.photo-msg.them, .msg.photo-msg.me { padding: 0; background: none; max-width: 72%; }
 .msg.photo-msg img { display: block; width: 100%; border-radius: 18px; cursor: pointer; }

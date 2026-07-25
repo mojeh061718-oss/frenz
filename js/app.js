@@ -516,6 +516,7 @@ async function maybeOpener(friend) {
         const p = await deliverBubble(friend, b);
         if (p) openerPreviews.push(p);
       }
+      maybeFallbackNote(result);
     }
     if (result.state) {
       const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, { history, gapMs: Date.now() - last.ts });
@@ -547,7 +548,9 @@ async function renderMessages() {
       box.appendChild(t);
     }
     lastTs = m.ts;
-    box.appendChild(bubbleEl(m.role, m.text, m));
+    const el = bubbleEl(m.role, m.text, m);
+    armMessageDelete(el, m.id);
+    box.appendChild(el);
   }
   if (!msgs.length) {
     const hint = document.createElement('div');
@@ -579,6 +582,51 @@ function bubbleEl(role, text, msg) {
   return div;
 }
 
+/* ---- message pruning ----
+   Long-press any bubble to delete it. The point isn't tidiness: when a bad
+   provider day writes nonsense into the thread, that nonsense is HISTORY —
+   every later reply sees it and builds on it. Pruning the junk is how a
+   derailed conversation gets its voice back. */
+function armMessageDelete(el, msgId) {
+  if (!msgId) return;
+  let timer = null;
+  el.addEventListener('pointerdown', () => {
+    timer = setTimeout(async () => {
+      timer = null;
+      if (!confirm('Delete this message? It disappears from the conversation and from what she sees from now on.')) return;
+      await DB.deleteMessage(msgId);
+      el.remove();
+      refreshTails();
+    }, 550);
+  });
+  for (const ev of ['pointerup', 'pointermove', 'pointercancel', 'pointerleave']) {
+    el.addEventListener(ev, () => { if (timer) { clearTimeout(timer); timer = null; } });
+  }
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+/* ---- provider-downgrade visibility ----
+   When the provider the user actually set up (Bedrock, Anthropic, any keyed
+   entry) fails or is cooling down and a FREE backup model writes the reply,
+   the voice quality visibly drops — and with no explanation it reads as the
+   personas regressing. Surface it: one small transient line in the chat,
+   naming who was skipped, why, and who answered. Throttled so an outage
+   doesn't stamp every message. */
+let fallbackNoteAt = 0;
+function maybeFallbackNote(result) {
+  if (!result || result.providerKeyed) return; // the good provider answered
+  const skippedKeyed = (result.skipped || []).filter(s => s.keyed);
+  if (!skippedKeyed.length) return;            // nothing better exists to miss
+  if (Date.now() - fallbackNoteAt < 10 * 60000) return;
+  fallbackNoteAt = Date.now();
+  const s = skippedKeyed[0];
+  const note = document.createElement('div');
+  note.className = 'msg sys transient-note';
+  note.textContent = `⚠️ ${s.label} didn't answer (${s.reason}) — a free backup model (${result.provider}) wrote this, so her voice may be off until it recovers. It retries automatically.`;
+  $('#chat-messages').appendChild(note);
+  scrollChat();
+}
+
 /* ---- her photos (Bedrock image model, optional) ----
    The model marks a photo by making one bubble "[photo] <what it shows>".
    The marker never renders: it either becomes a generated image bubble or,
@@ -588,10 +636,11 @@ const PHOTO_MARKER = /^\s*\[\s*photo\s*\]?\s*[:\-—]?\s*/i;
 async function deliverBubble(friend, b) {
   const isPhoto = PHOTO_MARKER.test(b);
   if (!isPhoto) {
-    $('#chat-messages').appendChild(bubbleEl('assistant', b));
+    const el = bubbleEl('assistant', b);
+    $('#chat-messages').appendChild(el);
     refreshTails();
     scrollChat();
-    await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
+    armMessageDelete(el, await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() }));
     return b;
   }
   const desc = b.replace(PHOTO_MARKER, '').trim();
@@ -604,10 +653,11 @@ async function deliverBubble(friend, b) {
     const dataUrl = await ClaudeAPI.generateImage(entry, desc);
     $('#typing').classList.add('hidden');
     const msg = { friendId: friend.id, role: 'assistant', text: '', photo: dataUrl, photoDesc: desc, ts: Date.now() };
-    $('#chat-messages').appendChild(bubbleEl('assistant', '', msg));
+    const el = bubbleEl('assistant', '', msg);
+    $('#chat-messages').appendChild(el);
     refreshTails();
     scrollChat();
-    await DB.addMessage(msg);
+    armMessageDelete(el, await DB.addMessage(msg));
     return '📷 Photo';
   } catch (e) {
     $('#typing').classList.add('hidden');
@@ -685,11 +735,12 @@ async function sendMessage() {
   const startHint = $('#chat-start-hint');
   if (startHint) startHint.remove();
   document.querySelectorAll('.transient-note').forEach(n => n.remove());
-  $('#chat-messages').appendChild(bubbleEl('user', text));
+  const meEl = bubbleEl('user', text);
+  $('#chat-messages').appendChild(meEl);
   refreshTails();
   updateSendButton();
   scrollChat();
-  await DB.addMessage({ friendId: friend.id, role: 'user', text, ts: Date.now() });
+  armMessageDelete(meEl, await DB.addMessage({ friendId: friend.id, role: 'user', text, ts: Date.now() }));
 
   const history = priorMsgs
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -731,6 +782,7 @@ async function sendMessage() {
       const p = await deliverBubble(friend, b);
       if (p) previews.push(p);
     }
+    maybeFallbackNote(result);
 
     // apply the friend's private state deltas — the model proposes, the app
     // disposes (clamps, dampens, gates, caps). Persisted, never displayed.

@@ -1076,19 +1076,51 @@ const ClaudeAPI = {
    * history: [{role:'user'|'assistant', text}] oldest→newest, last one the new user msg.
    * Walks the pool in priority order; fails over on quota/transport problems only.
    */
+  /* Did the user deliberately set this entry up (a key, or a local server)?
+     Failing over PAST one of these is a quality downgrade worth surfacing;
+     skipping an unconfigured or keyless entry is just routine pool order. */
+  _entryKeyed(entry, settings) {
+    if (!entry) return false;
+    if (entry.kind === 'anthropic') return !!(settings && settings.apiKey);
+    if (entry.kind === 'bedrock') return !!entry.apiKey;
+    if (entry.kind === 'ollama') return true;
+    return !!(entry.apiKey && String(entry.apiKey).trim());
+  },
+
+  _skipReason(entry) {
+    const u = this._usageFor(entry.id);
+    if (u.blockedUntil && u.blockedUntil > Date.now()) {
+      return 'cooling down until ' + new Date(u.blockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+    const hints = this._presetOf(entry);
+    if (hints && hints.rpd && u.requests >= hints.rpd) return 'daily free limit reached';
+    if (hints && hints.tpm && this._minuteTokens(entry.id) >= hints.tpm) return 'rate-limited this minute';
+    return 'temporarily unavailable';
+  },
+
   async chat(friend, history, settings, lastMessageTs, onRetry) {
     const entries = this.activeEntries(settings);
     if (!entries.length) {
       throw new Error('No provider is configured — open Settings and add a key.');
     }
     let lastErr = null;
+    // Every provider passed over on the way to the one that answers, with
+    // why — so the UI can SAY a better model was skipped instead of letting
+    // the reply quietly get worse. Silent degradation reads as "the app
+    // suddenly writes badly"; named degradation reads as an outage.
+    const skipped = [];
     for (const entry of entries) {
-      if (!this.entryAvailable(entry)) continue;
+      if (!this.entryAvailable(entry)) {
+        skipped.push({ label: entry.label || entry.id, keyed: this._entryKeyed(entry, settings), reason: this._skipReason(entry) });
+        continue;
+      }
       try {
         const result = await this._chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry);
         this._noteServed(entry);
         if (result.bubbles) result.bubbles = this._dropEchoes(result.bubbles, history);
         result.provider = entry.label || entry.id;
+        result.providerKeyed = this._entryKeyed(entry, settings);
+        result.skipped = skipped;
         return result;
       } catch (err) {
         // Quota, rate limit, server error, or network failure → next provider.
@@ -1096,6 +1128,7 @@ const ClaudeAPI = {
         // never lands here at all — it returns as a normal result and is
         // NEVER routed around.
         if (!err.failover) throw err;
+        skipped.push({ label: entry.label || entry.id, keyed: this._entryKeyed(entry, settings), reason: String(err.message || 'error').slice(0, 140) });
         lastErr = err;
       }
     }
