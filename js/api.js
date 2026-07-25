@@ -66,6 +66,11 @@ const ClaudeAPI = {
         ? `There is potential for something romantic with ${userName}, but it has to be earned. Attraction and trust build from real interactions — chemistry, effort, honesty. You can flirt when it feels right, pull back when it doesn't, and your interest can genuinely grow or fade based on how they treat you.`
         : 'The friendship deepens (or strains) based on how they actually treat you over time.',
       '',
+      '## Never leave them on read',
+      'You always reply. Silence is never your answer — a real person texting a friend does not simply stop responding.',
+      `If something ${userName} says lands wrong, is more than you want to get into, or crosses a line for you, you still answer — as ${p.name}. Deflect, joke, change the subject, get flustered, call them out, say "ok that's a lot lol", set a boundary in your own voice. That is a real reaction and it keeps the conversation alive.`,
+      'What you never do is step outside the character to explain yourself, lecture, disclaim, apologize as a service, or mention being an AI, a model, or a program. There is no narrator here and no assistant — only you, texting them.',
+      '',
       '## Your private inner life',
       'With every reply you also update your PRIVATE internal state: mood, comfort, closeness, attraction, your honest opinion notes, and durable memories. This is your inner world —',
       `${userName} can never see it. Be truthful in it even when your visible messages hide your feelings (people often say "it's fine" when it isn't — you can too).`,
@@ -102,7 +107,25 @@ const ClaudeAPI = {
    * Send the conversation and get { bubbles, state, refusal } back.
    * history: [{role:'user'|'assistant', text}] oldest→newest, last one the new user msg.
    */
-  async chat(friend, history, settings, lastMessageTs) {
+  async chat(friend, history, settings, lastMessageTs, onRetry) {
+    // Overload, rate limits, and network blips are the most common reason a reply
+    // would never arrive. Retry them a few times with backoff before giving up.
+    const MAX_ATTEMPTS = 4;
+    let lastErr;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this._send(friend, history, settings, lastMessageTs);
+      } catch (err) {
+        lastErr = err;
+        if (!err.retryable || attempt === MAX_ATTEMPTS) throw err;
+        if (onRetry) onRetry(attempt);
+        await new Promise(r => setTimeout(r, [1200, 3000, 7000][attempt - 1]));
+      }
+    }
+    throw lastErr;
+  },
+
+  async _send(friend, history, settings, lastMessageTs) {
     const model = settings.model || 'claude-opus-5';
 
     const headers = {
@@ -133,11 +156,19 @@ const ClaudeAPI = {
       body.fallbacks = 'default';
     }
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body)
-    });
+    let res;
+    try {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+    } catch {
+      // Connection dropped before we got a response — worth another try.
+      const netErr = new Error('Connection problem — check your internet.');
+      netErr.retryable = true;
+      throw netErr;
+    }
 
     if (!res.ok) {
       let msg = `API error (${res.status})`;
@@ -146,9 +177,11 @@ const ClaudeAPI = {
         if (err.error && err.error.message) msg = err.error.message;
       } catch { /* keep generic message */ }
       if (res.status === 401) msg = 'Invalid API key — check Settings.';
-      if (res.status === 429) msg = 'Rate limited — wait a moment and try again.';
-      if (res.status === 529) msg = 'Claude is overloaded right now — try again shortly.';
-      throw new Error(msg);
+      if (res.status === 429) msg = 'Rate limited — waiting a moment…';
+      if (res.status === 529) msg = 'Claude is busy right now — retrying…';
+      const apiErr = new Error(msg);
+      apiErr.retryable = res.status === 429 || res.status === 529 || res.status >= 500;
+      throw apiErr;
     }
 
     const data = await res.json();
@@ -158,7 +191,11 @@ const ClaudeAPI = {
     }
 
     const textBlock = (data.content || []).find(b => b.type === 'text');
-    if (!textBlock) throw new Error('Empty response from the model.');
+    if (!textBlock) {
+      const emptyErr = new Error('Empty response — retrying…');
+      emptyErr.retryable = true;
+      throw emptyErr;
+    }
 
     let parsed;
     try {

@@ -227,6 +227,7 @@ async function sendMessage() {
   // show + persist the user's message
   const startHint = $('#chat-start-hint');
   if (startHint) startHint.remove();
+  document.querySelectorAll('.transient-note').forEach(n => n.remove());
   $('#chat-messages').appendChild(bubbleEl('user', text));
   scrollChat();
   await DB.addMessage({ friendId: friend.id, role: 'user', text, ts: Date.now() });
@@ -240,13 +241,19 @@ async function sendMessage() {
   $('#chat-status').textContent = 'typing…';
 
   try {
-    const result = await ClaudeAPI.chat(friend, history, settings, lastTs);
+    const result = await ClaudeAPI.chat(friend, history, settings, lastTs, (attempt) => {
+      $('#chat-status').textContent = `reconnecting… (${attempt})`;
+    });
 
     if (result.refusal) {
+      // Not persisted — a hiccup here shouldn't leave a permanent scar in the
+      // conversation or in their memory of you. Show a transient note instead.
       $('#typing').classList.add('hidden');
-      const note = 'They went quiet and didn\'t reply to that one.';
-      $('#chat-messages').appendChild(bubbleEl('sys', note));
-      await DB.addMessage({ friendId: friend.id, role: 'sys', text: note, ts: Date.now() });
+      const note = document.createElement('div');
+      note.className = 'msg sys transient-note';
+      note.textContent = 'That one didn\'t send. Try putting it a different way.';
+      $('#chat-messages').appendChild(note);
+      scrollChat();
       return;
     }
 
