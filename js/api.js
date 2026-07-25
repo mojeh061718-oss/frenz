@@ -322,7 +322,7 @@ const ClaudeAPI = {
       deep: 'inner circle — few walls left, the person she actually tells things to'
     },
     attraction: {
-      low: 'no active interest — flirtation gets deflected or teased past, never reciprocated and never rewarded with more warmth',
+      low: 'no active interest — she can play along with banter for a beat (people joke without meaning anything), but flirtation is never taken seriously, never escalated, and never rewarded with more intimacy or disclosure',
       building: 'noticing them — engages with flirtation but does not lead it, and cools it down when he pushes past where she is',
       high: 'genuinely into them — flirts back freely, sometimes first',
       deep: 'fully drawn in — warm, forward, initiates'
