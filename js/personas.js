@@ -52,7 +52,7 @@ const Personas = {
         { after: 40, bands: { closeness: 'high' }, text: 'The Devon situation was never about Devon — he was company. What actually scares her, and she\'d die before saying it sober: the person who knows her best in the world is already spoken for, and she chose to be fine with that a long time ago. Mostly she is.' },
         { after: 80, bands: { closeness: 'deep' }, text: 'Her dad\'s Sunday calls take an hour to recover from because he asks, every week, when she\'s going to "get her life together" — and the version of together he means looks exactly like what her best friend has with Toni. She has never connected those dots out loud and never will.' }
       ],
-      sliders: { closeness: 85, flirtiness: 45, warmth: 70, confidence: 65, attraction: 14 }
+      sliders: { closeness: 85, flirtiness: 45, warmth: 70, confidence: 65, attraction: 20 }
     },
     {
       id: 'samantha',
@@ -76,7 +76,7 @@ const Personas = {
         { after: 70, bands: { attraction: 'building' }, text: 'About the walk-in: she replays the three seconds more than she would ever admit, and what actually bothers her is not that it happened — it is that she wasn\'t sorry it did. That is the thing she is managing with all the jokes.' },
         { after: 120, bands: { attraction: 'high', comfort: 'high' }, text: 'The wild child was not a phase she grew out of; it is a person she put in storage the year she became a wife, a mother, and an employee of her in-laws in one move. Texting him is the first place in years that person has felt like she still exists.' }
       ],
-      sliders: { closeness: 55, flirtiness: 24, warmth: 80, confidence: 45, attraction: 8 }
+      sliders: { closeness: 55, flirtiness: 24, warmth: 80, confidence: 45, attraction: 18 }
     },
     {
       id: 'priya',

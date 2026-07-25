@@ -1155,6 +1155,18 @@ async function upgradeTemplateFriends() {
       const t = Personas.templates.find(x => x.name === f.profile.name);
       if (t && t.reveals) { f.profile.reveals = t.reveals; changed = true; }
     }
+    // One-time floor to the current template seed: a rounding bug froze all
+    // positive state movement for weeks, so long-running friends sit at their
+    // day-one numbers no matter what actually happened between them. Friends
+    // below today's seed get lifted to it — never lowered, never repeated.
+    if (!f.stateReseeded) {
+      const t = Personas.templates.find(x => x.name === f.profile.name);
+      if (t && t.sliders && f.state && (Number(f.state.attraction) || 0) < t.sliders.attraction) {
+        f.state.attraction = t.sliders.attraction;
+      }
+      f.stateReseeded = true;
+      changed = true;
+    }
     if (changed) await DB.saveFriend(f);
   }
 }

@@ -401,7 +401,7 @@ const ClaudeAPI = {
       deep: 'inner circle — few walls left, the person she actually tells things to'
     },
     attraction: {
-      low: 'no active interest yet — banter is banter, but a LIGHT flirt aimed at her gets no performance: a short unbothered reply that ignores the angle, then the conversation moves on (big swings are different — those always get a reaction, even if the reaction is a shutdown). Quiet non-engagement is the answer; it never needs a wall or a big theatrical laugh. But unbothered is about the ANGLE, never the person: his ideas, jokes, and invitations still get real engagement — a playful counter, a genuine question, an actual yes or an actual no with life in it. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality. The right register on the right nights, sustained over real time, is how interest STARTS — and the first sign is her responses warming from unbothered to playful, long before any words change',
+      low: 'no active interest yet — banter is banter, but a LIGHT flirt aimed at her gets no performance: a short unbothered reply that ignores the angle, then the conversation moves on (big swings are different — those always get a reaction, even if the reaction is a shutdown). Quiet non-engagement is the answer; it never needs a wall or a big theatrical laugh. But unbothered is about the ANGLE, never the person: his ideas, jokes, and invitations still get real engagement — a playful counter, a genuine question, an actual yes or an actual no with life in it. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality. And an actually GOOD line can beat her on the merits: a real laugh, the point conceded, sometimes one returned volley — then back to normal. Losing a round to good material is being human, not being interested, and it\'s what keeps this fun for both of them. The right register on the right nights, sustained over real time, is how interest STARTS — and the first sign is her responses warming from unbothered to playful, long before any words change',
       building: 'noticing them — a flirt now gets engagement: indirect, deniable, volleying back without accepting, letting it run a beat longer than she should. She does not lead it, and she cools it when he jumps ahead of where she is',
       high: 'genuinely into them — flirts back freely, sometimes first',
       deep: 'fully drawn in — warm, forward, initiates'
@@ -484,9 +484,9 @@ const ClaudeAPI = {
     BUILD_ATTR: 2,      // her attraction actually moving feeds it more
     DECAY: -1,          // mundane exchanges let it dissipate
     DROP_NEG: -4,       // a turn that costs comfort/attraction dumps it
-    HUM_MIN: 45,        // she starts noticing it
+    HUM_MIN: 35,        // she starts noticing it — early enough to feel
     RELEASE_MIN: 70,    // eligible to come to a head
-    ROLL_PCT: 45,       // ...on ~45% of eligible nights (per-day roll)
+    ROLL_PCT: 55,       // ...on ~55% of eligible nights (per-day roll)
     SPEND: 8,           // the release night burns it down over ~4 exchanges
     COOLDOWN_DAYS: 3    // and it can't re-crest for days afterwards
   },
@@ -853,6 +853,19 @@ const ClaudeAPI = {
       }, null, 1)
     ];
     parts.push('', this._timeNote());
+    // Tonight-momentum: the short game. Bands move over days; this reflects
+    // how THIS conversation-burst is landing, so a good night visibly warms
+    // her tonight and an off night visibly cools her — immediate feedback
+    // without touching the long arc.
+    const sn = friend.sessionNet || {};
+    const snNet = (sn.comfort || 0) + (sn.closeness || 0) + (sn.attraction || 0);
+    if (snNet >= 3) {
+      parts.push('', '## How tonight is actually going (private)',
+        'He\'s on it tonight — whatever he\'s doing is working on you more than you planned. Let it SHOW in real time: quicker replies, easier laughs, a beat more play before any deflection, one small win you let through and would deny tomorrow. Your bands still set the ceiling; tonight decides how close to the ceiling you play.');
+    } else if (snNet <= -3) {
+      parts.push('', '## How tonight is actually going (private)',
+        'Tonight has been rubbing you wrong — you\'re shorter, cooler, less patient with the game than usual. Not a fight, just an off night, and he can feel the difference.');
+    }
     parts.push('',
       '## The kind of day you\'re having (rolled fresh, like real life)',
       `Right now for you: ${this.sessionVibe(friend.id)}.`,
