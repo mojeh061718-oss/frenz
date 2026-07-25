@@ -147,24 +147,26 @@
       </form>
     </section>
 
-    <!-- ============ CHAT ============ -->
+    <!-- ============ CHAT (iMessage-style) ============ -->
     <section id="view-chat" class="view hidden">
       <header class="topbar chat-topbar">
-        <button class="icon-btn" id="btn-chat-back">←</button>
+        <button class="icon-btn chat-back" id="btn-chat-back" title="Back">‹</button>
         <div class="chat-title" id="chat-title-wrap">
-          <div class="avatar small" id="chat-avatar">M</div>
-          <div>
+          <div class="avatar" id="chat-avatar">M</div>
+          <div class="chat-title-text">
             <div id="chat-name" class="chat-name">Maya</div>
             <div id="chat-status" class="chat-status">online</div>
           </div>
         </div>
-        <button class="icon-btn" id="btn-chat-edit" title="Edit friend">✏️</button>
+        <button class="icon-btn chat-info" id="btn-chat-edit" title="Details">ⓘ</button>
       </header>
       <div id="chat-messages" class="chat-messages scroll-area"></div>
       <div id="typing" class="typing hidden"><span></span><span></span><span></span></div>
       <form id="composer" class="composer">
-        <textarea id="composer-input" rows="1" placeholder="Message…" autocomplete="off"></textarea>
-        <button type="submit" id="btn-send" class="send-btn" title="Send">➤</button>
+        <div class="input-pill">
+          <textarea id="composer-input" rows="1" placeholder="Message" autocomplete="off"></textarea>
+          <button type="submit" id="btn-send" class="send-btn" title="Send">↑</button>
+        </div>
       </form>
     </section>
 

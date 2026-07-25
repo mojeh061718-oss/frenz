@@ -32,9 +32,13 @@ function initials(name) { return (name || '?').trim().charAt(0).toUpperCase(); }
 
 function fmtTime(ts) {
   const d = new Date(ts);
-  const today = new Date().toDateString() === d.toDateString();
+  const now = new Date();
   const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  return today ? time : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if (diffDays === 0) return 'Today ' + time;
+  if (diffDays === 1) return 'Yesterday ' + time;
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ' ' + time;
 }
 
 /* ---------------- friends list ---------------- */
@@ -312,7 +316,7 @@ async function openChat(friendId) {
   $('#chat-name').textContent = p.name;
   $('#chat-avatar').textContent = initials(p.name);
   $('#chat-avatar').style.background = p.color;
-  $('#chat-status').textContent = 'online';
+  $('#chat-status').textContent = '';
   await renderMessages();
   showView('view-chat');
   scrollChat(false);
@@ -340,6 +344,7 @@ async function renderMessages() {
     hint.textContent = `This is the beginning of your conversation with ${currentFriend.profile.name}. Send the first message.`;
     box.appendChild(hint);
   }
+  refreshTails();
 }
 
 function bubbleEl(role, text) {
@@ -347,6 +352,38 @@ function bubbleEl(role, text) {
   div.className = 'msg ' + (role === 'user' ? 'me' : role === 'sys' ? 'sys' : 'them');
   div.textContent = text;
   return div;
+}
+
+/* iMessage grouping: consecutive bubbles from the same side sit 2px apart and
+   only the last one gets the tail; anything else (other side, a timestamp, a
+   system note) closes the group. Also maintains the "Delivered" receipt under
+   the newest sent message. Cheap enough to re-run after every append. */
+function refreshTails() {
+  const box = $('#chat-messages');
+  if (!box) return;
+  box.querySelectorAll('.delivered').forEach(d => d.remove());
+  const kids = [...box.children];
+  kids.forEach((el, i) => {
+    const side = el.classList.contains('me') ? 'me' : el.classList.contains('them') ? 'them' : null;
+    if (!side) return;
+    el.classList.remove('tail', 'grouped');
+    const next = kids[i + 1];
+    if (!next || !next.classList.contains(side)) el.classList.add('tail');
+    const prev = kids[i - 1];
+    if (prev && prev.classList.contains(side)) el.classList.add('grouped');
+  });
+  const mine = box.querySelectorAll('.msg.me');
+  if (mine.length) {
+    const d = document.createElement('div');
+    d.className = 'delivered';
+    d.textContent = 'Delivered';
+    mine[mine.length - 1].after(d);
+  }
+}
+
+function updateSendButton() {
+  const input = $('#composer-input');
+  $('#btn-send').classList.toggle('show', !!input.value.trim());
 }
 
 function scrollChat(smooth = true) {
@@ -385,6 +422,8 @@ async function sendMessage() {
   if (startHint) startHint.remove();
   document.querySelectorAll('.transient-note').forEach(n => n.remove());
   $('#chat-messages').appendChild(bubbleEl('user', text));
+  refreshTails();
+  updateSendButton();
   scrollChat();
   await DB.addMessage({ friendId: friend.id, role: 'user', text, ts: Date.now() });
 
@@ -425,6 +464,7 @@ async function sendMessage() {
         $('#typing').classList.add('hidden');
       }
       $('#chat-messages').appendChild(bubbleEl('assistant', b));
+      refreshTails();
       scrollChat();
       await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
     }
@@ -476,7 +516,7 @@ async function sendMessage() {
   } finally {
     sending = false;
     $('#btn-send').disabled = false;
-    $('#chat-status').textContent = 'online';
+    $('#chat-status').textContent = '';
   }
 }
 
@@ -702,7 +742,29 @@ function autoGrow(el) {
   el.style.height = Math.min(el.scrollHeight, 130) + 'px';
 }
 
+/* Repair damage older versions may have written to stored settings, without
+   waiting for the user to stumble into the right screen: Gemini's "models/"
+   id prefix (404s every send) and models assigned to the wrong provider by
+   the old shared fallback list. */
+function healStoredSettings() {
+  const s = Settings.get();
+  let changed = false;
+  for (const e of s.pool || []) {
+    if (e.kind !== 'openai') continue;
+    if (e.model && /^models\//.test(e.model)) {
+      e.model = e.model.replace(/^models\//, '');
+      changed = true;
+    }
+    if (e.preset && ClaudeAPI.isCrossProviderModel(e.preset, e.model)) {
+      const fb = ClaudeAPI.fallbackModelsFor(e.preset);
+      if (fb.length) { e.model = fb[0].id; changed = true; }
+    }
+  }
+  if (changed) Settings.set(s);
+}
+
 function init() {
+  healStoredSettings();
   $('#btn-new-friend').addEventListener('click', openGallery);
   $('#btn-gallery-back').addEventListener('click', () => showView('view-friends'));
   $('#btn-customize-back').addEventListener('click', () => showView('view-gallery'));
@@ -729,7 +791,7 @@ function init() {
   const composer = $('#composer');
   const input = $('#composer-input');
   composer.addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
-  input.addEventListener('input', () => autoGrow(input));
+  input.addEventListener('input', () => { autoGrow(input); updateSendButton(); });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });

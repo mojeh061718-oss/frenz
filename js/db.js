@@ -48,7 +48,8 @@ const DB = {
   listFriends() { return this._tx('friends', 'readonly', s => s.getAll()); },
   async deleteFriend(id) {
     await this._tx('friends', 'readwrite', s => s.delete(id));
-    await this.deleteMessages(id);
+    await this._deleteByFriend('messages', id);
+    await this._deleteByFriend('events', id); // her ledger goes with her
   },
 
   // ---- messages ----
@@ -56,11 +57,12 @@ const DB = {
   getMessages(friendId) {
     return this._tx('messages', 'readonly', s => s.index('byFriend').getAll(friendId));
   },
-  async deleteMessages(friendId) {
+  deleteMessages(friendId) { return this._deleteByFriend('messages', friendId); },
+  async _deleteByFriend(store, friendId) {
     const db = await this.open();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction('messages', 'readwrite');
-      const idx = tx.objectStore('messages').index('byFriend');
+      const tx = db.transaction(store, 'readwrite');
+      const idx = tx.objectStore(store).index('byFriend');
       const cursorReq = idx.openCursor(IDBKeyRange.only(friendId));
       cursorReq.onsuccess = (e) => {
         const cursor = e.target.result;
@@ -78,16 +80,21 @@ const DB = {
   },
 
   // ---- backup ----
-  async exportAll() {
-    const friends = await this.listFriends();
+  async _getAll(store) {
     const db = await this.open();
-    const messages = await new Promise((resolve, reject) => {
-      const tx = db.transaction('messages', 'readonly');
-      const req = tx.objectStore('messages').getAll();
+    return new Promise((resolve, reject) => {
+      const req = db.transaction(store, 'readonly').objectStore(store).getAll();
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    return { app: 'frenz', version: 1, exportedAt: new Date().toISOString(), friends, messages };
+  },
+  async exportAll() {
+    const friends = await this.listFriends();
+    const messages = await this._getAll('messages');
+    // The event ledger is part of the relationship's history — a backup that
+    // drops it restores friends with amnesia about how they got here.
+    const events = await this._getAll('events');
+    return { app: 'frenz', version: 2, exportedAt: new Date().toISOString(), friends, messages, events };
   },
 
   async importAll(data) {
@@ -98,6 +105,10 @@ const DB = {
     for (const m of (data.messages || [])) {
       const { id, ...rest } = m; // let autoIncrement assign new ids
       await this.addMessage(rest);
+    }
+    for (const ev of (data.events || [])) {
+      const { id, ...rest } = ev;
+      await this.addEvent(rest);
     }
   },
 
