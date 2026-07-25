@@ -3,10 +3,11 @@
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
 const $ = (sel) => document.querySelector(sel);
-const views = ['view-friends', 'view-editor', 'view-chat', 'view-settings'];
+const views = ['view-friends', 'view-gallery', 'view-customize', 'view-editor', 'view-chat', 'view-settings'];
 
-let currentFriend = null;   // friend object while chatting/editing
-let editingId = null;       // friend id being edited, null = creating
+let currentFriend = null;       // friend object while chatting/editing
+let editingId = null;           // friend id being edited, null = creating
+let customizeTemplate = null;   // persona template on the customize screen
 let sending = false;
 
 /* ---------------- helpers ---------------- */
@@ -66,6 +67,145 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+/* ---------------- new message: template gallery ---------------- */
+
+function openGallery() {
+  const grid = $('#template-gallery');
+  grid.innerHTML = '';
+  for (const t of Personas.templates) {
+    const card = document.createElement('div');
+    card.className = 'template-card';
+    const badgeClass = t.type === 'romantic' ? 'friend-badge romantic' : 'friend-badge';
+    card.innerHTML = `
+      <div class="avatar" style="background:${t.color}">${initials(t.name)}</div>
+      <div class="tpl-meta">
+        <div class="tpl-name">${escapeHtml(t.name)} <span class="tpl-age">${t.age}</span><span class="${badgeClass}">${escapeHtml(t.tag)}</span></div>
+        <div class="tpl-hook">${escapeHtml(t.hook)}</div>
+      </div>`;
+    card.addEventListener('click', () => openCustomize(t));
+    grid.appendChild(card);
+  }
+  const blank = document.createElement('div');
+  blank.className = 'template-card blank';
+  blank.id = 'tpl-blank';
+  blank.innerHTML = `
+    <div class="avatar" style="background:var(--bg3)">+</div>
+    <div class="tpl-meta">
+      <div class="tpl-name">Blank / custom</div>
+      <div class="tpl-hook">Build someone from scratch with the full editor.</div>
+    </div>`;
+  blank.addEventListener('click', () => openEditor(null));
+  grid.appendChild(blank);
+  showView('view-gallery');
+}
+
+/* ---------------- new message: customize ---------------- */
+
+const SLIDER_DEFS = [
+  { key: 'closeness', label: 'Closeness', low: 'strangers', high: 'inseparable' },
+  { key: 'flirtiness', label: 'Flirtiness', low: 'none', high: 'shameless' },
+  { key: 'warmth', label: 'Warmth', low: 'reserved', high: 'cute' },
+  { key: 'confidence', label: 'Confidence', low: 'unsure', high: 'bulletproof' },
+  { key: 'attraction', label: 'Attraction', low: 'not yet', high: 'already hers', romanticOnly: true }
+];
+
+function renderSliders(t) {
+  const wrap = $('#c-sliders');
+  wrap.innerHTML = '';
+  for (const def of SLIDER_DEFS) {
+    if (def.romanticOnly && t.type !== 'romantic') continue;
+    const val = def.key in t.sliders ? t.sliders[def.key] : 50;
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    row.innerHTML = `
+      <div class="slider-head"><span>${def.label}</span><span class="slider-val">${val}</span></div>
+      <input type="range" min="0" max="100" value="${val}" id="sl-${def.key}">
+      <div class="slider-ends"><span>${def.low}</span><span>${def.high}</span></div>`;
+    const input = row.querySelector('input');
+    input.addEventListener('input', () => { row.querySelector('.slider-val').textContent = input.value; });
+    wrap.appendChild(row);
+  }
+}
+
+function readSliders(t) {
+  const out = Object.assign({}, t.sliders);
+  for (const def of SLIDER_DEFS) {
+    const el = document.getElementById('sl-' + def.key);
+    if (el) out[def.key] = parseInt(el.value, 10) || 0;
+  }
+  return out;
+}
+
+function openCustomize(t) {
+  customizeTemplate = t;
+  $('#customize-title').textContent = t.name;
+  $('#c-avatar').textContent = initials(t.name);
+  $('#c-avatar').style.background = t.color;
+  $('#c-hook').textContent = t.hook;
+  $('#c-name').value = t.name;
+  $('#c-age').value = t.age;
+  $('#c-username').value = localStorage.getItem('frenz-user-name') || '';
+  $('#c-usergender').value = localStorage.getItem('frenz-user-gender') || 'male';
+  $('#c-personality').value = t.personality;
+  $('#c-interests').value = t.interests;
+  $('#c-style').value = t.style;
+  $('#c-backstory').value = t.backstory;
+  renderSliders(t);
+  showView('view-customize');
+}
+
+async function startConversation(e) {
+  e.preventDefault();
+  const t = customizeTemplate;
+  if (!t) return;
+  const name = $('#c-name').value.trim();
+  if (!name) { toast('Give her a name'); return; }
+
+  const sliders = readSliders(t);
+  // Flirtiness/warmth/confidence get woven into her personality and texting
+  // style so they change how she actually behaves, not just numbers in a field.
+  const notes = Personas.sliderText(sliders);
+  const personality = $('#c-personality').value.trim();
+  const style = $('#c-style').value.trim();
+
+  const profile = {
+    name,
+    type: t.type,
+    age: parseInt($('#c-age').value, 10) || t.age,
+    gender: t.gender,
+    personality: (personality ? personality + ' ' : '') + notes.personality,
+    interests: $('#c-interests').value.trim(),
+    style: (style ? style + ' ' : '') + notes.style,
+    backstory: $('#c-backstory').value.trim(),
+    userName: $('#c-username').value.trim(),
+    userGender: $('#c-usergender').value,
+    color: t.color
+  };
+  localStorage.setItem('frenz-user-name', profile.userName);
+  localStorage.setItem('frenz-user-gender', profile.userGender);
+
+  const friend = {
+    id: uid(),
+    profile,
+    // closeness/attraction seed the private state directly from the sliders
+    state: {
+      mood: t.mood || 'curious, easygoing',
+      comfort: Math.min(95, sliders.closeness + 15),
+      closeness: sliders.closeness,
+      attraction: sliders.attraction || 0,
+      opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.'
+    },
+    memories: [],
+    createdAt: Date.now(),
+    lastActivity: Date.now(),
+    lastPreview: ''
+  };
+  await DB.saveFriend(friend);
+  await renderFriendsList();
+  customizeTemplate = null;
+  openChat(friend.id);
+}
+
 /* ---------------- friend editor ---------------- */
 
 function renderColorPicker(selected) {
@@ -102,6 +242,7 @@ function openEditor(friend) {
   $('#f-style').value = p.style || '';
   $('#f-backstory').value = p.backstory || '';
   $('#f-username').value = p.userName || '';
+  $('#f-usergender').value = p.userGender || 'male';
   renderColorPicker(p.color || AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]);
   showView('view-editor');
 }
@@ -119,6 +260,7 @@ async function saveFriendFromForm(e) {
     style: $('#f-style').value.trim(),
     backstory: $('#f-backstory').value.trim(),
     userName: $('#f-username').value.trim(),
+    userGender: $('#f-usergender').value,
     color: $('#f-colors').dataset.color || AVATAR_COLORS[0]
   };
   if (!profile.name) { toast('Give them a name'); return; }
@@ -283,7 +425,8 @@ async function sendMessage() {
         opinion_notes: result.state.opinion_notes
       };
       if (result.state.new_memories.length) {
-        friend.memories = (friend.memories || []).concat(result.state.new_memories).slice(-120);
+        // Memories are the friend's long-term memory of him — never trimmed.
+        friend.memories = (friend.memories || []).concat(result.state.new_memories);
       }
     }
     friend.lastActivity = Date.now();
@@ -338,7 +481,10 @@ function autoGrow(el) {
 }
 
 function init() {
-  $('#btn-new-friend').addEventListener('click', () => openEditor(null));
+  $('#btn-new-friend').addEventListener('click', openGallery);
+  $('#btn-gallery-back').addEventListener('click', () => showView('view-friends'));
+  $('#btn-customize-back').addEventListener('click', () => showView('view-gallery'));
+  $('#customize-form').addEventListener('submit', startConversation);
   $('#btn-editor-back').addEventListener('click', () => {
     if (editingId && currentFriend) { openChat(currentFriend.id); }
     else showView('view-friends');

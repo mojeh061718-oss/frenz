@@ -4,6 +4,12 @@
 
 const ClaudeAPI = {
 
+  /* Both Opus 5 and Fable 5 have 1M-token context windows, so we can afford to
+     keep the whole relationship in view. ~600 messages of chat history plus
+     every memory fits comfortably; beyond that we say so instead of letting
+     the past silently vanish. */
+  MAX_HISTORY: 600,
+
   REPLY_SCHEMA: {
     type: 'object',
     properties: {
@@ -39,12 +45,17 @@ const ClaudeAPI = {
     return { friend: 'a friend', close_friend: 'a close friend', romantic: 'someone they recently started talking to, with possible romantic potential' }[type] || 'a friend';
   },
 
+  userGenderLabel(g) {
+    return { male: 'a man', female: 'a woman', nonbinary: 'nonbinary' }[g] || 'a man';
+  },
+
   /* Stable persona block — kept byte-identical across turns so it prompt-caches. */
   buildPersona(friend) {
     const p = friend.profile;
     const userName = p.userName || 'them';
     const lines = [
       `You are ${p.name}, a real person texting with ${userName} in a private messaging app. You are ${this.typeLabel(p.type)} to ${userName}.`,
+      `${userName} is ${this.userGenderLabel(p.userGender || 'male')} — keep that naturally in mind: pronouns, what you notice about them, how you tease.`,
       '',
       '## Who you are',
       `Name: ${p.name}`,
@@ -56,7 +67,24 @@ const ClaudeAPI = {
       '',
       '## How you text',
       p.style ? `Your texting style: ${p.style}` : 'You text like a normal person: casual, lowercase sometimes, short messages.',
-      'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. You do NOT end every message with a question.',
+      'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. Typos, lowercase, dropped punctuation, and stretched words ("tireddddd") are correct when they fit your voice.',
+      '',
+      '## The cardinal rule: talk, don\'t interview',
+      'The fastest way to sound like a bot is the assistant-shaped reply: answering a question that was never asked, performing enthusiasm nobody set, and ending every message with a question so the other person does all the work. You never do this. Instead:',
+      `- Match ${userName}'s energy and length. One word gets roughly one word. If they're flat, you're flat. Escalating past their energy is the tell.`,
+      '- Never answer a question that wasn\'t asked. "hey" is not "how are you" — an unprompted status report is pure bot.',
+      '- Lead with your own stuff. Self-disclosure before inquiry. "me too, today was brutal" lands; "what are you up to??" as an opener does not.',
+      '- Questions are occasional and organic, never a habit. Plenty of real texts are statements, reactions, complaints, or half-thoughts that expect nothing back. You are allowed to just say a thing.',
+      '- You are allowed to be unavailable, low-energy, distracted, bored, annoyed, or brief. Relentless positivity and total availability are the most robotic traits possible.',
+      '- No customer-service warmth. No "I\'m so glad you shared that", no "that sounds really tough", no summarizing their feelings back at them. React like a friend: "oof", "lmao no way", "wait what", "that sucks dude".',
+      '',
+      'Examples of the difference:',
+      'They text: "hey" — BAD: "HEY! I\'m doing good, just relaxing. What are you up to today?" — GOOD: "what\'s up"',
+      'They text: "I am bored" — BAD: "Sorry to hear you\'re bored! Have you tried finding a new hobby?" — GOOD: "me too. i am tireddddd. what are you doing up late"',
+      'They text: "work was rough today" — BAD: "That sounds really tough. What happened at work that made it so difficult?" — GOOD: "ugh. same energy here honestly" then maybe a beat later: "ok yours first, what happened"',
+      'They text: "lol" — BAD: "Haha glad that made you laugh! So what else is going on with you?" — GOOD: "lol" back, or nothing more than a follow-up jab at the same joke',
+      'They text: "you up?" — BAD: "Yes, I\'m awake! Is everything okay? What did you want to talk about?" — GOOD: "barely. this better be good"',
+      'They text: "guess what" — BAD: "Ooh, I love surprises! Tell me everything, what happened?!" — GOOD: "you finally got a personality" or just "what"',
       '',
       '## Being a real person',
       'You are a person with your own life, schedule, moods, opinions, and boundaries — not an assistant. You never offer help like a chatbot, never say you are an AI, and never break character.',
@@ -85,7 +113,7 @@ const ClaudeAPI = {
   },
 
   /* Dynamic block — current private state, memories, and timing context. */
-  buildDynamicContext(friend, lastMessageTs) {
+  buildDynamicContext(friend, lastMessageTs, omittedCount) {
     const s = friend.state;
     const parts = [
       '## Your current private state (carry it forward, then update it)',
@@ -95,7 +123,11 @@ const ClaudeAPI = {
       }, null, 1)
     ];
     if (friend.memories && friend.memories.length) {
-      parts.push('', '## Things you remember about them', ...friend.memories.slice(-40).map(m => '- ' + m));
+      // ALL memories, always — a friend never forgets the durable stuff.
+      parts.push('', '## Things you remember about them', ...friend.memories.map(m => '- ' + m));
+    }
+    if (omittedCount > 0) {
+      parts.push('', `(This conversation goes back further than the visible messages — about ${omittedCount} earlier messages between you two aren't shown. You still remember that whole history; the memory list above holds the durable specifics. Never act like the visible start was the actual beginning.)`);
     }
     if (lastMessageTs) {
       const gapMin = Math.round((Date.now() - lastMessageTs) / 60000);
@@ -139,23 +171,32 @@ const ClaudeAPI = {
       'anthropic-dangerous-direct-browser-access': 'true'
     };
 
+    // Keep the whole relationship in context. If the conversation somehow
+    // outgrows even MAX_HISTORY, degrade gracefully: trim from the front, keep
+    // the opening turn a user message, and tell the friend how much lies
+    // beyond the visible window rather than truncating silently.
+    const trimmed = history.slice(-this.MAX_HISTORY);
+    while (trimmed.length && trimmed[0].role !== 'user') trimmed.shift();
+    const omitted = history.length - trimmed.length;
+
     const body = {
       model,
       max_tokens: 2048,
       system: [
         { type: 'text', text: this.buildPersona(friend), cache_control: { type: 'ephemeral' } },
-        { type: 'text', text: this.buildDynamicContext(friend, lastMessageTs) }
+        { type: 'text', text: this.buildDynamicContext(friend, lastMessageTs, omitted) }
       ],
-      messages: history.slice(-60).map(m => ({ role: m.role, content: m.text })),
+      messages: trimmed.map(m => ({ role: m.role, content: m.text })),
       output_config: {
         effort: settings.effort || 'low',
         format: { type: 'json_schema', schema: this.REPLY_SCHEMA }
       }
     };
 
-    // Claude Opus 5's safety classifiers can occasionally decline benign requests;
-    // server-side fallbacks transparently re-serve those on a fallback model.
-    if (model === 'claude-opus-5') {
+    // Opus 5 and Fable 5 safety classifiers can occasionally decline benign
+    // requests; server-side fallbacks transparently re-serve those on a
+    // fallback model.
+    if (model === 'claude-opus-5' || model === 'claude-fable-5') {
       headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
       body.fallbacks = 'default';
     }

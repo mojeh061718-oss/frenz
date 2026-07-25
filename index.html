@@ -31,6 +31,66 @@
       <button id="btn-new-friend" class="fab" title="New friend">+</button>
     </section>
 
+    <!-- ============ NEW MESSAGE: TEMPLATE GALLERY ============ -->
+    <section id="view-gallery" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-gallery-back">←</button>
+        <h1>New message</h1>
+        <span></span>
+      </header>
+      <div id="template-gallery" class="template-gallery scroll-area"></div>
+    </section>
+
+    <!-- ============ NEW MESSAGE: CUSTOMIZE ============ -->
+    <section id="view-customize" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-customize-back">←</button>
+        <h1 id="customize-title">Customize</h1>
+        <span></span>
+      </header>
+      <form id="customize-form" class="form scroll-area">
+        <div class="customize-hero">
+          <div class="avatar" id="c-avatar">?</div>
+          <div class="customize-hook" id="c-hook"></div>
+        </div>
+        <label>Her name
+          <input type="text" id="c-name" required maxlength="40">
+        </label>
+        <div class="row">
+          <label>Her age
+            <input type="number" id="c-age" min="18" max="99">
+          </label>
+          <label>Your name
+            <input type="text" id="c-username" maxlength="40" placeholder="e.g. Jay">
+          </label>
+        </div>
+        <label>You are
+          <select id="c-usergender">
+            <option value="male">A man</option>
+            <option value="female">A woman</option>
+            <option value="nonbinary">Nonbinary</option>
+          </select>
+        </label>
+        <div id="c-sliders" class="sliders"></div>
+        <details class="tune">
+          <summary>Fine-tune her details</summary>
+          <label>Personality
+            <textarea id="c-personality" rows="5"></textarea>
+          </label>
+          <label>Life &amp; interests
+            <textarea id="c-interests" rows="5"></textarea>
+          </label>
+          <label>Texting style
+            <textarea id="c-style" rows="4"></textarea>
+          </label>
+          <label>How you know each other
+            <textarea id="c-backstory" rows="3"></textarea>
+          </label>
+        </details>
+        <button type="submit" class="btn-primary" id="btn-start-convo">Start conversation</button>
+      </form>
+    </section>
+
     <!-- ============ FRIEND EDITOR ============ -->
     <section id="view-editor" class="view hidden">
       <header class="topbar">
@@ -71,6 +131,13 @@
         </label>
         <label>Your name (what they call you)
           <input type="text" id="f-username" maxlength="40" placeholder="e.g. Jay">
+        </label>
+        <label>You are
+          <select id="f-usergender">
+            <option value="male">A man</option>
+            <option value="female">A woman</option>
+            <option value="nonbinary">Nonbinary</option>
+          </select>
         </label>
         <label class="avatar-picker">Avatar color
           <div id="f-colors" class="color-row"></div>
@@ -115,7 +182,8 @@
         </label>
         <label>Model
           <select id="s-model">
-            <option value="claude-opus-5">Claude Opus 5 — most lifelike (default)</option>
+            <option value="claude-fable-5">Claude Fable 5 — the most lifelike, ~2× the cost of Opus 5</option>
+            <option value="claude-opus-5">Claude Opus 5 — excellent (default)</option>
             <option value="claude-sonnet-5">Claude Sonnet 5 — fast &amp; cheaper</option>
             <option value="claude-haiku-4-5">Claude Haiku 4.5 — fastest, most affordable</option>
           </select>
@@ -145,6 +213,7 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="js/db.js"></script>
+  <script src="js/personas.js"></script>
   <script src="js/api.js"></script>
   <script src="js/app.js"></script>
 </body>
