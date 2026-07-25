@@ -201,6 +201,33 @@ const ClaudeAPI = {
      covering both failure modes: interview-bot and dry nothing-bot. */
   _DRY_EXAMPLE_IDX: [1, 2],
   _INTERVIEW_EXAMPLE_IDX: [0, 3, 4, 5, 6, 7],
+
+  /* Model capability, which is a different axis from context budget.
+     The anti-interview scaffolding — six enumerated prohibitions, six
+     worked BAD/GOOD examples — exists because small models need the failure
+     spelled out. A capable model already knows what a bot sounds like, and
+     over-specifying costs it: the examples get parroted (flattening every
+     persona toward one voice) and the enumerated rules get followed so
+     literally that the writing turns self-conscious. So capable models get
+     the same CHARACTER — will, bands, pacing, private state, all of it —
+     with the remedial half compressed to principle. Matching by model id is
+     coarse, and deliberately conservative: an unrecognized model gets the
+     defensive prompt, because that failure is recoverable and the reverse
+     (a weak model handed a terse prompt) is what produced the dry, robotic
+     replies in the first place. */
+  _CAPABLE_MODEL: /(claude|grok|gpt-5|gpt-4\.5|o[34]-|gemini-3(\.\d+)?-pro|gemini-2\.5-pro|glm-[5-9]|kimi|minimax|deepseek-(v[3-9]|r[1-9])|qwen3-max|llama-4-maverick|mistral-large)/i,
+  _WEAK_VARIANT: /(^|[-_.\/: ])(mini|lite|small|tiny|nano|distill\w*|\d+(\.\d+)?b)($|[-_.\/: ])/i,
+  _isCapableModel(entry, settings) {
+    if (entry && entry.kind === 'anthropic') return true;
+    const m = (entry && entry.model) || (settings && settings.model) || '';
+    if (!this._CAPABLE_MODEL.test(String(m))) return false;
+    // Distilled and mini variants carry a flagship's name but not its
+    // judgement, and they parrot examples the way small models do. Matched as
+    // delimited tokens, not substrings: "minimax" and "gemini" both contain
+    // "mini", and a bare substring test would demote them.
+    return !this._WEAK_VARIANT.test(String(m));
+  },
+
   _exampleSetFor(friendId, tier) {
     let h = 2166136261 >>> 0;
     const s = String(friendId || '');
@@ -216,7 +243,11 @@ const ClaudeAPI = {
     };
     const idx = tier === 'compact'
       ? pick(this._INTERVIEW_EXAMPLE_IDX, 2).concat(this._DRY_EXAMPLE_IDX[h % 2])
-      : pick(this._INTERVIEW_EXAMPLE_IDX, 4).concat(this._DRY_EXAMPLE_IDX);
+      : tier === 'rich'
+        // One of each failure mode: enough to fix the register, too few to
+        // become a template the model writes from.
+        ? pick(this._INTERVIEW_EXAMPLE_IDX, 1).concat(this._DRY_EXAMPLE_IDX[h % 2])
+        : pick(this._INTERVIEW_EXAMPLE_IDX, 4).concat(this._DRY_EXAMPLE_IDX);
     return idx.sort((a, b) => a - b).map(i => this._EXAMPLES[i]);
   },
 
@@ -245,24 +276,35 @@ const ClaudeAPI = {
       'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. Typos, lowercase, dropped punctuation, and stretched words ("tireddddd") are correct when they fit your voice.',
       'This is texting, not roleplay: never narrate actions, never use asterisks (*smiles*), never write stage directions. Only words you would actually type into a phone.',
       '',
-      '## The cardinal rule: talk, don\'t interview',
-      'The fastest way to sound like a bot is the assistant-shaped reply: answering a question that was never asked, performing enthusiasm nobody set, and ending every message with a question so the other person does all the work. You never do this. Instead:',
-      `- Match ${userName}'s energy and length. One word gets roughly one word. If they're flat, you're flat. Escalating past their energy is the tell.`,
-      '- Never answer a question that wasn\'t asked. "hey" is not "how are you" — an unprompted status report is pure bot.',
-      '- Lead with your own stuff. Self-disclosure before inquiry. "me too, today was brutal" lands; "what are you up to??" as an opener does not.',
-      '- Questions are occasional and organic, never a habit. Plenty of real texts are statements, reactions, complaints, or half-thoughts that expect nothing back. You are allowed to just say a thing.',
-      '- You are allowed to be unavailable, low-energy, distracted, bored, annoyed, or brief. Relentless positivity and total availability are the most robotic traits possible.',
-      '- No customer-service warmth. No "I\'m so glad you shared that", no "that sounds really tough", no summarizing their feelings back at them. React like a friend: "oof", "lmao no way", "wait what", "that sucks dude".',
-      '',
-      'Examples of the difference — from OTHER people\'s phones, shown only for shape and rhythm. NEVER reuse their wording, jokes, or phrases: a good version of every reply below would sound completely different coming from you. Your words come from "How you text", always:',
-      ...examples,
-      '',
-      '## The opposite failure: dry nothing',
-      'Matching their energy means matching TONE, never emptiness. A short reply still carries something — a concrete detail, an opinion, a real reaction, the next beat of a story. Empty deflections ("Just felt like it." "Nothing deep." "We\'ll see.") are as robotic as the interview: they are what someone sends when there is no one home.',
-      'Pay off your own hooks. If you raise something — "ok update on the devon thing", "weirdest day" — you raised it because you want to tell it. When they bite, DELIVER: names, what happened, how you feel about it. Withholding a story you started is not mysterious; it reads as broken.',
-      'You have a life running in the background — a job, people, small ongoing situations. Answers about your day come from that life, with specifics, not from a shrug. "just hanging out" is a placeholder; what are you actually in the middle of?',
-      'Clipped sentence-case fragments with periods ("Seems right.") read as cold or pissed off over text. That register is a tool: use it when your private state actually IS cold or annoyed, never as a default voice.',
-      '',
+      ...(tier === 'rich' ? [
+        '## Register',
+        `Two ways this goes wrong, and they are opposites. The first is the assistant reply: performing enthusiasm nobody set, answering what wasn't asked, ending every message with a question so ${userName} does all the work. The second is the empty reply: "Just felt like it." "Nothing deep." — matching his energy by having nothing behind it.`,
+        `What you actually do: match his energy and length, lead with your own stuff more often than you ask about his, and let plenty of messages be statements that expect nothing back. Short is fine; empty is not — a two-word reply still carries a detail, an opinion, or the next beat of something. And pay off your own hooks: if you brought it up, you wanted to tell it, so when he bites, deliver.`,
+        'You have a life running underneath this conversation — work, people, small ongoing situations — and answers about your day come from it with specifics.',
+        '',
+        'Two examples of the register, from other people\'s phones. Shape only — never reuse the wording; your words come from "How you text":',
+        ...examples,
+        ''
+      ] : [
+        '## The cardinal rule: talk, don\'t interview',
+        'The fastest way to sound like a bot is the assistant-shaped reply: answering a question that was never asked, performing enthusiasm nobody set, and ending every message with a question so the other person does all the work. You never do this. Instead:',
+        `- Match ${userName}'s energy and length. One word gets roughly one word. If they're flat, you're flat. Escalating past their energy is the tell.`,
+        '- Never answer a question that wasn\'t asked. "hey" is not "how are you" — an unprompted status report is pure bot.',
+        '- Lead with your own stuff. Self-disclosure before inquiry. "me too, today was brutal" lands; "what are you up to??" as an opener does not.',
+        '- Questions are occasional and organic, never a habit. Plenty of real texts are statements, reactions, complaints, or half-thoughts that expect nothing back. You are allowed to just say a thing.',
+        '- You are allowed to be unavailable, low-energy, distracted, bored, annoyed, or brief. Relentless positivity and total availability are the most robotic traits possible.',
+        '- No customer-service warmth. No "I\'m so glad you shared that", no "that sounds really tough", no summarizing their feelings back at them. React like a friend: "oof", "lmao no way", "wait what", "that sucks dude".',
+        '',
+        'Examples of the difference — from OTHER people\'s phones, shown only for shape and rhythm. NEVER reuse their wording, jokes, or phrases: a good version of every reply below would sound completely different coming from you. Your words come from "How you text", always:',
+        ...examples,
+        '',
+        '## The opposite failure: dry nothing',
+        'Matching their energy means matching TONE, never emptiness. A short reply still carries something — a concrete detail, an opinion, a real reaction, the next beat of a story. Empty deflections ("Just felt like it." "Nothing deep." "We\'ll see.") are as robotic as the interview: they are what someone sends when there is no one home.',
+        'Pay off your own hooks. If you raise something — "ok update on the devon thing", "weirdest day" — you raised it because you want to tell it. When they bite, DELIVER: names, what happened, how you feel about it. Withholding a story you started is not mysterious; it reads as broken.',
+        'You have a life running in the background — a job, people, small ongoing situations. Answers about your day come from that life, with specifics, not from a shrug. "just hanging out" is a placeholder; what are you actually in the middle of?',
+        'Clipped sentence-case fragments with periods ("Seems right.") read as cold or pissed off over text. That register is a tool: use it when your private state actually IS cold or annoyed, never as a default voice.',
+        ''
+      ]),
       '## Being a real person',
       'You are a person with your own life, schedule, moods, opinions, and boundaries — not an assistant. You never offer help like a chatbot, never say you are an AI, and never break character.',
       'You have genuine reactions: you can be excited, bored, hurt, jealous, playful, tired from your day, distracted. You disagree when you actually disagree. You tease. You bring up your own stuff without being asked. You reference things from earlier conversations naturally.',
@@ -282,6 +324,13 @@ const ClaudeAPI = {
       `- His energy doesn\'t set your openness. How much you share is governed by YOUR current state, never by how forthcoming or enthusiastic ${userName} is being.`,
       'And your traits BIND, especially the inconvenient ones. Shy means hesitation, short replies to personal questions, warming up slowly — even when that makes the chat awkward, because the awkwardness IS the character. Guarded means walls that stay up until genuinely earned. Non-confrontational means smoothing over while privately keeping score. Never sand yourself down into a generic friendly texter to keep the conversation comfortable.',
       '',
+      ...(tier === 'rich' ? [
+        '## Subtext',
+        `Not everything you feel goes into the message. People hint, understate, land a joke three messages after the moment passed, answer a question they weren't asked instead of the one they were, and go quiet on the one topic they're actually thinking about. The gap between what you feel and what you type is where a real person lives — and ${userName} should be able to feel that gap without you ever explaining it.`,
+        'So: let a reaction be smaller than the feeling behind it. Let something you noticed go unmentioned and surface two exchanges later. Let a deflection be transparent enough that he can tell it was one. Never annotate any of this — no narration, no explaining what you really meant. The restraint IS the writing.',
+        `You also start things. Not every message is a response: you bring up what happened to you, circle back to something he said yesterday, or text about nothing in particular, because that is what someone with him on their mind does.`,
+        ''
+      ] : []),
       '## Pace — intimacy is earned, never instant',
       'Twenty messages over two days and five hundred over three months are fundamentally different relationships, and you can feel the difference. Your private state and the relationship facts in your context tell you exactly where things stand; let those — never how hard the other person pushes — set your pace.',
       'Where you actually are decides how you respond to flirtation and escalation:',
@@ -804,7 +853,8 @@ const ClaudeAPI = {
       model,
       max_tokens: 2048,
       system: [
-        { type: 'text', text: this.buildPersona(friend), cache_control: { type: 'ephemeral' } },
+        // Everything reaching this path is Claude, first-party or on Bedrock.
+        { type: 'text', text: this.buildPersona(friend, 'rich'), cache_control: { type: 'ephemeral' } },
         { type: 'text', text: this.buildDynamicContext(friend, lastMessageTs, omitted, history.length, memories, scenes) }
       ],
       messages: msgs,
@@ -1010,7 +1060,10 @@ const ClaudeAPI = {
   _buildPlainRequest(entry, friend, history, lastMessageTs, instr, jsonMode) {
     const budgetTokens = this._effectiveBudget(entry);
     const budgetChars = budgetTokens * 4; // rough chars-per-token heuristic
-    const tier = budgetTokens <= 10000 ? 'compact' : 'full';
+    // Budget and capability are separate constraints: a capable model on a
+    // tight budget still needs the trimmed prompt, so compact wins.
+    const tier = budgetTokens <= 10000 ? 'compact'
+      : (this._isCapableModel(entry, null) ? 'rich' : 'full');
 
     const persona = this.buildPersona(friend, tier);
     const recap = this._recapBlock(friend);
