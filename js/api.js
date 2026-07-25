@@ -130,6 +130,14 @@ const ClaudeAPI = {
       keyUrl: 'console.groq.com', keyHint: 'Free key at console.groq.com — no card required.',
       contextTokens: 10000, rpd: 14400, tpm: 6000
     },
+    bedrock: {
+      kind: 'bedrock', label: 'Claude via AWS Bedrock',
+      baseUrl: '', // built from region
+      keyUrl: 'console.aws.amazon.com/bedrock',
+      keyHint: 'New AWS accounts get $200 in credits, and they work here. Bedrock console → API keys → generate a long-term key.',
+      models: ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5'],
+      contextTokens: 60000, rpd: null, tpm: null
+    },
     cerebras: {
       kind: 'openai', label: 'Cerebras',
       baseUrl: 'https://api.cerebras.ai/v1',
@@ -558,6 +566,7 @@ const ClaudeAPI = {
   entryConfigured(entry, settings) {
     if (!entry) return false;
     if (entry.kind === 'anthropic') return !!(settings && settings.apiKey);
+    if (entry.kind === 'bedrock') return !!(entry.apiKey && entry.model);
     if (entry.kind === 'ollama') return !!entry.model;
     return !!(entry.baseUrl && entry.model); // openai-compatible (key optional: LM Studio etc.)
   },
@@ -728,11 +737,23 @@ const ClaudeAPI = {
   /* ---------------- Anthropic (reference path) ---------------- */
 
   async _sendAnthropic(entry, friend, history, settings, lastMessageTs) {
-    const model = settings.model || 'claude-opus-5';
+    // Bedrock's Mantle endpoint speaks the same Messages API, so it rides this
+    // whole path with three differences: model ids carry an `anthropic.`
+    // prefix, auth is the Bedrock API key, and first-party-only extras
+    // (server-side fallbacks, mid-array system role) are unavailable.
+    const bedrock = !!(entry && entry.kind === 'bedrock');
+    const region = (entry && entry.region) || 'us-east-1';
+    const url = bedrock
+      ? `https://bedrock-mantle.${region}.api.aws/anthropic/v1/messages`
+      : 'https://api.anthropic.com/v1/messages';
+    const rawModel = bedrock
+      ? (entry.model || 'claude-sonnet-5')
+      : (settings.model || 'claude-opus-5');
+    const model = bedrock ? 'anthropic.' + String(rawModel).replace(/^anthropic\./, '') : rawModel;
 
     const headers = {
       'content-type': 'application/json',
-      'x-api-key': settings.apiKey,
+      'x-api-key': bedrock ? entry.apiKey : settings.apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
     };
@@ -747,7 +768,7 @@ const ClaudeAPI = {
     // Depth-4 PList + PHI: mid-conversation system role is supported on
     // Opus 5 / Opus 4.8 / Fable 5. Elsewhere, fall back to a
     // <system-reminder> user-role block (the documented pattern).
-    const midOk = /^claude-(opus-5|fable-5|opus-4-8)/.test(model);
+    const midOk = !bedrock && /^claude-(opus-5|fable-5|opus-4-8)/.test(model);
     const injRole = midOk ? 'system' : 'user';
     const wrap = (t) => midOk ? t : '<system-reminder>\n' + t + '\n</system-reminder>';
     let msgs = trimmed.map(m => ({ role: m.role, content: m.text }));
@@ -771,14 +792,14 @@ const ClaudeAPI = {
     // Opus 5 and Fable 5 safety classifiers can occasionally decline benign
     // requests; server-side fallbacks transparently re-serve those on a
     // fallback model.
-    if (model === 'claude-opus-5' || model === 'claude-fable-5') {
+    if (!bedrock && (model === 'claude-opus-5' || model === 'claude-fable-5')) {
       headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
       body.fallbacks = 'default';
     }
 
     let res;
     try {
-      res = await fetch('https://api.anthropic.com/v1/messages', {
+      res = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body)
@@ -1763,6 +1784,36 @@ const ClaudeAPI = {
       const found = names.some(n => n === want || n.split(':')[0] === want);
       if (!found) throw new Error(`Ollama is running, but "${want}" isn't pulled. Try: ollama pull ${want}`);
       return { message: `Ollama running ✓ · ${want} available ✓`, context: null };
+    }
+
+    if (entry.kind === 'bedrock') {
+      if (!entry.apiKey) throw new Error('Paste your Bedrock API key first.');
+      if (!entry.model) throw new Error('Pick a model first.');
+      const region = entry.region || 'us-east-1';
+      const model = 'anthropic.' + String(entry.model).replace(/^anthropic\./, '');
+      let res;
+      try {
+        res = await fetch(`https://bedrock-mantle.${region}.api.aws/anthropic/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': entry.apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: 'Reply with the single word: ok' }] })
+        });
+      } catch {
+        throw new Error(`Can't reach Bedrock in ${region} — check the region and your connection.`);
+      }
+      if (res.status === 401 || res.status === 403) throw new Error('Bedrock rejected the key — check it was created in ' + region + ' and has Bedrock access.');
+      if (res.status === 404) throw new Error(`${model} isn't available in ${region}. Enable model access in the Bedrock console, or try another region.`);
+      if (!res.ok) {
+        let m = 'Bedrock error (' + res.status + ')';
+        try { const j = await res.json(); if (j.error && j.error.message) m = j.error.message; } catch { /* keep */ }
+        throw new Error(m);
+      }
+      return { message: `Bedrock ✓ · ${model} in ${region} answered`, context: null };
     }
 
     if (entry.kind === 'openai') {

@@ -633,10 +633,11 @@ function addPreset(name) {
     label: preset.label,
     baseUrl: preset.baseUrl,
     apiKey: '',
-    model: '',
+    model: (preset.models && preset.models[0]) || '',
     contextTokens: preset.contextTokens,
     enabled: true
   };
+  if (preset.kind === 'bedrock') entry.region = 'us-east-1';
   if (name !== 'custom') entry.preset = name;
   // A provider you deliberately add is an upgrade over the keyless tier, so it
   // goes above it rather than at the bottom where it would rarely be reached.
@@ -673,6 +674,22 @@ function openEntryEditor(id) {
   $('#e-model').value = e.model || '';
   $('#e-ctx').value = e.contextTokens || 8000;
   $('#e-test-result').textContent = '';
+  // Bedrock is addressed by region rather than a base URL, and its model list
+  // is fixed rather than fetched.
+  const isBedrock = e.kind === 'bedrock';
+  $('#e-region-label').classList.toggle('hidden', !isBedrock);
+  $('#e-url').parentElement.classList.toggle('hidden', isBedrock);
+  if (isBedrock) {
+    $('#e-region').value = e.region || 'us-east-1';
+    const dl = $('#e-models');
+    dl.innerHTML = '';
+    for (const m of (preset && preset.models) || []) {
+      const o = document.createElement('option');
+      o.value = m;
+      dl.appendChild(o);
+    }
+    if (!e.model) { e.model = (preset.models || [])[0] || ''; $('#e-model').value = e.model; }
+  }
   renderPool();
   if (e.kind === 'openai' && e.baseUrl) refreshEntryModels(!e.model);
 }
@@ -867,6 +884,10 @@ function init() {
   $('#e-ctx').addEventListener('input', () => {
     const e = draftEntry(selectedEntryId);
     if (e) e.contextTokens = parseInt($('#e-ctx').value, 10) || 8000;
+  });
+  $('#e-region').addEventListener('input', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) e.region = $('#e-region').value.trim() || 'us-east-1';
   });
   $('#btn-test-entry').addEventListener('click', async () => {
     const e = draftEntry(selectedEntryId);

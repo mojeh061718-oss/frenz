@@ -183,6 +183,7 @@
         <p class="muted small"><b>Optional upgrade:</b> keyless models are smaller, so personas are simpler and the subtext lands less reliably. Adding a free key (Gemini, Groq, Cerebras, OpenRouter — no card required) makes them sharper; an Anthropic key below is the full experience.</p>
         <div id="pool-list" class="pool-list"></div>
         <div class="preset-row">
+          <button type="button" class="btn-secondary btn-preset" data-preset="bedrock">+ Claude (AWS)</button>
           <button type="button" class="btn-secondary btn-preset" data-preset="gemini">+ Gemini</button>
           <button type="button" class="btn-secondary btn-preset" data-preset="groq">+ Groq</button>
           <button type="button" class="btn-secondary btn-preset" data-preset="cerebras">+ Cerebras</button>
@@ -197,6 +198,10 @@
           </label>
           <label>Base URL
             <input type="text" id="e-url" placeholder="https://…/v1">
+          </label>
+          <label id="e-region-label" class="hidden">AWS region
+            <input type="text" id="e-region" placeholder="us-east-1">
+            <small>Must match the region your Bedrock API key was created in.</small>
           </label>
           <label id="e-key-label">API key
             <input type="password" id="e-key" placeholder="paste your key">
