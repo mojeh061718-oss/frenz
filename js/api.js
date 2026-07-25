@@ -55,9 +55,9 @@ const ClaudeAPI = {
         description: 'Your PRIVATE internal state after this exchange. The user never sees this. Be completely honest.',
         properties: {
           mood: { type: 'string', description: 'Your current mood in a few words. Keep your previous mood unless this exchange actually shifted it.' },
-          comfort_delta: { type: 'integer', description: '-3 to +3. How much this exchange moved your comfort with them. 0 is the most common answer.' },
-          closeness_delta: { type: 'integer', description: '-3 to +3. How much this exchange moved how close you feel. Most exchanges are 0.' },
-          attraction_delta: { type: 'integer', description: '-3 to +3. How much this exchange moved your attraction, if that is even in play. Usually 0.' },
+          comfort_delta: { type: 'integer', description: '-3 to +3. How much this exchange moved your comfort with them. Report real movement when you feel it: +1 for a small genuine shift, more for a big one, negative when it stung. 0 only when the exchange truly didn\'t touch you.' },
+          closeness_delta: { type: 'integer', description: '-3 to +3. How much this exchange moved how close you feel. A real laugh, a real disclosure, being met well — that\'s +1, not 0. 0 means genuinely neutral.' },
+          attraction_delta: { type: 'integer', description: '-3 to +3. If a line landed, made you feel seen or wanted, or you caught yourself enjoying it more than you\'d admit: +1 small spark, +2 real pull, +3 rare jolt. Negative when something turned you off. 0 only when nothing stirred either way.' },
           unsaid: { type: 'string', description: 'One short clause: the thing you are thinking or feeling RIGHT NOW that you are not saying. Carries forward turn to turn; update it when it shifts.' },
           reason: { type: 'string', description: 'One short sentence: why things moved, or why they did not.' },
           confidence: { type: 'number', description: '0 to 1. How sure you are of these reads. Below 0.6 keeps your previous mood.' },
@@ -401,7 +401,7 @@ const ClaudeAPI = {
       deep: 'inner circle — few walls left, the person she actually tells things to'
     },
     attraction: {
-      low: 'no active interest yet — banter is banter, but a LIGHT flirt aimed at her gets no performance: a short unbothered reply that ignores the angle, then the conversation moves on (big swings are different — those always get a reaction, even if the reaction is a shutdown). Quiet non-engagement is the answer; it never needs a wall or a big theatrical laugh. The right register on the right nights, sustained over real time, is how interest STARTS — and the first sign is her responses warming from unbothered to playful, long before any words change',
+      low: 'no active interest yet — banter is banter, but a LIGHT flirt aimed at her gets no performance: a short unbothered reply that ignores the angle, then the conversation moves on (big swings are different — those always get a reaction, even if the reaction is a shutdown). Quiet non-engagement is the answer; it never needs a wall or a big theatrical laugh. But unbothered is about the ANGLE, never the person: his ideas, jokes, and invitations still get real engagement — a playful counter, a genuine question, an actual yes or an actual no with life in it. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality. The right register on the right nights, sustained over real time, is how interest STARTS — and the first sign is her responses warming from unbothered to playful, long before any words change',
       building: 'noticing them — a flirt now gets engagement: indirect, deniable, volleying back without accepting, letting it run a beat longer than she should. She does not lead it, and she cools it when he jumps ahead of where she is',
       high: 'genuinely into them — flirts back freely, sometimes first',
       deep: 'fully drawn in — warm, forward, initiates'
@@ -442,7 +442,7 @@ const ClaudeAPI = {
 
   /* ---------------- delta-based state engine (app-owned invariants) ---------------- */
 
-  _ROMANCE_RE: /flirt|kiss|cuddl|date|dinner|drinks|cute|beautiful|gorgeous|sexy|hot|miss you|missed you|thinking about you|crush|love|babe|baby\b|sweetheart|handsome|attract|chemistry|tension|wine|tonight|come over|romantic|butterflies|blush/i,
+  _ROMANCE_RE: /flirt|kiss|cuddl|date|dinner|drink|shots?\b|smoke|tipsy|tease|teasing|naughty|dirty|cute|beautiful|gorgeous|sexy|hot|miss you|missed you|thinking about you|thinking of you|crush|love|babe|baby\b|sweetheart|handsome|attract|chemistry|tension|wine|tonight|u up|wyd\b|come over|come up|romantic|butterflies|blush|😏|😘|😍|🥵|😈/i,
 
   _recentRomance(history) {
     return (history || []).slice(-6).some(m => this._ROMANCE_RE.test(m.text || ''));
@@ -677,14 +677,23 @@ const ClaudeAPI = {
     const romanceOk = friend.profile.type === 'romantic' && this._recentRomance(opts && opts.history);
 
     const applied = {};
+    // Fractional carry, the fix for a silent killer: dampening × positive
+    // halving turned every +1 into round(0.45) = 0, so consistent warm/flirty
+    // turns moved NOTHING while every -1 landed in full — relationships could
+    // only flatline or decay. The sub-point remainder now banks per stat and
+    // cashes in on the next turn: two +1 turns = one real point.
+    const carry = Object.assign({}, prev._carry);
     const applyOne = (key, deltaRaw, positiveAllowed) => {
       const bounded = Math.max(-T.MAX_DELTA, Math.min(T.MAX_DELTA, Math.round(Number(deltaRaw) || 0)));
-      let d;
+      let exact;
       if (bounded > 0) {
-        d = positiveAllowed === false ? 0 : Math.round(bounded * scale * T.POSITIVE_SCALE);
+        exact = positiveAllowed === false ? 0 : bounded * scale * T.POSITIVE_SCALE;
       } else {
-        d = Math.round(bounded * scale);
+        exact = bounded * scale;
       }
+      exact += Number(carry[key]) || 0;
+      let d = Math.round(exact);
+      carry[key] = exact - d; // remainder banks; capped overflow below does NOT
       const net = session[key] || 0;
       if (d > 0 && net + d > T.SESSION_CAP) d = Math.max(0, T.SESSION_CAP - net);
       if (d < 0 && net + d < -T.SESSION_CAP) d = Math.min(0, -T.SESSION_CAP - net);
@@ -702,7 +711,8 @@ const ClaudeAPI = {
       opinion_notes: this._reviseNotes(prev.opinion_notes, raw.opinion_notes, conf),
       // her floating inner line — what she's not saying right now. Sticky:
       // an absent report keeps the previous thought alive.
-      unsaid: raw.unsaid ? String(raw.unsaid).slice(0, 160) : (prev.unsaid || '')
+      unsaid: raw.unsaid ? String(raw.unsaid).slice(0, 160) : (prev.unsaid || ''),
+      _carry: carry
     };
 
     // ---- tension accumulation (see the tension engine block above) ----
@@ -1502,7 +1512,7 @@ const ClaudeAPI = {
       const r2 = await call([
         {
           role: 'system',
-          content: `You maintain ${p.name}'s PRIVATE internal state in their texting relationship with ${userName}. Output ONLY JSON in this exact shape: {"state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause of what she is thinking but not saying right now", "new_memories": []}}. Deltas are -3..+3 movements caused by this exchange — 0 is the most common answer; a bad exchange can be negative. "new_memories": 0-3 objects {"text","keywords","importance"} with standalone pronoun-free facts worth keeping — about ${userName}, about the two of them, or about ${p.name}'s OWN life as established in this exchange (her commitments, stories, opinions — so she never contradicts her own canon). [] if nothing new.`
+          content: `You maintain ${p.name}'s PRIVATE internal state in their texting relationship with ${userName}. Output ONLY JSON in this exact shape: {"state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause of what she is thinking but not saying right now", "new_memories": []}}. Deltas are -3..+3 movements caused by this exchange — report real movement when it happened (a landed line, a real laugh, a genuine share is ±1 or more), 0 only for genuinely neutral exchanges, negative when it stung or turned her off. "new_memories": 0-3 objects {"text","keywords","importance"} with standalone pronoun-free facts worth keeping — about ${userName}, about the two of them, or about ${p.name}'s OWN life as established in this exchange (her commitments, stories, opinions — so she never contradicts her own canon). [] if nothing new.`
         },
         {
           role: 'user',
@@ -1808,7 +1818,7 @@ const ClaudeAPI = {
       '## Reply format (mandatory)',
       'Reply with ONLY a single JSON object — no prose before or after it, no markdown fences:',
       '{"messages": ["first bubble", "optional second"], "state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause: what you are thinking but not saying right now", "new_memories": []}}',
-      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (0 is the most common answer; bad exchanges can be negative). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life as established this exchange (your commitments, stories, opinions — never contradict your own canon later); [] if nothing new.'
+      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life as established this exchange (your commitments, stories, opinions — never contradict your own canon later); [] if nothing new.'
     ].join('\n');
   },
 
