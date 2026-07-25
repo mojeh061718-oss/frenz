@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0d0f14">
+  <meta name="description" content="frenz — your private companion messenger. Build virtual friends who talk, adapt, and remember.">
+  <title>frenz</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ============ FRIENDS LIST ============ -->
+    <section id="view-friends" class="view">
+      <header class="topbar">
+        <h1 class="logo">frenz</h1>
+        <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
+      </header>
+      <div id="friends-list" class="friends-list"></div>
+      <div id="friends-empty" class="empty-state hidden">
+        <div class="empty-art">💬</div>
+        <h2>No friends yet</h2>
+        <p>Create your first companion. They'll text like a real person, remember your conversations, and grow closer (or not) depending on how things go between you.</p>
+      </div>
+      <button id="btn-new-friend" class="fab" title="New friend">+</button>
+    </section>
+
+    <!-- ============ FRIEND EDITOR ============ -->
+    <section id="view-editor" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-editor-back">←</button>
+        <h1 id="editor-title">New friend</h1>
+        <span></span>
+      </header>
+      <form id="friend-form" class="form scroll-area">
+        <label>Name
+          <input type="text" id="f-name" required maxlength="40" placeholder="e.g. Maya">
+        </label>
+        <label>Relationship
+          <select id="f-type">
+            <option value="friend">Friend</option>
+            <option value="close_friend">Close friend</option>
+            <option value="romantic">Potential romance</option>
+          </select>
+        </label>
+        <div class="row">
+          <label>Age
+            <input type="number" id="f-age" min="18" max="99" value="25">
+          </label>
+          <label>Gender
+            <input type="text" id="f-gender" maxlength="30" placeholder="e.g. woman">
+          </label>
+        </div>
+        <label>Personality
+          <textarea id="f-personality" rows="3" placeholder="Warm but sarcastic, fiercely loyal, a bit of an overthinker, loves to tease..."></textarea>
+        </label>
+        <label>Interests &amp; life
+          <textarea id="f-interests" rows="3" placeholder="Nurse who works nights, plays indie games, obsessed with houseplants, training for a half-marathon..."></textarea>
+        </label>
+        <label>Texting style
+          <textarea id="f-style" rows="2" placeholder="lowercase, quick short texts, lots of 'lol', rarely uses emoji..."></textarea>
+        </label>
+        <label>How you met / backstory
+          <textarea id="f-backstory" rows="2" placeholder="Met at a mutual friend's party last month, hit it off talking about music..."></textarea>
+        </label>
+        <label>Your name (what they call you)
+          <input type="text" id="f-username" maxlength="40" placeholder="e.g. Jay">
+        </label>
+        <label class="avatar-picker">Avatar color
+          <div id="f-colors" class="color-row"></div>
+        </label>
+        <button type="submit" class="btn-primary" id="btn-save-friend">Create friend</button>
+        <button type="button" class="btn-danger hidden" id="btn-delete-friend">Delete friend</button>
+      </form>
+    </section>
+
+    <!-- ============ CHAT ============ -->
+    <section id="view-chat" class="view hidden">
+      <header class="topbar chat-topbar">
+        <button class="icon-btn" id="btn-chat-back">←</button>
+        <div class="chat-title" id="chat-title-wrap">
+          <div class="avatar small" id="chat-avatar">M</div>
+          <div>
+            <div id="chat-name" class="chat-name">Maya</div>
+            <div id="chat-status" class="chat-status">online</div>
+          </div>
+        </div>
+        <button class="icon-btn" id="btn-chat-edit" title="Edit friend">✏️</button>
+      </header>
+      <div id="chat-messages" class="chat-messages scroll-area"></div>
+      <div id="typing" class="typing hidden"><span></span><span></span><span></span></div>
+      <form id="composer" class="composer">
+        <textarea id="composer-input" rows="1" placeholder="Message…" autocomplete="off"></textarea>
+        <button type="submit" id="btn-send" class="send-btn" title="Send">➤</button>
+      </form>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section id="view-settings" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-settings-back">←</button>
+        <h1>Settings</h1>
+        <span></span>
+      </header>
+      <div class="form scroll-area">
+        <label>Anthropic API key
+          <input type="password" id="s-apikey" placeholder="sk-ant-...">
+          <small>Stored only on this device. Your conversations go directly from your browser to the Claude API — no middleman server. Get a key at <b>console.anthropic.com</b>.</small>
+        </label>
+        <label>Model
+          <select id="s-model">
+            <option value="claude-opus-5">Claude Opus 5 — most lifelike (default)</option>
+            <option value="claude-sonnet-5">Claude Sonnet 5 — fast &amp; cheaper</option>
+            <option value="claude-haiku-4-5">Claude Haiku 4.5 — fastest, most affordable</option>
+          </select>
+        </label>
+        <label>Reply depth
+          <select id="s-effort">
+            <option value="low">Snappy (recommended for chat)</option>
+            <option value="medium">Balanced</option>
+            <option value="high">Deep</option>
+          </select>
+        </label>
+        <button class="btn-primary" id="btn-save-settings">Save settings</button>
+        <hr>
+        <h3>Your data</h3>
+        <p class="muted">All friends, conversations, and each friend's private impressions of you are saved automatically on this device.</p>
+        <div class="row">
+          <button class="btn-secondary" id="btn-export">Export backup</button>
+          <button class="btn-secondary" id="btn-import">Import backup</button>
+        </div>
+        <input type="file" id="import-file" accept="application/json" class="hidden">
+        <button class="btn-danger" id="btn-wipe">Erase all data</button>
+        <p class="muted small">frenz is a private, local-first app. Nothing is uploaded anywhere except your messages to the Claude API using your own key.</p>
+      </div>
+    </section>
+
+  </div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="js/db.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
