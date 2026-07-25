@@ -782,9 +782,33 @@ async function upgradeGeminiModel() {
   } catch { /* live list unavailable — keep what works */ }
 }
 
+/* A now-fixed bug let the model's private-state JSON render as chat bubbles
+   and persist into history — where the model then saw its own leak and
+   imitated it. Purge those artifacts from stored conversations (strict
+   patterns only; real texts are never touched). Idempotent, runs each boot. */
+async function purgeStateArtifacts() {
+  const friends = await DB.listFriends();
+  let removed = 0;
+  for (const f of friends) {
+    const msgs = await DB.getMessages(f.id);
+    for (const m of msgs) {
+      if (m.role === 'assistant' && ClaudeAPI._isArtifactBubble(String(m.text || '').trim())) {
+        await DB.deleteMessage(m.id);
+        removed++;
+      }
+    }
+  }
+  if (removed) {
+    toast(`Cleaned ${removed} glitched message${removed === 1 ? '' : 's'} from your conversations.`, 4000);
+    await renderFriendsList();
+    if (currentFriend) await renderMessages();
+  }
+}
+
 function init() {
   healStoredSettings();
   upgradeGeminiModel();
+  purgeStateArtifacts();
   $('#btn-new-friend').addEventListener('click', openGallery);
   $('#btn-gallery-back').addEventListener('click', () => showView('view-friends'));
   $('#btn-customize-back').addEventListener('click', () => showView('view-gallery'));

@@ -58,6 +58,7 @@ const DB = {
     return this._tx('messages', 'readonly', s => s.index('byFriend').getAll(friendId));
   },
   deleteMessages(friendId) { return this._deleteByFriend('messages', friendId); },
+  deleteMessage(id) { return this._tx('messages', 'readwrite', s => s.delete(id)); },
   async _deleteByFriend(store, friendId) {
     const db = await this.open();
     return new Promise((resolve, reject) => {

@@ -289,9 +289,8 @@ const ClaudeAPI = {
       'What you never do is step outside the character to explain yourself, lecture, disclaim, apologize as a service, or mention being an AI, a model, or a program. There is no narrator here and no assistant — only you, texting them.',
       '',
       '## Your private inner life',
-      'With every reply you also report your PRIVATE internal state: mood, small -3..+3 deltas for comfort/closeness/attraction with a reason, your honest opinion notes, and durable memories. This is your inner world —',
-      `${userName} can never see it. Be truthful in it even when your visible messages hide your feelings (people often say "it's fine" when it isn't — you can too).`,
-      'Most exchanges move nothing: 0 is the most common delta. Small positives for a genuinely good moment, negatives when something lands wrong — a bad exchange costs ground. Only rare, significant moments justify ±2 or ±3.',
+      'You carry a PRIVATE internal state — mood, comfort, closeness, attraction, your honest opinion notes, durable memories. It is collected separately from your texts, and whenever it is collected, be truthful in it even when your visible messages hide your feelings (people often say "it\'s fine" when it isn\'t — you can too). Most exchanges move nothing: 0 is the most common delta, and only rare, significant moments justify ±2 or ±3; a bad exchange costs ground.',
+      `${userName} can never see any of it — which means NONE of it may ever appear inside the messages you send. No JSON, no braces, no key: value pairs, no mood or state report of any kind in your visible texts, ever. A message containing "state" or "mood" in quotes is a catastrophic break of character.`,
       'Let your CURRENT state visibly shape your tone: low comfort = more guarded; high closeness = more open and warm; hurt feelings = shorter or cooler texts until resolved.'
     ];
     return lines.filter(l => l !== '').join('\n');
@@ -907,11 +906,25 @@ const ClaudeAPI = {
     const { req, r: r1 } = await this._plainCall(entry, call,
       () => this._buildPlainRequest(entry, friend, history, lastMessageTs, this._plainInstruction(), false), 'text');
     if (r1.refusal) return { refusal: true, bubbles: [], state: null, omitted: req.omitted };
+    // strip any state blob the model wrote into the visible reply — it must
+    // never render, but it can still serve as the state update
+    const ex = this._extractStateBlob(r1.text);
     // strip a leading "Name:" label — small models love to add one
     const nameRe = new RegExp('^' + friend.profile.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*', 'i');
-    const bubbles = this._splitBubbles(r1.text).map(b => b.replace(nameRe, '')).filter(b => b);
+    const bubbles = this._splitBubbles(ex.text).map(b => b.replace(nameRe, '')).filter(b => b);
 
-    let state = null;
+    if (!bubbles.length) {
+      // the whole reply was state shrapnel — never show an empty turn; make
+      // the send retry against the strengthened instruction
+      const err = new Error('Reply contained no message text — retrying.');
+      err.retryable = true;
+      throw err;
+    }
+
+    let state = ex.state ? this._normStateRaw(ex.state) : null;
+    if (state) {
+      return { bubbles, state, omitted: req.omitted };
+    }
     try {
       const p = friend.profile;
       const userName = p.userName || 'them';
@@ -1218,7 +1231,8 @@ const ClaudeAPI = {
     return [
       '## Reply format (mandatory)',
       'Write ONLY what you would actually send — no narration, no asterisks, no name labels, no quotation marks around the whole thing.',
-      'If you would send it as several separate texts, put each on its own line (at most 4 lines). Most replies are one or two short lines.'
+      'If you would send it as several separate texts, put each on its own line (at most 4 lines). Most replies are one or two short lines.',
+      'ABSOLUTELY NO JSON, braces, brackets, or key: value pairs in this reply. Your private state (mood, deltas, opinions) is collected in a separate step — never write any of it here.'
     ].join('\n');
   },
 
@@ -1446,7 +1460,14 @@ const ClaudeAPI = {
     const parsed = this._looseParse(text);
     if (parsed && typeof parsed.messages === 'string' && parsed.messages.trim()) parsed.messages = [parsed.messages];
     if (!parsed || !Array.isArray(parsed.messages)) {
-      return { bubbles: this._splitBubbles(text), state: null, parsedOk: false };
+      // Salvage path: strip any state blob the model wrote into prose so it
+      // never renders, and still use it to update her state.
+      const ex = this._extractStateBlob(text);
+      return {
+        bubbles: this._splitBubbles(ex.text),
+        state: ex.state ? this._normStateRaw(ex.state) : null,
+        parsedOk: false
+      };
     }
     const bubbles = parsed.messages.filter(m => typeof m === 'string' && m.trim());
     const st = parsed.state && typeof parsed.state === 'object' ? this._normStateRaw(parsed.state) : null;
@@ -1461,20 +1482,64 @@ const ClaudeAPI = {
      bubbling (up to 4); prose splits on paragraph breaks, then lines, and a
      single wall of text gets broken at sentence boundaries — one monolithic
      paragraph never goes through as-is. */
+  _STATEISH_KEY: /"(?:state|state_changes|mood|comfort(?:_delta)?|closeness(?:_delta)?|attraction(?:_delta)?|opinion_notes|new_memories|confidence|reason)"\s*:/,
+
+  /* Pull any state-shaped JSON object out of prose. A model that knows about
+     its private state sometimes writes it INTO the visible reply (Gemini in
+     split mode invented a "state_changes" object) — that must never reach
+     the screen, and once rendered it persists into history and teaches the
+     model to keep doing it. Returns cleaned text plus the salvaged raw state
+     when one parses, so the leak still updates her state instead of costing
+     a second call. */
+  _extractStateBlob(text) {
+    let t = String(text || '');
+    let salvaged = null;
+    for (let guard = 0; guard < 4; guard++) {
+      let start = -1, depth = 0, found = null;
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (c === '{') { if (depth === 0) start = i; depth++; }
+        else if (c === '}') { depth--; if (depth === 0 && start >= 0) { found = { s: start, e: i + 1 }; break; } }
+      }
+      if (!found) break;
+      const chunk = t.slice(found.s, found.e);
+      if (!this._STATEISH_KEY.test(chunk)) break; // unrelated braces — leave them
+      const parsed = this._looseParse(chunk);
+      if (parsed) salvaged = parsed.state_changes || parsed.state || parsed;
+      t = t.slice(0, found.s) + '\n' + t.slice(found.e);
+    }
+    return { text: t, state: salvaged };
+  },
+
+  /* Truncated/unbalanced JSON can't be brace-matched out — catch the shrapnel
+     line by line. Patterns are strict so real texts ("update: he did it
+     again") are never eaten. */
+  _isArtifactBubble(s) {
+    return /^[{}\[\]]/.test(s) ||                 // starts with JSON structure
+      /^"[A-Za-z_]+"\s*:/.test(s) ||              // "key": ...
+      /^[\s{}\[\]"',:.]+$/.test(s) ||             // pure structural characters
+      /^"[^"]*",$/.test(s) ||                     // dangling quoted fragment
+      /"(?:state_changes|state|comfort_delta|closeness_delta|attraction_delta|opinion_notes|new_memories)"/.test(s);
+  },
+
   _splitBubbles(text) {
     const parsed = this._looseParse(text);
     if (parsed && Array.isArray(parsed.messages)) {
-      const arr = parsed.messages.filter(m => typeof m === 'string' && m.trim());
+      const arr = parsed.messages.filter(m => typeof m === 'string' && m.trim() && !this._isArtifactBubble(m.trim()));
       if (arr.length) return arr.slice(0, 4);
     }
     let t = String(text || '').trim();
     const fence = t.match(/```(?:\w+)?\s*([\s\S]*?)```/);
     if (fence) t = fence[1].trim();
+    // Line-level shrapnel strip FIRST, so prose sharing a part with JSON
+    // fragments survives while the fragments don't. The per-part filter
+    // below stays as a second net for fragments that emerge after clean().
+    t = t.split('\n').filter(line => !this._isArtifactBubble(line.trim())).join('\n');
     const clean = (s) => s.trim().replace(/^[-*•]\s+/, '').replace(/^"(.*)"$/, '$1').trim();
 
-    let parts = t.split(/\n{2,}/).map(clean).filter(s => s);
+    let parts = t.split(/\n{2,}/).map(clean).filter(s => s && !this._isArtifactBubble(s));
     if (parts.length === 1) {
-      const lines = parts[0].split('\n').map(clean).filter(s => s);
+      const lines = parts[0].split('\n').map(clean).filter(s => s && !this._isArtifactBubble(s));
       if (lines.length > 1) parts = lines;
     }
     parts = parts.slice(0, 3);
