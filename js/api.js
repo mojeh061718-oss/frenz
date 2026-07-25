@@ -117,6 +117,11 @@ const ClaudeAPI = {
       kind: 'openai', label: 'Google Gemini',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
       keyUrl: 'aistudio.google.com/apikey', keyHint: 'Free key at aistudio.google.com/apikey — no card required.',
+      // splitSticky: Gemini parses combined JSON fine, but JSON mode visibly
+      // stiffens its prose ("Just felt like it.") — the plain-prose reply call
+      // is where the voice lives, so it never gets probe-promoted back into
+      // combined mode on parse success alone.
+      splitDefault: true, splitSticky: true,
       contextTokens: 32000, rpd: 1000, tpm: 250000
     },
     groq: {
@@ -813,9 +818,17 @@ const ClaudeAPI = {
   /* ---------------- plain providers (pool entries) ---------------- */
 
   _midRoleFallback: {},
+  _noReasoningParam: {}, // base URLs whose endpoint rejected reasoning_effort
 
   _injectionRole(entry) {
     if (entry.kind === 'ollama') return 'system';
+    // Gemini's OpenAI-compat layer never REJECTS mid-array system messages —
+    // it silently hoists them into systemInstruction at the top of the
+    // prompt. No error, so the 400-triggered fallback never fires, and the
+    // depth-4 voice/state injection plus the final per-turn instruction (our
+    // two strongest levers) quietly lose their position. Bracketed user-role
+    // blocks keep their place — the community-standard Author's Note role.
+    if (entry.preset === 'gemini' || /generativelanguage\.googleapis\.com/.test(entry.baseUrl || '')) return 'user';
     return this._midRoleFallback[entry.baseUrl] ? 'user' : 'system';
   },
 
@@ -845,10 +858,17 @@ const ClaudeAPI = {
     let mode = rec.mode;
     let probing = false;
 
+    // splitSticky presets stay in split mode permanently — split was chosen
+    // for voice quality there, not parse reliability, so a clean-parse probe
+    // proves nothing. Also overrides a 'single' mode stored by older builds.
+    const stickyHints = this._presetOf(entry);
+    const sticky = !!(stickyHints && stickyHints.splitSticky);
+    if (sticky) mode = 'split';
+
     // Promotion probe: a split-mode model gets a periodic shot at single-call
     // mode. If it nails the combined JSON, it's promoted; the existing
     // demotion logic re-splits it if that turns out to be a fluke.
-    if (mode === 'split') {
+    if (mode === 'split' && !sticky) {
       rec.splitCalls = (rec.splitCalls || 0) + 1;
       this._saveModes();
       if (rec.splitCalls % 12 === 0) { probing = true; mode = 'single'; }
@@ -1248,10 +1268,15 @@ const ClaudeAPI = {
     // Heal ids already saved with Gemini's "models/" prefix — those 404 on
     // every send, and the user has no way to see why.
     const modelId = String(entry.model || '').replace(/^models\//, '');
+    const isGemini = entry.preset === 'gemini' || /generativelanguage\.googleapis\.com/.test(base);
 
     while (true) {
       const level = format === 'json' ? this._oaiFormat[base] : 0;
-      const body = { model: modelId, messages, max_tokens: 1024 };
+      // 4096, not 1024: Gemini 3.x (and other reasoning models) think by
+      // default, and thinking spends from max_tokens — a 1024 cap starves the
+      // visible reply into two-word fragments after reasoning eats the budget.
+      const body = { model: modelId, messages, max_tokens: 4096 };
+      if (isGemini && !this._noReasoningParam[base]) body.reasoning_effort = 'low';
       if (level === 2) body.response_format = { type: 'json_schema', json_schema: { name: 'reply', schema: this.REPLY_SCHEMA } };
       else if (level === 1) body.response_format = { type: 'json_object' };
 
@@ -1277,6 +1302,11 @@ const ClaudeAPI = {
           else if (e.message) msg = e.message;
         } catch { if (raw) msg = raw.slice(0, 200); }
 
+        // An endpoint that doesn't know reasoning_effort gets it dropped, once.
+        if (res.status === 400 && body.reasoning_effort && /reasoning/i.test(raw)) {
+          this._noReasoningParam[base] = true;
+          continue;
+        }
         // Degrade the structured-output level rather than failing outright.
         if (res.status === 400 && level > 0 && /response_format|json_schema|json_object|structured|schema/i.test(raw)) {
           this._oaiFormat[base] = level - 1;
@@ -1616,7 +1646,9 @@ const ClaudeAPI = {
   pickDefaultModel(models, preset) {
     const skip = /guard|whisper|tts|embed|moderation|rerank|distil|image|imagen|veo|audio/i;
     const presetPrefs = {
-      gemini: [/flash-lite/i, /flash/i],
+      // non-lite flash first: flash-lite's extra 750 requests/day are not
+      // worth how much dumber it is at holding a persona
+      gemini: [/gemini-3\.6-flash$/i, /gemini-3\.5-flash$/i, /flash(?!-lite)/i, /flash-lite/i],
       openrouter: [/llama.*70b.*:free/i, /:free$/i],
       groq: [/llama[-.]?3\.3.*70b/i, /gpt-oss-120b/i],
       cerebras: [/gpt-oss-120b/i, /glm/i],

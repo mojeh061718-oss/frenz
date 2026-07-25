@@ -763,8 +763,28 @@ function healStoredSettings() {
   if (changed) Settings.set(s);
 }
 
+/* Older builds auto-picked Gemini flash-lite (chosen for its bigger daily
+   quota). It is markedly worse at holding a persona, so a stored lite entry
+   upgrades itself to the best non-lite flash — from the LIVE model list, so
+   we only ever set a model this key can actually reach. Fire-and-forget. */
+async function upgradeGeminiModel() {
+  const s = Settings.get();
+  const e = (s.pool || []).find(x => x.preset === 'gemini' && x.apiKey && /flash-lite/i.test(x.model || ''));
+  if (!e) return;
+  try {
+    const models = await ClaudeAPI.listModels(e.baseUrl, e.apiKey);
+    const best = ClaudeAPI.pickDefaultModel(models, 'gemini');
+    if (best && !/flash-lite/i.test(best) && best !== e.model) {
+      e.model = best;
+      Settings.set(s);
+      toast('Gemini switched to ' + best + ' — the stronger model for conversation.', 5000);
+    }
+  } catch { /* live list unavailable — keep what works */ }
+}
+
 function init() {
   healStoredSettings();
+  upgradeGeminiModel();
   $('#btn-new-friend').addEventListener('click', openGallery);
   $('#btn-gallery-back').addEventListener('click', () => showView('view-friends'));
   $('#btn-customize-back').addEventListener('click', () => showView('view-gallery'));
