@@ -6,7 +6,7 @@
    (which is exactly what v1 of this file did). Static assets that never
    change (icons) stay cache-first. */
 
-const CACHE = 'frenz-v18';
+const CACHE = 'frenz-v19';
 const SHELL = [
   './',
   './index.html',
