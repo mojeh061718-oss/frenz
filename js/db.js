@@ -123,7 +123,15 @@ const DB = {
    fields; free-pool entries carry their own config. */
 const DEFAULT_SETTINGS = {
   apiKey: '', model: 'claude-opus-5', effort: 'low',
+  // Fresh install: keyless providers preconfigured and enabled at the top —
+  // the app holds a real conversation with ZERO setup. LLM7 and OpenCode Zen
+  // verified keyless; Pollinations' anonymous tier is documented keyless.
+  // The Anthropic entry rides along unconfigured and is skipped until a key
+  // is added (at which point it's promoted to the front — see saveSettings).
   pool: [
+    { id: 'llm7', kind: 'openai', preset: 'llm7', label: 'LLM7 (no key)', baseUrl: 'https://api.llm7.io/v1', apiKey: '', model: 'gpt-oss:20b', contextTokens: 16000, enabled: true },
+    { id: 'pollinations', kind: 'openai', preset: 'pollinations', label: 'Pollinations (no key)', baseUrl: 'https://text.pollinations.ai/openai', apiKey: '', model: 'openai-fast', contextTokens: 12000, enabled: true },
+    { id: 'zen', kind: 'openai', preset: 'zen', label: 'OpenCode Zen (no key)', baseUrl: 'https://opencode.ai/zen/v1', apiKey: '', model: 'big-pickle', contextTokens: 12000, enabled: true },
     { id: 'anthropic', kind: 'anthropic', label: 'Anthropic (Claude)', enabled: true }
   ]
 };
@@ -138,6 +146,14 @@ const Settings = {
     }
     if (!s.pool.some(e => e.kind === 'anthropic')) {
       s.pool.unshift({ id: 'anthropic', kind: 'anthropic', label: 'Anthropic (Claude)', enabled: true });
+    }
+    // Existing installs gain any missing keyless entries at the BOTTOM —
+    // they only serve when everything the user configured is unavailable,
+    // so an existing setup is never silently demoted.
+    for (const def of DEFAULT_SETTINGS.pool) {
+      if (def.preset && !s.pool.some(e => e.preset === def.preset || e.id === def.id)) {
+        s.pool.push(Object.assign({}, def));
+      }
     }
     return s;
   },

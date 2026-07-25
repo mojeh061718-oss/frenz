@@ -176,8 +176,9 @@
         <span></span>
       </header>
       <div class="form scroll-area">
-        <h3>Providers</h3>
-        <p class="muted small">Tried top to bottom — if one is rate-limited, capped for the day, or down, the next takes over mid-send. Free tiers cost nothing but may log or train on your conversations, and their limits change without warning.</p>
+        <h3>Providers — works out of the box, no account needed</h3>
+        <p class="muted small">frenz ships with free keyless providers already set up: install it, open a conversation, she answers. Providers are tried top to bottom — if one is rate-limited, capped, or down, the next takes over mid-send. Free providers may log or train on your conversations, and their limits change without warning.</p>
+        <p class="muted small"><b>Optional upgrade:</b> keyless models are smaller, so personas are simpler and the subtext lands less reliably. Adding a free key (Gemini, Groq, Cerebras, OpenRouter — no card required) makes them sharper; an Anthropic key below is the full experience.</p>
         <div id="pool-list" class="pool-list"></div>
         <div class="preset-row">
           <button type="button" class="btn-secondary btn-preset" data-preset="gemini">+ Gemini</button>
@@ -218,7 +219,7 @@
         <small id="pool-status" class="muted"></small>
 
         <hr>
-        <h3>Anthropic (Claude)</h3>
+        <h3>Anthropic (Claude) — optional, the quality ceiling</h3>
         <label>Anthropic API key
           <input type="password" id="s-apikey" placeholder="sk-ant-...">
           <small>Stored only on this device. Your conversations go directly from your browser to the Claude API — no middleman server. Get a key at <b>console.anthropic.com</b>.</small>

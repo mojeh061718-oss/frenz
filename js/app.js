@@ -505,12 +505,25 @@ function openSettings() {
 
 function saveSettings() {
   const s = Settings.get();
+  const hadKey = !!s.apiKey;
   s.apiKey = $('#s-apikey').value.trim();
   s.model = $('#s-model').value;
   s.effort = $('#s-effort').value;
   if (poolDraft) s.pool = poolDraft;
-  Settings.set(s);
-  toast('Settings saved');
+  // Adding a Claude key is the quality upgrade — make it take effect
+  // immediately instead of leaving Claude parked below the keyless tier.
+  if (s.apiKey && !hadKey) {
+    const idx = s.pool.findIndex(e => e.kind === 'anthropic');
+    if (idx > 0) {
+      const moved = s.pool.splice(idx, 1)[0];
+      s.pool.unshift(moved);
+    }
+    Settings.set(s);
+    toast('Claude key saved — Claude now answers first');
+  } else {
+    Settings.set(s);
+    toast('Settings saved');
+  }
   showView('view-friends');
 }
 
@@ -521,11 +534,13 @@ function renderPool() {
     const row = document.createElement('div');
     row.className = 'pool-row' + (e.id === selectedEntryId ? ' selected' : '');
     const info = ClaudeAPI.usageInfo(e);
+    const preset = e.preset ? ClaudeAPI.POOL_PRESETS[e.preset] : null;
     let sub;
     if (e.kind === 'anthropic') {
-      sub = $('#s-apikey').value.trim() ? $('#s-model').value : 'no key yet — add it below';
+      sub = $('#s-apikey').value.trim() ? $('#s-model').value : 'optional — add a key below for the best personas';
     } else {
       sub = e.model || 'not configured yet';
+      if (preset && preset.keyless) sub += ' · no key needed';
     }
     if (info.rpdHint) sub += ` · ${info.requestsToday}/${info.rpdHint} today`;
     else if (info.requestsToday) sub += ` · ${info.requestsToday} today`;
@@ -587,7 +602,7 @@ function openEntryEditor(id) {
   $('#e-url').value = e.baseUrl || '';
   $('#e-key').value = e.apiKey || '';
   $('#e-keyhint').textContent = preset ? preset.keyHint : (e.kind === 'ollama' ? 'No key needed.' : 'Some local endpoints need no key.');
-  $('#e-key-label').classList.toggle('hidden', e.kind === 'ollama');
+  $('#e-key-label').classList.toggle('hidden', e.kind === 'ollama' || !!(preset && preset.keyless));
   $('#e-model').value = e.model || '';
   $('#e-ctx').value = e.contextTokens || 8000;
   $('#e-test-result').textContent = '';

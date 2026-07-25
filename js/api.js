@@ -88,6 +88,31 @@ const ClaudeAPI = {
      status line only — limits change without warning, so the real authority
      is always the provider's own 429s and rate-limit headers. */
   POOL_PRESETS: {
+    /* Keyless tier — no account, no key, preconfigured on a fresh install so
+       the app works out of the box. Smaller models, so these default to split
+       mode (plain-prose reply + separate state call): the combined JSON is
+       exactly what they fumble, while their prose voice is genuinely good. */
+    llm7: {
+      kind: 'openai', label: 'LLM7 (no key)',
+      baseUrl: 'https://api.llm7.io/v1',
+      keyUrl: null, keyHint: 'No account, no key — works out of the box.',
+      keyless: true, splitDefault: true,
+      contextTokens: 16000, rpd: null, tpm: null
+    },
+    pollinations: {
+      kind: 'openai', label: 'Pollinations (no key)',
+      baseUrl: 'https://text.pollinations.ai/openai',
+      keyUrl: null, keyHint: 'No account, no key — anonymous tier.',
+      keyless: true, splitDefault: true,
+      contextTokens: 12000, rpd: null, tpm: null
+    },
+    zen: {
+      kind: 'openai', label: 'OpenCode Zen (no key)',
+      baseUrl: 'https://opencode.ai/zen/v1',
+      keyUrl: null, keyHint: 'No account, no key — community free tier.',
+      keyless: true, splitDefault: true,
+      contextTokens: 12000, rpd: null, tpm: null
+    },
     gemini: {
       kind: 'openai', label: 'Google Gemini',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -611,7 +636,7 @@ const ClaudeAPI = {
         lastErr = err;
       }
     }
-    throw lastErr || new Error('All configured providers are at their limits right now — try again in a bit, or add another provider in Settings.');
+    throw lastErr || new Error('Everyone\'s lines are busy — every provider is rate-limited or down right now. Give it a minute and send again.');
   },
 
   /* Per-entry retry with backoff. After the attempts are spent, quota and
@@ -779,14 +804,31 @@ const ClaudeAPI = {
      repeatedly fumbles the combined JSON self-tunes to 'split' mode. */
   async _plainProviderChat(entry, call, friend, history, lastMessageTs) {
     const modeKey = entry.id + '|' + (entry.model || '');
-    const mode = this._replyMode(modeKey);
+    const rec = this._modeRec(modeKey, entry);
+    let mode = rec.mode;
+    let probing = false;
+
+    // Promotion probe: a split-mode model gets a periodic shot at single-call
+    // mode. If it nails the combined JSON, it's promoted; the existing
+    // demotion logic re-splits it if that turns out to be a fluke.
+    if (mode === 'split') {
+      rec.splitCalls = (rec.splitCalls || 0) + 1;
+      this._saveModes();
+      if (rec.splitCalls % 12 === 0) { probing = true; mode = 'single'; }
+    }
 
     if (mode === 'single') {
       const { req, r } = await this._plainCall(entry, call,
         () => this._buildPlainRequest(entry, friend, history, lastMessageTs, this._jsonInstruction(), true), 'json');
       if (r.refusal) return { refusal: true, bubbles: [], state: null, omitted: req.omitted };
       const reply = this._finishReply(r.text);
-      this._recordParse(modeKey, reply.parsedOk && !!reply.state);
+      const ok = reply.parsedOk && !!reply.state;
+      if (probing) {
+        if (ok) { rec.mode = 'single'; rec.fails = 0; }
+        this._saveModes();
+      } else {
+        this._recordParse(modeKey, ok);
+      }
       return { bubbles: reply.bubbles, state: reply.state, omitted: req.omitted };
     }
 
@@ -794,7 +836,9 @@ const ClaudeAPI = {
     const { req, r: r1 } = await this._plainCall(entry, call,
       () => this._buildPlainRequest(entry, friend, history, lastMessageTs, this._plainInstruction(), false), 'text');
     if (r1.refusal) return { refusal: true, bubbles: [], state: null, omitted: req.omitted };
-    const bubbles = this._splitBubbles(r1.text);
+    // strip a leading "Name:" label — small models love to add one
+    const nameRe = new RegExp('^' + friend.profile.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*', 'i');
+    const bubbles = this._splitBubbles(r1.text).map(b => b.replace(nameRe, '')).filter(b => b);
 
     let state = null;
     try {
@@ -1316,6 +1360,10 @@ const ClaudeAPI = {
     };
   },
 
+  /* Turn model output into 1-3 chat bubbles. JSON replies keep their own
+     bubbling (up to 4); prose splits on paragraph breaks, then lines, and a
+     single wall of text gets broken at sentence boundaries — one monolithic
+     paragraph never goes through as-is. */
   _splitBubbles(text) {
     const parsed = this._looseParse(text);
     if (parsed && Array.isArray(parsed.messages)) {
@@ -1325,10 +1373,28 @@ const ClaudeAPI = {
     let t = String(text || '').trim();
     const fence = t.match(/```(?:\w+)?\s*([\s\S]*?)```/);
     if (fence) t = fence[1].trim();
-    return t.split('\n')
-      .map(s => s.trim().replace(/^[-*•]\s+/, '').replace(/^"(.*)"$/, '$1'))
-      .filter(s => s)
-      .slice(0, 4);
+    const clean = (s) => s.trim().replace(/^[-*•]\s+/, '').replace(/^"(.*)"$/, '$1').trim();
+
+    let parts = t.split(/\n{2,}/).map(clean).filter(s => s);
+    if (parts.length === 1) {
+      const lines = parts[0].split('\n').map(clean).filter(s => s);
+      if (lines.length > 1) parts = lines;
+    }
+    parts = parts.slice(0, 3);
+
+    // wall-of-text guard: break one long paragraph at sentence boundaries
+    if (parts.length === 1 && parts[0].length > 220) {
+      const sentences = parts[0].match(/[^.!?…]+[.!?…]+["')\]]*\s*|[^.!?…]+$/g) || [parts[0]];
+      const packed = [];
+      let cur = '';
+      for (const s of sentences) {
+        if (cur && (cur + s).length > 160 && packed.length < 2) { packed.push(cur.trim()); cur = s; }
+        else cur += s;
+      }
+      if (cur.trim()) packed.push(cur.trim());
+      parts = packed.slice(0, 3);
+    }
+    return parts;
   },
 
   /* ---------------- adaptive single/split reply mode ---------------- */
@@ -1349,14 +1415,26 @@ const ClaudeAPI = {
     } catch { /* private mode etc. — in-memory still works */ }
   },
 
-  _replyMode(key) {
+  /* The mode record for an entry+model. Keyless presets are PRE-SEEDED to
+     split mode — we already know their small models fumble the combined JSON,
+     so the user never eats broken turns discovering it. */
+  _modeRec(key, entry) {
     const m = this._loadModes();
-    return (m[key] && m[key].mode) || 'single';
+    if (!m[key]) {
+      const hints = this._presetOf(entry);
+      m[key] = { fails: 0, mode: hints && hints.splitDefault ? 'split' : 'single', splitCalls: 0 };
+      this._saveModes();
+    }
+    return m[key];
+  },
+
+  _replyMode(key, entry) {
+    return this._modeRec(key, entry).mode;
   },
 
   _recordParse(key, ok) {
     const m = this._loadModes();
-    const e = m[key] || { fails: 0, mode: 'single' };
+    const e = m[key] || { fails: 0, mode: 'single', splitCalls: 0 };
     if (ok) {
       e.fails = 0;
     } else {
@@ -1433,7 +1511,13 @@ const ClaudeAPI = {
     }
     const data = await res.json();
     return (data.data || [])
-      .map(m => ({ id: m.id, context: m.context_window || m.context_length || null }))
+      // paid/pro tiers listed on otherwise-keyless endpoints (LLM7) would 402
+      .filter(m => !m.usage_based_only && !(m.tier && /pro/i.test(String(m.tier))))
+      .map(m => ({
+        id: m.id,
+        // context_window is a number on most providers, {tokens} on LLM7
+        context: (m.context_window && m.context_window.tokens) || (typeof m.context_window === 'number' ? m.context_window : null) || m.context_length || null
+      }))
       .filter(m => m.id)
       .sort((a, b) => a.id.localeCompare(b.id));
   },
@@ -1447,7 +1531,10 @@ const ClaudeAPI = {
       gemini: [/flash-lite/i, /flash/i],
       openrouter: [/llama.*70b.*:free/i, /:free$/i],
       groq: [/llama[-.]?3\.3.*70b/i, /gpt-oss-120b/i],
-      cerebras: [/gpt-oss-120b/i, /glm/i]
+      cerebras: [/gpt-oss-120b/i, /glm/i],
+      llm7: [/^gpt-oss/i, /minimax/i],
+      pollinations: [/^openai-fast$/i, /^openai/i],
+      zen: [/big-pickle/i]
     };
     const prefs = ((preset && presetPrefs[preset]) || []).concat([
       /llama[-.]?3\.3.*70b/i, /gpt-oss-120b/i, /versatile/i, /70b|72b|120b/i, /gpt-oss/i, /llama|qwen|deepseek|mixtral|gemma/i
