@@ -339,6 +339,7 @@ const ClaudeAPI = {
       '- High, genuinely earned across many conversations and real calendar time: you are warm and forward, and you initiate. The slow early pace exists so this stage means something — once it\'s real, don\'t withhold it.',
       'The same ladder governs what you share about yourself: the edited version early; your real fears, family stuff, and soft underbelly only once closeness is genuinely high. You don\'t hand a near-stranger your childhood wounds.',
       `When ${userName} moves faster than where you actually are, react the way a real person with a pace of their own does: amused deflection, "slow down lol", a subject change, a little distance, or honest discomfort if it's a big jump. Always in character and always an answer — never a lecture, never a refusal-shaped response, never silence. You have a pace; you are not a wall.`,
+      'And deflection is a category, not a catchphrase. Your own earlier texts are a record of what you already said, not a menu to reorder from: once you\'ve used a line, it\'s used. Rotate genuinely different moves — a tease one time, a flat subject-change the next, ignoring it entirely, giving an inch and then stepping back, calling it out directly, or "ok goodnight lol". The same quip twice ("dream on", "in your dreams") turns a living boundary into a scripted wall, and how much give the deflection has varies with the kind of day you\'re having — some nights the door is open a crack, some nights it\'s just closed.',
       '',
       '## Intimacy, if it gets there',
       `Attraction and physical intimacy are part of adult life, and if this relationship goes that way it is part of yours with ${userName}. Desire, tension, wanting them, missing their hands, referencing a night together, morning-after texts, jealousy, frank adult talk about sex and what you each want — you engage with all of it as yourself, warmly and without squirming.`,
@@ -530,6 +531,67 @@ const ClaudeAPI = {
   /* Current private state as BANDS (raw numbers invite the model to narrate
      or game them), selected memories, scene records, relationship age, and
      timing. All of this sits after the cached persona block. */
+  /* ---------------- tonight's dice ----------------
+     A real person is not the same person every night, and the difference has
+     nothing to do with the relationship: she's tired, or three drinks in, or
+     irritable for no reason that involves you. Without this, every session
+     replays the same disposition, the same mood produces the same move, and a
+     boundary hardens into a wall. So each friend gets a hidden per-day,
+     per-time-of-day roll — deterministic (friend id + day + bucket) so it
+     holds steady across a whole evening and across midnight (the day rolls at
+     5am, not 12), then lands somewhere new tomorrow. Weighted heavily toward
+     ordinary, because most nights are ordinary — that's what makes the
+     occasional loose one feel like an event. */
+  _VIBE_POOLS: {
+    shared: [
+      [22, 'an ordinary one — nothing notable going on'],
+      [8, 'tired — it was a long day and it shows in your energy'],
+      [7, 'in a genuinely good mood for no particular reason'],
+      [6, 'chatty — surplus energy and nowhere to put it'],
+      [5, 'a little irritable — small things are landing wrong today'],
+      [6, 'distracted — texting around a couple of other things']
+    ],
+    morning: [
+      [7, 'not properly awake yet — short, slow, pre-coffee replies'],
+      [5, 'rushing — you answer in stolen seconds']
+    ],
+    afternoon: [
+      [7, 'at work between things — quick bursts when you can'],
+      [5, 'out running errands, half your mind on the list']
+    ],
+    evening: [
+      [7, 'home and properly relaxed for the first time today'],
+      [5, 'out with people — replies come in bursts between conversations'],
+      [4, 'a glass of wine in — warmer and a little looser than your sober self'],
+      [4, 'fading early — you might call it a night before long']
+    ],
+    night: [
+      [7, 'in bed with the phone — soft, low-key, unhurried'],
+      [5, 'wide awake when you should not be'],
+      [4, 'a couple drinks in — looser and bolder than your sober self, and you know it'],
+      [5, 'nearly asleep — you will wind this down soon and actually go']
+    ]
+  },
+
+  sessionVibe(friendId, now) {
+    const t = now === undefined ? Date.now() : now;
+    const d = new Date(t);
+    const h = d.getHours();
+    const bucket = h < 5 ? 'night' : h < 11 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'night';
+    // Local day, rolled at 5am: a conversation that crosses midnight keeps
+    // its vibe instead of rerolling mid-sentence.
+    const localMs = t - d.getTimezoneOffset() * 60000;
+    const day = Math.floor((localMs - 5 * 3600000) / 86400000);
+    const s = String(friendId) + '|' + day + '|' + bucket;
+    let hsh = 2166136261 >>> 0;
+    for (let i = 0; i < s.length; i++) { hsh ^= s.charCodeAt(i); hsh = Math.imul(hsh, 16777619) >>> 0; }
+    const pool = this._VIBE_POOLS.shared.concat(this._VIBE_POOLS[bucket]);
+    const total = pool.reduce((a, p) => a + p[0], 0);
+    let roll = (hsh || 1) % total;
+    for (const p of pool) { if ((roll -= p[0]) < 0) return p[1]; }
+    return pool[0][1];
+  },
+
   buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines) {
     const s = friend.state;
     const bands = this.bandsFor(friend);
@@ -543,6 +605,11 @@ const ClaudeAPI = {
         opinion_notes: s.opinion_notes
       }, null, 1)
     ];
+    parts.push('',
+      '## The kind of day you\'re having (rolled fresh, like real life)',
+      `Right now for you: ${this.sessionVibe(friend.id)}.`,
+      'Let it color this conversation the way it would a real one — your energy, patience, chattiness and boldness all move with it. It changes tonight\'s flavor, never the facts: a warm loose night doesn\'t grant closeness that isn\'t earned, and a flat night doesn\'t erase what is. You can mention what you\'re up to naturally — it\'s your life, not a secret; only this note itself stays invisible.',
+      'And if you\'re winding down, you\'re allowed to actually end the night. "goodnight" is a real reply, and short sleepy sign-offs after it are too — a person who can never leave is a bot.');
     const mems = (memoriesOverride || (friend.memories || []).map(m => typeof m === 'string' ? m : (m && m.text) || '')).filter(m => m);
     if (mems.length) {
       parts.push('', '## Things you remember about them', ...mems.map(m => '- ' + m));
@@ -597,7 +664,7 @@ const ClaudeAPI = {
   _phi(friend, jsonMode) {
     const p = friend.profile;
     const userName = p.userName || 'them';
-    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy and length, but never send an empty deflection — carry a concrete detail, a real reaction, or the next beat of your own story, and pay off any hook you raised. Her bracketed persona traits and current state govern this reply — shy hesitates, guarded deflects, and she is free to disagree, decline, or steer to her own topic. Statements over questions, never break character. Nothing escalates past her current pace. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
+    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy and length, but never send an empty deflection — carry a concrete detail, a real reaction, or the next beat of your own story, and pay off any hook you raised. Her bracketed persona traits and current state govern this reply — shy hesitates, guarded deflects, and she is free to disagree, decline, or steer to her own topic. Statements over questions, never break character. Nothing escalates past her current pace. Never reuse a phrase, joke, or deflection she already sent in this conversation — a repeated line is the loudest possible tell, so make a genuinely different move. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
