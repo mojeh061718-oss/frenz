@@ -825,10 +825,20 @@ async function purgeStateArtifacts() {
   }
 }
 
+/* Template rewrites reach existing friends in place — history, memories, and
+   relationship state all survive. Only unedited template text is touched. */
+async function upgradeTemplateFriends() {
+  const friends = await DB.listFriends();
+  for (const f of friends) {
+    if (Personas.upgradeProfile(f.profile)) await DB.saveFriend(f);
+  }
+}
+
 function init() {
   healStoredSettings();
   upgradeGeminiModel();
   purgeStateArtifacts();
+  upgradeTemplateFriends();
   $('#btn-new-friend').addEventListener('click', openGallery);
   $('#btn-gallery-back').addEventListener('click', () => showView('view-friends'));
   $('#btn-customize-back').addEventListener('click', () => showView('view-gallery'));
