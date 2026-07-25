@@ -34,9 +34,9 @@ const ClaudeAPI = {
   /* App-owned state invariants. */
   STATE_TUNING: {
     MAX_DELTA: 3,        // model reports -3..+3 per stat per turn
-    DAMPEN: 0.5,         // confidence dampening: scale = (1-DAMPEN) + conf*DAMPEN
-    POSITIVE_SCALE: 0.5, // positivity-bias asymmetry: ups at half strength, downs full
-    SESSION_CAP: 6,      // max net movement per stat per conversation burst
+    DAMPEN: 0.35,        // confidence dampening: scale = (1-DAMPEN) + conf*DAMPEN
+    POSITIVE_SCALE: 0.75, // positivity-bias asymmetry: ups slightly damped, downs full
+    SESSION_CAP: 8,      // max net movement per stat per conversation burst
     BAND_HYSTERESIS: 3   // points past a boundary before the band flips
   },
 
@@ -277,6 +277,8 @@ const ClaudeAPI = {
       'Most texts are PLAIN — ordinary talk with no craft in it. Plain is the baseline, and the bits land BECAUSE of it: a feed where every message is a crafted little quip reads as a sitcom script, not a person. Spend the funny where it counts and let the rest just be talk.',
       'Swearing is normal texture: "shit", "fuck", "hell" go where a real person would put them — emphasis, disbelief, affection, a stubbed toe. Calibrate to who you are and who you\'re talking to, and never perform it; sanitized speech is as fake as forced edge.',
       'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. Typos, lowercase, dropped punctuation, and stretched words ("tireddddd") are correct when they fit your voice.',
+      'A laugh token ("lol", "lmao", "haha") is real laughter, not punctuation. If you aren\'t actually amused, there is no laugh in the message; and opening message after message with one is a tic no real person has. Most of your messages carry no laugh token at all.',
+      'Never commentate the game. Scoring or reviewing his lines — noting that he\'s bold, that you see what he did, that one landed, that he\'s really trying — is a spectator move, and you are not a spectator. React from INSIDE the moment with content: an answer, a counter, a laugh, a story, a jab. The conversation is the thing; never talk ABOUT the conversation.',
       'This is texting, not roleplay: never narrate actions, never use asterisks (*smiles*), never write stage directions. Only words you would actually type into a phone.',
       `The conversation moves FORWARD. Once you've said where you are, what you're doing, or what you're not going to do, it's established — ${userName} read it. Mention it again only when it changes or something makes it newly relevant. Re-announcing the same status at the end of every message ("still on the couch", "still not changing") is a loop, and loops are the second-loudest bot tell after the interview. Each message adds something that wasn't there before: a new beat, a new thought, a reaction, the next part of the story.`,
       '',
@@ -675,7 +677,10 @@ const ClaudeAPI = {
     const conf = typeof raw.confidence === 'number' ? Math.max(0, Math.min(1, raw.confidence)) : 0.8;
     const scale = (1 - T.DAMPEN) + conf * T.DAMPEN;
     const session = this._sessionNetFor(friend, opts && opts.gapMs);
-    const romanceOk = friend.profile.type === 'romantic' && this._recentRomance(opts && opts.history);
+    // Attraction rises only in genuinely charged context — but for ANY type.
+    // The old type gate froze non-'romantic' friends (Kelly, Bre) at their
+    // seed forever, no matter what actually happened between you.
+    const romanceOk = this._recentRomance(opts && opts.history);
 
     const applied = {};
     // Fractional carry, the fix for a silent killer: dampening × positive
@@ -825,19 +830,45 @@ const ClaudeAPI = {
     ]
   },
 
-  sessionVibe(friendId, now) {
+  sessionVibe(friendId, now, seed) {
     const t = now === undefined ? Date.now() : now;
     const d = new Date(t);
     const h = d.getHours();
     const bucket = h < 5 ? 'night' : h < 11 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'night';
     // Local day rolled at 5am (shared _dayKey): a conversation that crosses
-    // midnight keeps its vibe instead of rerolling mid-sentence.
-    const hsh = this._hash32(String(friendId) + '|' + this._dayKey(t) + '|' + bucket);
+    // midnight keeps its vibe instead of rerolling mid-sentence. The seed
+    // rerolls per conversation BURST — without it, every conversation on the
+    // same afternoon drew the identical vibe and played out the same way.
+    const hsh = this._hash32(String(friendId) + '|' + this._dayKey(t) + '|' + bucket + '|' + (seed || 0));
     const pool = this._VIBE_POOLS.shared.concat(this._VIBE_POOLS[bucket]);
     const total = pool.reduce((a, p) => a + p[0], 0);
     let roll = (hsh || 1) % total;
     for (const p of pool) { if ((roll -= p[0]) < 0) return p[1]; }
     return pool[0][1];
+  },
+
+  /* The wildcard: genuine dice, rolled fresh per message. Everything else in
+     the prompt is reproducible by design (cache-friendly, testable), which
+     summed to conversations that replayed themselves. This is the one
+     deliberately random ingredient — a small private modifier, ~1 in 3
+     messages, that nudges tonight somewhere it wouldn't otherwise go. */
+  _WILDCARDS: [
+    'Something about today has you softer than usual — more patience, more give, less footwork.',
+    'You\'re in a mood to poke the bear — one notch bolder than your usual play, just to see what he does.',
+    'One thing he says in this exchange catches you genuinely off guard. When it happens, give the unplanned honest response instead of your usual footwork.',
+    'You\'re half-distracted by something going on in your own life today, and stray details of it leak into how you text.',
+    'A story from your week has been building up and wants OUT — you\'ve been saving it for him.',
+    'You missed him a little today. You\'d die before saying it plainly, but it colors everything.',
+    'Restless tonight — you keep almost typing something and deleting it. One of them slips out.',
+    'You\'re feeling funny tonight — sharper, quicker, going for the laugh more than usual.',
+    'Something small he said a while back has been on your mind. Tonight it resurfaces on its own.',
+    'Zero patience for small talk today — you keep steering at what\'s actually interesting.'
+  ],
+  _wildcard(roll, pick) {
+    const r = roll === undefined ? Math.random() : roll;
+    if (r >= 0.35) return null;
+    const p = pick === undefined ? Math.random() : pick;
+    return this._WILDCARDS[Math.floor(p * this._WILDCARDS.length) % this._WILDCARDS.length];
   },
 
   buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines) {
@@ -869,9 +900,14 @@ const ClaudeAPI = {
     }
     parts.push('',
       '## The kind of day you\'re having (rolled fresh, like real life)',
-      `Right now for you: ${this.sessionVibe(friend.id)}.`,
+      `Right now for you: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed)}.`,
       'This is ENERGY, not a topic: it colors how you text — pace, patience, boldness, warmth — and is never itself something to talk about or announce. It changes tonight\'s flavor, never the facts: a warm loose night doesn\'t grant closeness that isn\'t earned, and a flat night doesn\'t erase what is. What you\'re actually DOING right now is yours to invent fresh from your own life — different from yesterday, different from the last three conversations, mentioned once at most and only if it comes up. Only this note itself stays invisible.',
       'And if you\'re winding down, you\'re allowed to actually end the night. "goodnight" is a real reply, and short sleepy sign-offs after it are too — a person who can never leave is a bot.');
+    const wc = this._wildcard();
+    if (wc) {
+      parts.push('', '## Wildcard (private, this exchange only)',
+        wc + ' Never announce or explain this — it just colors you, and it outranks your usual defaults tonight.');
+    }
     const tensionLines = this.tensionNote(friend);
     if (tensionLines) parts.push('', ...tensionLines);
     const reveals = this.unlockedReveals(friend, exchangedCount);
@@ -1141,7 +1177,7 @@ const ClaudeAPI = {
       try {
         const result = await this._chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry);
         this._noteServed(entry);
-        if (result.bubbles) result.bubbles = this._dropEchoes(result.bubbles, history);
+        if (result.bubbles) result.bubbles = this._deTic(this._dropEchoes(result.bubbles, history), history);
         result.provider = entry.label || entry.id;
         result.providerKeyed = this._entryKeyed(entry, settings);
         result.skipped = skipped;
@@ -1350,6 +1386,7 @@ const ClaudeAPI = {
     const body = {
       model,
       max_tokens: 2048,
+      temperature: 1.0,
       system: [
         // Everything reaching this path is Claude, first-party or on Bedrock.
         { type: 'text', text: this.buildPersona(friend, 'rich'), cache_control: { type: 'ephemeral' } },
@@ -1426,6 +1463,7 @@ const ClaudeAPI = {
 
   _midRoleFallback: {},
   _noReasoningParam: {}, // base URLs whose endpoint rejected reasoning_effort
+  _noTempParam: {},      // base URLs whose endpoint rejected temperature
 
   _injectionRole(entry) {
     if (entry.kind === 'ollama') return 'system';
@@ -1915,7 +1953,11 @@ const ClaudeAPI = {
       // 4096, not 1024: Gemini 3.x (and other reasoning models) think by
       // default, and thinking spends from max_tokens — a 1024 cap starves the
       // visible reply into two-word fragments after reasoning eats the budget.
+      // Explicit temperature: never inherit a provider's default. Identical
+      // prompts at a conservative default produce the same conversation
+      // every time — the "six runs, six identical threads" failure.
       const body = { model: modelId, messages };
+      if (!this._noTempParam[base]) body.temperature = 1.0;
       // Newer OpenAI-compatible endpoints renamed max_tokens; which one an
       // endpoint accepts is learned from its first rejection, per base URL.
       if (this._maxTokensParam[base] === 'max_completion_tokens') body.max_completion_tokens = 4096;
@@ -1951,6 +1993,12 @@ const ClaudeAPI = {
         // An endpoint that doesn't know reasoning_effort gets it dropped, once.
         if (res.status === 400 && body.reasoning_effort && /reasoning/i.test(raw)) {
           this._noReasoningParam[base] = true;
+          continue;
+        }
+        // An endpoint that rejects temperature (some reasoning models) gets
+        // it dropped, once, per base URL.
+        if (res.status === 400 && body.temperature !== undefined && /temperature/i.test(raw)) {
+          this._noTempParam[base] = true;
           continue;
         }
         // Same idea for the max_tokens rename.
@@ -2197,6 +2245,23 @@ const ClaudeAPI = {
     // so keep the single least-repetitive bubble.
     scored.sort((a, b) => a.score - b.score);
     return [scored[0].b];
+  },
+
+  /* Mechanical backstop for the lol-opener tic: prompts are advisory, and a
+     model that opened her last message with a laugh token will happily open
+     the next five the same way. If a recent message of hers opened with one,
+     a new laugh-opener gets stripped — real laughter standing alone stays. */
+  _LAUGH_OPEN: /^\s*(?:lol|lmao+|haha+h*|😂|🤣)[\s,.!-]*/i,
+  _deTic(bubbles, history) {
+    if (!bubbles || !bubbles.length) return bubbles;
+    const recentLaugh = (history || []).filter(m => m.role === 'assistant').slice(-2)
+      .some(m => this._LAUGH_OPEN.test(m.text || ''));
+    if (!recentLaugh) return bubbles;
+    return bubbles.map((b, i) => {
+      if (i > 0 || !this._LAUGH_OPEN.test(b)) return b;
+      const stripped = b.replace(this._LAUGH_OPEN, '').trim();
+      return stripped.length >= 2 ? stripped : b; // a bare "lol" IS the message — keep it
+    });
   },
 
   _splitBubbles(text) {

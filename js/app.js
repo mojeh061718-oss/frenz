@@ -509,6 +509,7 @@ async function maybeOpener(friend) {
     if (!ClaudeAPI.openerDue(friend, msgs)) return;
     // mark first so a slow request can't double-fire
     friend.lastOpenerDay = ClaudeAPI._dayKey(Date.now());
+    friend.vibeSeed = Date.now() % 1e9; // openers always start a fresh burst
     await DB.saveFriend(friend);
 
     sending = true;
@@ -606,6 +607,24 @@ function bubbleEl(role, text, msg) {
     div.textContent = text;
   }
   return div;
+}
+
+/* ---- live state movement ----
+   The engine moves every message now; show it. After her reply, whatever
+   actually shifted flashes briefly under her name ("closeness +1 ·
+   attraction +1"), then the clock returns. Adaptation you can SEE. */
+let stateFlashTimer = null;
+function flashStateChange(applied) {
+  const parts = [];
+  for (const k of ['closeness', 'comfort', 'attraction']) {
+    const v = (applied && applied[k]) || 0;
+    if (v) parts.push(`${k} ${v > 0 ? '+' : ''}${v}`);
+  }
+  if (!parts.length) return;
+  const el = $('#chat-status');
+  el.textContent = parts.join(' · ');
+  clearTimeout(stateFlashTimer);
+  stateFlashTimer = setTimeout(() => { el.textContent = fmtClock(); }, 3200);
 }
 
 /* ---- message pruning ----
@@ -757,6 +776,10 @@ async function sendMessage() {
   // she noticed the absence
   if (lastTs) ClaudeAPI.applyAbsenceDrift(friend, Date.now() - lastTs);
 
+  // a fresh conversation burst rerolls tonight's dice — same afternoon,
+  // different sit-down, different her
+  if (!lastTs || Date.now() - lastTs > 90 * 60000) friend.vibeSeed = Date.now() % 1e9;
+
   // show + persist the user's message
   const startHint = $('#chat-start-hint');
   if (startHint) startHint.remove();
@@ -821,6 +844,7 @@ async function sendMessage() {
       friend.state = outcome.state;
       // every delta + reason lands in the ledger — the debugging window
       DB.addEvent(Object.assign({ friendId: friend.id, ts: Date.now() }, outcome.event)).catch(() => {});
+      flashStateChange(outcome.event.applied);
       if (result.state.new_memories.length) {
         // near-duplicates strengthen the original instead of piling up
         ClaudeAPI.mergeMemories(friend, result.state.new_memories);
