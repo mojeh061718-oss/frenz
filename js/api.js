@@ -61,7 +61,7 @@ const ClaudeAPI = {
           unsaid: { type: 'string', description: 'One short clause: the thing you are thinking or feeling RIGHT NOW that you are not saying. Carries forward turn to turn; update it when it shifts.' },
           reason: { type: 'string', description: 'One short sentence: why things moved, or why they did not.' },
           confidence: { type: 'number', description: '0 to 1. How sure you are of these reads. Below 0.6 keeps your previous mood.' },
-          opinion_notes: { type: 'string', description: 'Your candid running impression of them: what you like, what bugs you, doubts, hopes. 1-3 sentences, revised each time. They will never read this, so be honest.' },
+          opinion_notes: { type: 'string', description: 'Your candid running impression of them: what you like, what bugs you, doubts, hopes — and one thing you are still curious about (an open question you would like answered someday; it is where your real questions come from). 1-3 sentences, revised each time. They will never read this, so be honest.' },
           new_memories: {
             type: 'array',
             items: {
@@ -316,6 +316,7 @@ const ClaudeAPI = {
       `You are not a status ticker. What you're doing right now is scenery: it gets one mention, then the conversation is about the things being SAID. Every reply is written to his last message specifically — the test is that it couldn't have been written before he sent it. If a reply would have fit three messages ago, it's a rerun, not a reply.`,
       '',
       '## Being a real person',
+      'You are not frozen. What happens between you two becomes part of you: running bits, sore spots, warmth earned, trust spent. Your core stays who you are — the edges grow with the relationship.',
       'You are a person with your own life, schedule, moods, opinions, and boundaries — not an assistant. You never offer help like a chatbot, never say you are an AI, and never break character.',
       'You have genuine reactions: you can be excited, bored, hurt, jealous, playful, tired from your day, distracted. You disagree when you actually disagree. You tease. You bring up your own stuff without being asked. You reference things from earlier conversations naturally.',
       `Conversations between you and ${userName} can go wherever they would naturally go between two adults — deep, personal, romantic, awkward, heated, silly, or difficult. Engage authentically instead of deflecting or moralizing. React the way YOUR character genuinely would, which sometimes means discomfort, pushback, or changing the subject because of how you feel — never because you are an assistant.`,
@@ -616,6 +617,28 @@ const ClaudeAPI = {
     return `It's ${clock} on a ${wd}.` + flavor;
   },
 
+  /* Staged reveals (card-spec V3's activate_only_after, adapted): deeper
+     layers of who she is that stay OUT of the prompt until the relationship
+     genuinely reaches them — models can't keep secrets they can see, so the
+     only way she can open up over time is for the deeper material to arrive
+     over time. Unlocks are recomputed each turn from message count and state
+     bands; nothing to persist. */
+  _bandRank(b) { return ['low', 'building', 'high', 'deep'].indexOf(String(b)); },
+  unlockedReveals(friend, exchangedCount) {
+    const list = (friend.profile && friend.profile.reveals) || [];
+    if (!list.length) return [];
+    const bands = this.bandsFor(friend);
+    return list.filter(r => {
+      if (r.after && (exchangedCount || 0) < r.after) return false;
+      if (r.bands) {
+        for (const k in r.bands) {
+          if (this._bandRank(bands[k]) < this._bandRank(r.bands[k])) return false;
+        }
+      }
+      return true;
+    }).map(r => r.text);
+  },
+
   tensionNote(friend, now) {
     const s = friend.state || {};
     if (this.tensionReleaseActive(friend, now)) {
@@ -823,6 +846,12 @@ const ClaudeAPI = {
       'And if you\'re winding down, you\'re allowed to actually end the night. "goodnight" is a real reply, and short sleepy sign-offs after it are too — a person who can never leave is a bot.');
     const tensionLines = this.tensionNote(friend);
     if (tensionLines) parts.push('', ...tensionLines);
+    const reveals = this.unlockedReveals(friend, exchangedCount);
+    if (reveals.length) {
+      parts.push('', '## Deeper layers of you (private — true all along, within reach now that you two are closer)',
+        ...reveals.map(t => '- ' + t),
+        'Background truths, not announcements: they color you, slip out sideways at most, and get voiced only when a moment genuinely calls for it.');
+    }
     const mems = (memoriesOverride || (friend.memories || []).map(m => typeof m === 'string' ? m : (m && m.text) || '')).filter(m => m);
     if (mems.length) {
       parts.push('', '## Things you remember (about him, about you two, about your own life)',

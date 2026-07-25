@@ -195,6 +195,7 @@ async function startConversation(e) {
     userName: $('#c-username').value.trim(),
     userGender: $('#c-usergender').value,
     plist: t.plist || '',
+    reveals: t.reveals || [],
     color: t.color
   };
   localStorage.setItem('frenz-user-name', profile.userName);
@@ -902,7 +903,12 @@ async function purgeStateArtifacts() {
 async function upgradeTemplateFriends() {
   const friends = await DB.listFriends();
   for (const f of friends) {
-    if (Personas.upgradeProfile(f.profile)) await DB.saveFriend(f);
+    let changed = Personas.upgradeProfile(f.profile);
+    if (!f.profile.reveals || !f.profile.reveals.length) {
+      const t = Personas.templates.find(x => x.name === f.profile.name);
+      if (t && t.reveals) { f.profile.reveals = t.reveals; changed = true; }
+    }
+    if (changed) await DB.saveFriend(f);
   }
 }
 
