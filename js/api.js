@@ -1332,6 +1332,8 @@ const ClaudeAPI = {
      2 = response_format json_schema, 1 = json_object, 0 = prompt-instructed
      JSON only. Downgraded automatically when the endpoint rejects a level. */
   _oaiFormat: {},
+  /* Per base URL: which token-cap parameter this endpoint accepts. */
+  _maxTokensParam: {},
 
   async _openaiRequest(entry, messages, format) {
     const base = (entry.baseUrl || '').replace(/\/+$/, '');
@@ -1350,7 +1352,11 @@ const ClaudeAPI = {
       // 4096, not 1024: Gemini 3.x (and other reasoning models) think by
       // default, and thinking spends from max_tokens — a 1024 cap starves the
       // visible reply into two-word fragments after reasoning eats the budget.
-      const body = { model: modelId, messages, max_tokens: 4096 };
+      const body = { model: modelId, messages };
+      // Newer OpenAI-compatible endpoints renamed max_tokens; which one an
+      // endpoint accepts is learned from its first rejection, per base URL.
+      if (this._maxTokensParam[base] === 'max_completion_tokens') body.max_completion_tokens = 4096;
+      else body.max_tokens = 4096;
       if (isGemini && !this._noReasoningParam[base]) body.reasoning_effort = 'low';
       if (level === 2) body.response_format = { type: 'json_schema', json_schema: { name: 'reply', schema: this.REPLY_SCHEMA } };
       else if (level === 1) body.response_format = { type: 'json_object' };
@@ -1369,21 +1375,31 @@ const ClaudeAPI = {
 
       if (!res.ok) {
         let raw = '';
-        let msg = `API error (${res.status})`;
+        let msg = '';
         try {
           raw = await res.text();
           const e = JSON.parse(raw);
-          if (e.error && e.error.message) msg = e.error.message;
-          else if (e.message) msg = e.message;
-        } catch { if (raw) msg = raw.slice(0, 200); }
+          msg = (e.error && e.error.message) || e.message || e.Message || '';
+        } catch { /* not JSON — the raw body is the best description we have */ }
+        // A parsed body with no recognizable message field is still more use
+        // than a bare status code, so fall through to the raw text.
+        if (!msg) msg = raw ? raw.slice(0, 200) : `API error (${res.status})`;
 
         // An endpoint that doesn't know reasoning_effort gets it dropped, once.
         if (res.status === 400 && body.reasoning_effort && /reasoning/i.test(raw)) {
           this._noReasoningParam[base] = true;
           continue;
         }
+        // Same idea for the max_tokens rename.
+        if (res.status === 400 && body.max_tokens !== undefined && /max_completion_tokens|max_tokens/i.test(raw)) {
+          this._maxTokensParam[base] = 'max_completion_tokens';
+          continue;
+        }
         // Degrade the structured-output level rather than failing outright.
-        if (res.status === 400 && level > 0 && /response_format|json_schema|json_object|structured|schema/i.test(raw)) {
+        // Endpoints vary in how they word this rejection, and some don't name
+        // the offending field at all, so any 400 while a response_format is
+        // attached costs one retry a rung down rather than failing the send.
+        if (res.status === 400 && level > 0) {
           this._oaiFormat[base] = level - 1;
           continue;
         }
