@@ -30,6 +30,17 @@ function uid() {
 
 function initials(name) { return (name || '?').trim().charAt(0).toUpperCase(); }
 
+function fmtClock(t) {
+  return new Date(t || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+let clockTimer = null;
+function updateChatClock() {
+  const el = $('#chat-status');
+  // never stomp transient states (typing…, reconnecting…)
+  if (el.textContent === '' || /[AP]M|^\d/.test(el.textContent)) el.textContent = fmtClock();
+}
+
 function fmtTime(ts) {
   const d = new Date(ts);
   const now = new Date();
@@ -316,7 +327,9 @@ async function openChat(friendId) {
   $('#chat-name').textContent = p.name;
   $('#chat-avatar').textContent = initials(p.name);
   $('#chat-avatar').style.background = p.color;
-  $('#chat-status').textContent = '';
+  $('#chat-status').textContent = fmtClock();
+  if (clockTimer) clearInterval(clockTimer);
+  clockTimer = setInterval(updateChatClock, 30000);
   await renderMessages();
   showView('view-chat');
   scrollChat(false);
@@ -379,7 +392,7 @@ async function maybeOpener(friend) {
   } catch { /* silent — she just didn't text first today */ } finally {
     sending = false;
     $('#typing').classList.add('hidden');
-    $('#chat-status').textContent = '';
+    $('#chat-status').textContent = fmtClock();
   }
 }
 
@@ -575,7 +588,7 @@ async function sendMessage() {
   } finally {
     sending = false;
     $('#btn-send').disabled = false;
-    $('#chat-status').textContent = '';
+    $('#chat-status').textContent = fmtClock();
   }
 }
 
