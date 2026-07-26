@@ -711,13 +711,20 @@ const ClaudeAPI = {
     return this._hash32(String(friend.id) + '|opener|' + this._dayKey(t)) % 100 < this.OPENER.ROLL_PCT;
   },
 
-  openerNudge(gapMs, sheSpokeLast) {
+  openerNudge(gapMs, sheSpokeLast, friend) {
     const hours = Math.round(gapMs / 3600000);
     const gap = hours >= 40 ? Math.round(hours / 24) + ' days' : hours + ' hours';
     const doubleText = sheSpokeLast
       ? ' Your last message never got a reply — this is a double-text, and you know it. Play that however you would: a new topic like nothing happened, calling it out with a jab, or the thing you were going to say anyway.'
       : '';
-    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, or honest boredom. Best of all: if something he mentioned was coming (an event, a plan, a thing he was dreading), ask how it went. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + doubleText + '</system-reminder>';
+    // Some days the first text comes in hot — gated on her actually being
+    // drawn to him, rolled deterministically per day so it stays occasional.
+    let bold = '';
+    if (friend && this._bandRank(this.bandsFor(friend).attraction) >= 1
+        && this._hash32(String(friend.id) + '|bold|' + this._dayKey(this._now())) % 100 < 35) {
+      bold = ' Today you\'re allowed to open BOLD: the kind of first text that catches him off guard — a two-word message with intent behind it, a tease you\'d been saving, a thought you\'d normally sit on, something that makes him look at his phone twice. Only if it fits who you are and where you two actually stand — and if you take the swing, commit to it.';
+    }
+    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. Best of all: if something he mentioned was coming (an event, a plan, a thing he was dreading), ask how it went. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + bold + doubleText + '</system-reminder>';
   },
 
   /* Memories accumulate forever, and models re-report the same fact in fresh

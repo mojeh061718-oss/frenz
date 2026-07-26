@@ -532,7 +532,7 @@ async function maybeOpener(friend) {
     const history = msgs.map(m => ({ role: m.role, text: m.text }));
     // The nudge rides as an unsaved synthetic turn — it exists only in this
     // one request, never in stored history.
-    const nudge = { role: 'user', text: ClaudeAPI.openerNudge(ClaudeAPI._now() - last.ts, last.role === 'assistant') };
+    const nudge = { role: 'user', text: ClaudeAPI.openerNudge(ClaudeAPI._now() - last.ts, last.role === 'assistant', friend) };
     const result = await ClaudeAPI.chat(friend, history.concat([nudge]), settings, last.ts, null);
     let openerPreviews = result.bubbles.filter(b => !PHOTO_MARKER.test(b));
     if (!currentFriend || currentFriend.id !== friend.id) {
