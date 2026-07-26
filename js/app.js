@@ -1327,6 +1327,16 @@ async function upgradeTemplateFriends() {
       }
     }
     if (tpl && tpl.established && !f.profile.established) { f.profile.established = true; changed = true; }
+    // Sliders were never stored on created friends, so anything reading them
+    // (the flirt-sport branch, curiosity) silently saw nothing. Backfill from
+    // the template, and give any friend — custom ones included — a curiosity
+    // value so the dial is never simply absent.
+    if (tpl && tpl.sliders && !f.profile.sliders) { f.profile.sliders = Object.assign({}, tpl.sliders); changed = true; }
+    if (!f.profile.sliders) { f.profile.sliders = { curiosity: 50 }; changed = true; }
+    if (f.profile.sliders.curiosity === undefined) {
+      f.profile.sliders.curiosity = (tpl && tpl.sliders && tpl.sliders.curiosity !== undefined) ? tpl.sliders.curiosity : 50;
+      changed = true;
+    }
     // One-time floor to the current template seed: a rounding bug froze all
     // positive state movement for weeks, so long-running friends sit at their
     // day-one numbers no matter what actually happened between them. Friends
