@@ -597,7 +597,7 @@ const ClaudeAPI = {
     BUILD_ATTR: 2,      // her attraction actually moving feeds it more
     DECAY: -1,          // mundane exchanges let it dissipate
     DROP_NEG: -4,       // a turn that costs comfort/attraction dumps it
-    HUM_MIN: 45,        // she starts noticing it
+    HUM_MIN: 40,        // she starts noticing it
     RELEASE_MIN: 70,    // eligible to come to a head
     RELEASE_ATTR: 28,   // ...and only once attraction is genuinely 'building'
     ROLL_PCT: 35,       // ...on ~35% of eligible nights (per-day roll)
@@ -948,7 +948,10 @@ const ClaudeAPI = {
       // someone she's not drawn to yet hums along slowly instead of
       // metronomically forcing confession nights
       const attRank = this._bandRank(this.bandsFor(friend).attraction);
-      build += attRank <= 0 ? 1 : attRank === 1 ? T2.BUILD_CHARGED : T2.BUILD_CHARGED + 1;
+      // 2 at low (a charged evening must NET upward even mixed with ordinary
+      // talk — at 1, decay canceled it and she never felt what he felt),
+      // 3 building, 4 high+
+      build += attRank <= 0 ? 2 : attRank === 1 ? T2.BUILD_CHARGED : T2.BUILD_CHARGED + 1;
     }
     if ((applied.attraction || 0) > 0) build += T2.BUILD_ATTR;
     if ((applied.comfort || 0) < 0 || (applied.attraction || 0) < 0) build += T2.DROP_NEG;
