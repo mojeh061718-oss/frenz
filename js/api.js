@@ -460,18 +460,38 @@ const ClaudeAPI = {
      confession night every third day and the attraction gate was vacuous.
      STRONG terms are charged alone; WEAK terms only count aimed at her
      ("you") or when several accumulate across the recent window. */
-  _FLIRT_STRONG_RE: /flirt|kiss|cuddl|sexy|naughty|dirty|teas(?:e|ing)|miss you|missed you|thinking about you|thinking of you|crush|babe\b|baby\b|sweetheart|handsome|gorgeous|beautiful|attract|chemistry|butterflies|blush|\bu up\b|come over|come up|😏|😘|😍|🥵|😈/i,
-  _FLIRT_WEAK_RE: /dinner|drink|wine|tonight|cute|\bhot\b|love|smoke|shots?\b|tipsy|\bdate\b|romantic|tension|handy\b/i,
+  _FLIRT_STRONG_RE: /flirt|kiss|cuddl|sexy|naughty|dirty|teas(?:e|ing)|miss(?:ed)? (?:you|u)\b|think(?:ing|s)? (?:about|of) (?:you|u)\b|thought (?:about|of) (?:you|u)\b|crush|babe\b|sweetheart|handsome|gorgeous|beautiful|attract|chemistry|butterflies|blush|\bu up\b|come over|come up|\blove you\b|😏|😘|😍|🥵|😈/i,
+  _FLIRT_WEAK_RE: /wine|drink|tipsy|shots?\b|\bdate\b|romantic|tension|handy\b|cute\b/i,
+
+  /* ENACTED intimacy — the thing the old keyword gate was blind to. These
+     personas are built to be DENIABLE: the charged moments are secrecy,
+     disclosure, longing and marriage-strain, not the word "sexy". Two
+     independent 30-day simulations showed 68-84% of earned attraction being
+     zeroed because a couch-stain question counted and "i think about that
+     green dress more than a brother in law should" did not. */
+  _INTIMACY_RE: /never told (?:anyone|anybody|him|her|nobody)|nobody knows|no one knows|between (?:us|you and me)|our secret|stays? between|i should ?n[o']t (?:be |have |say|tell|want)|delete (?:this|it|these)|if (?:he|she|they|toni|taylor|trev\w*|matt) (?:knew|found out|saw)|my (?:husband|wife|marriage)|the way you|you make me|looked at me|noticed (?:you|me)|i want(?:ed)? (?:you|to)|not sorry|wasn'?t sorry|scared|confess|honest question|can'?t stop/i,
+
   _msgCharged(text) {
     const t = String(text || '');
     if (this._EXPLICIT_RE.test(t) || this._FLIRT_STRONG_RE.test(t)) return true;
+    if (this._INTIMACY_RE.test(t)) return true;
     return this._FLIRT_WEAK_RE.test(t) && /\byou\b|\bu\b|\bur\b/i.test(t);
   },
-  _recentRomance(history) {
+
+  /* The room is charged when the words say so OR when SHE says so: a
+     high-confidence attraction report on a substantial exchange is her own
+     testimony, and refusing to hear it was the engine calling its own
+     personas liars. The regex is now a floor, not the only door. */
+  _recentRomance(history, raw) {
     const last = (history || []).slice(-6);
     if (last.some(m => this._msgCharged(m.text || ''))) return true;
-    // several weak signals across the window still add up to a charged room
-    return last.filter(m => this._FLIRT_WEAK_RE.test(m.text || '')).length >= 2;
+    if (last.filter(m => this._FLIRT_WEAK_RE.test(m.text || '')).length >= 3) return true;
+    if (raw && (Number(raw.attraction_delta) || 0) >= 2
+        && (typeof raw.confidence !== 'number' || raw.confidence >= 0.75)) {
+      const his = last.filter(m => m.role === 'user').map(m => m.text || '').join(' ');
+      if (his.length >= 40) return true; // a real exchange, not a one-word tease
+    }
+    return false;
   },
 
   /* ---------------- read-the-room: per-message adaptation to HIM ----------
@@ -510,6 +530,13 @@ const ClaudeAPI = {
       else if (k === 'flirty' || k === 'frame') flirty++;
       else if (k === 'playful') playful++;
       else if (k === 'flat') flat++;
+    }
+    // Disclosure is not flirtation and must not be read as it — "he told me
+    // something he tells nobody" and "he's being smooth tonight" call for
+    // completely different replies.
+    const intimate = his.filter(m => this._INTIMACY_RE.test(m.text || '')).length;
+    if (!explicit && intimate >= Math.max(2, his.length / 3)) {
+      return 'real — this stretch has been the honest kind: things said that are not said to everyone, and you both know it';
     }
     if (explicit + flirty >= Math.max(2, his.length / 2)) return 'charged — he has been openly flirty through this stretch, and it\'s a mode, not a one-off';
     if (flirty + playful >= Math.max(2, his.length / 2)) return 'warm and playful — the thread has been fun, and he\'s bringing energy';
@@ -570,14 +597,18 @@ const ClaudeAPI = {
   applyAbsenceDrift(friend, gapMs) {
     const days = gapMs / 86400000;
     if (days < 2) return 0;
-    const cool = Math.min(6, Math.floor(days));
+    // Halved and depth-scaled. At the old rate a week of silence cost more
+    // comfort than nine good exchanges earned, so seeded-high friends decayed
+    // monotonically through months that objectively deepened them.
+    let cool = Math.min(4, Math.floor(days / 2));
+    if (this._bandRank(this.bandsFor(friend).closeness) >= 3) cool = Math.ceil(cool / 2);
     // Floor at 10 for a friend in decent standing — but never RAISE comfort:
     // the old Math.max(10, ...) turned two days of ghosting into a +10 gift
     // for anyone who'd cratered below the floor.
     const prev = friend.state.comfort || 0;
     friend.state.comfort = Math.max(Math.min(prev, 10), prev - cool);
-    // tension needs contact to stay alive — silence bleeds it off
-    friend.state.tension = Math.max(0, (Number(friend.state.tension) || 0) - Math.floor(days) * 2);
+    // tension needs contact to stay alive — silence bleeds it off, gently
+    friend.state.tension = Math.max(0, (Number(friend.state.tension) || 0) - Math.floor(days));
     // return what actually moved, so callers can ledger it truthfully
     return prev - friend.state.comfort;
   },
@@ -599,8 +630,8 @@ const ClaudeAPI = {
     BUILD_ATTR: 2,      // her attraction actually moving feeds it more
     DECAY: -1,          // mundane exchanges let it dissipate
     DROP_NEG: -4,       // a turn that costs comfort/attraction dumps it
-    HUM_MIN: 40,        // she starts noticing it
-    RELEASE_MIN: 70,    // eligible to come to a head
+    HUM_MIN: 30,        // she starts noticing it
+    RELEASE_MIN: 60,    // eligible to come to a head
     RELEASE_ATTR: 28,   // ...and only once attraction is genuinely 'building'
     ROLL_PCT: 35,       // ...on ~35% of eligible nights (per-day roll)
     SPEND: 25,          // a release night truly SPENDS the meter
@@ -683,7 +714,13 @@ const ClaudeAPI = {
     const hour = new Date(t).getHours();
     if (hour >= 2 && hour < 8) return false;
     const lateNight = hour >= 22 || hour < 2;
-    if (lateNight && this._bandRank(this.bandsFor(friend).attraction) < 1) return false;
+    // The 1am text is a CLOSENESS behavior as much as an attraction one —
+    // gating it on attraction alone made the drunk-best-friend persona, whose
+    // whole signature is the 1am voice memo, mechanically incapable of one.
+    if (lateNight) {
+      const b = this.bandsFor(friend);
+      if (this._bandRank(b.attraction) < 1 && this._bandRank(b.closeness) < 3) return false;
+    }
     // Bubbles of one reply are stored as separate assistant messages seconds
     // apart, so "unanswered messages" must be counted as TURNS: a >10-minute
     // gap between assistant messages means a separate attempt. One unanswered
@@ -701,8 +738,14 @@ const ClaudeAPI = {
     }
     if (unansweredTurns >= 2) return false;
     const gapH = (t - lastMsg.ts) / 3600000;
+    // Morning-after exception: she spoke last, late, and it's now the next
+    // morning. Several personas are specified to raise last night FIRST, and
+    // the flat 20-hour double-text gap deleted that behavior every time.
+    const lastHour = new Date(lastMsg.ts).getHours();
+    const morningAfter = unansweredTurns === 1 && (lastHour >= 21 || lastHour < 3)
+      && hour >= 8 && hour < 12 && gapH >= 6 && gapH <= 15;
     const minGap = unansweredTurns === 1 ? this.OPENER.DOUBLE_TEXT_GAP_H : this.OPENER.MIN_GAP_H;
-    if (gapH < minGap) return false;
+    if (!morningAfter && gapH < minGap) return false;
     if (friend.lastOpenerDay === this._dayKey(t)) {
       // a SECOND surprise the same day is rare but real — hours later, on a
       // deterministic side-roll, never a barrage
@@ -788,22 +831,36 @@ const ClaudeAPI = {
 
   /* Dated memories that are due (or just passed) become follow-up fuel. A
      surfaced-3-times or long-past item retires itself. */
-  dueNotes(friend, now) {
+  dueNotes(friend, now, history) {
     const t = now === undefined ? this._now() : now;
     const todayK = this._dayKey(t);
     const lines = [];
+    // Retire an item once it has actually been TALKED about — otherwise she
+    // keeps asking how the audit went three days after they dissected it.
+    const recentText = (history || []).slice(-24).map(m => String(m.text || '')).join(' ').toLowerCase();
     for (const m of (friend.memories || [])) {
       if (!m || typeof m !== 'object' || !m.when || m.whenDone) continue;
       const due = Date.parse(m.when + 'T12:00:00');
       if (isNaN(due)) { m.whenDone = true; continue; }
       const dk = this._dayKey(due);
       if (dk < todayK - 3) { m.whenDone = true; continue; }
+      if (dk <= todayK && recentText) {
+        const kws = (m.keywords || []).filter(k => String(k).length >= 4).map(k => String(k).toLowerCase());
+        const hits = kws.filter(k => recentText.includes(k)).length;
+        if (hits >= Math.min(2, kws.length) && kws.length) { m.whenDone = true; continue; }
+      }
+      // Whose event is it? Telling her to ask how HER OWN quiz went is the
+      // kind of tell that ends immersion instantly.
+      const own = friend.profile && friend.profile.name
+        && new RegExp('\\b' + friend.profile.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i').test(m.text);
       if (dk < todayK) {
-        lines.push('- ' + m.text + ' — that already happened, and you want to know how it went.');
+        lines.push('- ' + m.text + (own
+          ? ' — that was yours, and it already happened; it is on your mind whether or not he asks.'
+          : ' — that already happened, and you want to know how it went.'));
         m.dueSurfaced = (m.dueSurfaced || 0) + 1;
         if (m.dueSurfaced >= 3) m.whenDone = true;
       } else if (dk === todayK) {
-        lines.push('- ' + m.text + ' — that is TODAY.');
+        lines.push('- ' + m.text + (own ? ' — that is YOURS, today.' : ' — that is TODAY.'));
         m.dueSurfaced = (m.dueSurfaced || 0) + 1;
       } else if (dk - todayK <= 2) {
         lines.push('- ' + m.text + ' — coming up in the next day or two.');
@@ -898,7 +955,7 @@ const ClaudeAPI = {
     // Attraction rises only in genuinely charged context — but for ANY type.
     // The old type gate froze non-'romantic' friends (Kelly, Bre) at their
     // seed forever, no matter what actually happened between you.
-    const romanceOk = this._recentRomance(opts && opts.history);
+    const romanceOk = this._recentRomance(opts && opts.history, raw);
 
     // Hard-limit coherence: an explicit push at someone who is genuinely not
     // there is never free, even when a sycophantic model reports all zeros.
@@ -967,6 +1024,10 @@ const ClaudeAPI = {
     const charged = this._recentRomance(opts && opts.history);
     const releaseWasActive = this.tensionReleaseActive(friend, now);
     let build = 0;
+    // Never bleed tension DURING a live conversation: two runs watched the
+    // most charged night of the month tick 4 -> 3 -> 2 -> 1 -> 0 while it was
+    // happening, because ordinary connective messages each cost a point.
+    const midBurst = opts && opts.gapMs != null && opts.gapMs < 90 * 60000;
     if (charged) {
       // charge accumulates at the speed of her actual pull: banter with
       // someone she's not drawn to yet hums along slowly instead of
@@ -975,11 +1036,11 @@ const ClaudeAPI = {
       // 2 at low (a charged evening must NET upward even mixed with ordinary
       // talk — at 1, decay canceled it and she never felt what he felt),
       // 3 building, 4 high+
-      build += attRank <= 0 ? 2 : attRank === 1 ? T2.BUILD_CHARGED : T2.BUILD_CHARGED + 1;
+      build += attRank <= 0 ? 3 : attRank === 1 ? T2.BUILD_CHARGED + 1 : T2.BUILD_CHARGED + 2;
     }
     if ((applied.attraction || 0) > 0) build += T2.BUILD_ATTR;
     if ((applied.comfort || 0) < 0 || (applied.attraction || 0) < 0) build += T2.DROP_NEG;
-    if (build === 0) build = T2.DECAY;
+    if (build === 0 && !midBurst) build = T2.DECAY;
     // plain friendships still carry charge, at half rate — banter hums, but
     // the meter crests far less often than for romantic/close types
     if (friend.profile.type === 'friend' && build > 0) build = Math.ceil(build / 2);
@@ -1140,13 +1201,25 @@ const ClaudeAPI = {
     return 'Your initiative is the ordinary kind and it\'s real: the story you\'ve been saving, the take, the honest question, the callback. Being actively interesting is what makes talking to you worth it.';
   },
 
+  /* Mood is sticky by design, but intoxication is not a personality trait:
+     without this, last night's "three drinks in" was still her stated mood at
+     10:25 the next morning. */
+  _INTOX_RE: /drink|drunk|tipsy|buzzed|wine|wasted|loose/i,
+  _freshMood(friend, lastMessageTs) {
+    const mood = (friend.state && friend.state.mood) || '';
+    if (!lastMessageTs || !this._INTOX_RE.test(mood)) return mood;
+    const gapH = (this._now() - lastMessageTs) / 3600000;
+    if (gapH < 7) return mood;
+    return 'sober and a little sheepish about last night';
+  },
+
   buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines, history) {
     const s = friend.state;
     const bands = this.bandsFor(friend);
     const parts = [
       '## Your current private state (your honest read going into this reply)',
       JSON.stringify({
-        mood: s.mood,
+        mood: this._freshMood(friend, lastMessageTs),
         comfort: this._BAND_TEXT.comfort[bands.comfort],
         closeness: this._BAND_TEXT.closeness[bands.closeness],
         attraction: this._BAND_TEXT.attraction[bands.attraction],
@@ -1159,7 +1232,9 @@ const ClaudeAPI = {
     // model averaged them into mush. Merged: at most five flat lines.
     const sn = friend.sessionNet || {};
     const snNet = (sn.comfort || 0) + (sn.closeness || 0) + (sn.attraction || 0);
-    const tonight = ['## Tonight (private — your side of the table)',
+    const hourNow = new Date(this._now()).getHours();
+    const spanWord = hourNow >= 17 || hourNow < 3 ? 'Tonight' : 'Today';
+    const tonight = ['## ' + spanWord + ' (private — your side of the table)',
       `Your energy: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed)}. Energy is not a topic — it colors pace, patience, boldness, and warmth, never announced. What you're actually doing right now is yours to invent fresh, different from last time, mentioned once at most.`];
     if (snNet >= 3) {
       tonight.push('This conversation is landing on you more than you planned — let it show in real time: quicker, easier, a beat more give before any footwork.');
@@ -1176,7 +1251,7 @@ const ClaudeAPI = {
     // Prospective memory: dated things he mentioned surface ON the right day.
     // "SO??? how'd the interview go" at 6pm on interview day is worth more
     // than any amount of style instruction.
-    const dueLines = this.dueNotes(friend);
+    const dueLines = this.dueNotes(friend, undefined, history);
     if (dueLines) parts.push('', ...dueLines);
     const tensionLines = this.tensionNote(friend);
     if (tensionLines) parts.push('', ...tensionLines);
