@@ -603,6 +603,30 @@ const ClaudeAPI = {
     COOLDOWN_DAYS: 6    // and it can't re-crest for most of a week
   },
 
+  /* ---------------- app time (skip-ahead) ----------------
+     All clock reads route through _now(). A stored forward-only offset lets
+     the user skip ahead — to tonight, to tomorrow — and every time-keyed
+     system (night register, vibes, release evenings, openers, due dates)
+     follows, because they all drink from this one tap. */
+  _timeOffset: null,
+  _now() {
+    if (this._timeOffset === null) {
+      try { this._timeOffset = parseInt((typeof localStorage !== 'undefined' && localStorage.getItem('frenz-time-offset')) || '0', 10) || 0; }
+      catch { this._timeOffset = 0; }
+    }
+    return Date.now() + this._timeOffset;
+  },
+  addTimeOffset(ms) {
+    const next = Math.max(0, (this._timeOffset || 0) + ms); // forward-only
+    this._timeOffset = next;
+    try { localStorage.setItem('frenz-time-offset', String(next)); } catch { /* headless */ }
+    return next;
+  },
+  resetTimeOffset() {
+    this._timeOffset = 0;
+    try { localStorage.setItem('frenz-time-offset', '0'); } catch { /* headless */ }
+  },
+
   _dayKey(t) {
     const d = new Date(t);
     // local day, rolled at 5am — same boundary the vibe system uses
@@ -616,7 +640,7 @@ const ClaudeAPI = {
   },
 
   tensionReleaseActive(friend, now) {
-    const t = now === undefined ? Date.now() : now;
+    const t = now === undefined ? this._now() : now;
     const s = friend.state || {};
     const last = Number(s.lastTensionRelease) || 0;
     const sameDay = last && this._dayKey(last) === this._dayKey(t);
@@ -646,7 +670,7 @@ const ClaudeAPI = {
   OPENER: { MIN_GAP_H: 6, DOUBLE_TEXT_GAP_H: 20, ROLL_PCT: 45 },
 
   openerDue(friend, msgs, now) {
-    const t = now === undefined ? Date.now() : now;
+    const t = now === undefined ? this._now() : now;
     const lastMsg = msgs && msgs.length ? msgs[msgs.length - 1] : null;
     if (!friend || !lastMsg || !lastMsg.ts) return false;
     // quiet hours: she has a life, and it includes sleeping
@@ -699,7 +723,7 @@ const ClaudeAPI = {
      callbacks. A near-duplicate strengthens the original instead of joining
      it: importance keeps the max, recency refreshes. */
   mergeMemories(friend, newMems, now) {
-    const t = now === undefined ? Date.now() : now;
+    const t = now === undefined ? this._now() : now;
     const list = friend.memories = friend.memories || [];
     let added = 0;
     for (const m of (newMems || [])) {
@@ -739,7 +763,7 @@ const ClaudeAPI = {
   /* Dated memories that are due (or just passed) become follow-up fuel. A
      surfaced-3-times or long-past item retires itself. */
   dueNotes(friend, now) {
-    const t = now === undefined ? Date.now() : now;
+    const t = now === undefined ? this._now() : now;
     const todayK = this._dayKey(t);
     const lines = [];
     for (const m of (friend.memories || [])) {
@@ -769,7 +793,7 @@ const ClaudeAPI = {
      the near-universal human experience that 11pm says what noon never
      would. A notch, not a collapse — bands and pace still govern. */
   _timeNote(now) {
-    const t = now === undefined ? Date.now() : now;
+    const t = now === undefined ? this._now() : now;
     const d = new Date(t);
     const h = d.getHours();
     const clock = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -842,7 +866,7 @@ const ClaudeAPI = {
     const conf = typeof raw.confidence === 'number' ? Math.max(0, Math.min(1, raw.confidence)) : 0.8;
     const scale = (1 - T.DAMPEN) + conf * T.DAMPEN;
     const session = this._sessionNetFor(friend, opts && opts.gapMs);
-    const todayKey = this._dayKey((opts && opts.now) || Date.now());
+    const todayKey = this._dayKey((opts && opts.now) || this._now());
     let day = friend.dayNet;
     if (!day || day.day !== todayKey) day = { day: todayKey };
     // Attraction rises only in genuinely charged context — but for ANY type.
@@ -858,7 +882,7 @@ const ClaudeAPI = {
     const lastUserMsg = (opts && opts.history || []).slice().reverse().find(m => m.role === 'user');
     if (lastUserMsg && this._classifyUserTurn(lastUserMsg.text) === 'explicit'
         && this._bandRank(this.bandsFor(friend).attraction) <= 0
-        && !this.tensionReleaseActive(friend, (opts && opts.now) || Date.now())) {
+        && !this.tensionReleaseActive(friend, (opts && opts.now) || this._now())) {
       if ((Number(raw.comfort_delta) || 0) >= 0) raw = Object.assign({}, raw, { comfort_delta: -1 });
     }
 
@@ -913,7 +937,7 @@ const ClaudeAPI = {
 
     // ---- tension accumulation (see the tension engine block above) ----
     const T2 = this._TENSION;
-    const now = (opts && opts.now) || Date.now();
+    const now = (opts && opts.now) || this._now();
     const charged = this._recentRomance(opts && opts.history);
     const releaseWasActive = this.tensionReleaseActive(friend, now);
     let build = 0;
@@ -1028,7 +1052,7 @@ const ClaudeAPI = {
   },
 
   sessionVibe(friendId, now, seed) {
-    const t = now === undefined ? Date.now() : now;
+    const t = now === undefined ? this._now() : now;
     const d = new Date(t);
     const h = d.getHours();
     const bucket = h < 5 ? 'night' : h < 11 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'night';
@@ -1068,7 +1092,7 @@ const ClaudeAPI = {
      turn 12 and vanish on turn 13. Charged entries (the last three) only
      draw once attraction is genuinely building. */
   _wildcard(friend, now) {
-    const t = now === undefined ? Date.now() : now;
+    const t = now === undefined ? this._now() : now;
     const h = this._hash32(String(friend.id) + '|wc|' + this._dayKey(t) + '|' + (friend.vibeSeed || 0));
     if (h % 100 >= 40) return null;
     const attRank = this._bandRank(this.bandsFor(friend).attraction);
@@ -1143,7 +1167,7 @@ const ClaudeAPI = {
       parts.push('', '## The story so far — scenes you remember from earlier in this conversation', ...sceneLines);
     }
     if (exchangedCount) {
-      const days = Math.max(0, Math.round((Date.now() - (friend.createdAt || Date.now())) / 86400000));
+      const days = Math.max(0, Math.round((this._now() - (friend.createdAt || this._now())) / 86400000));
       const span = days < 1 ? 'less than a day' : days === 1 ? 'about a day' : `about ${days} days`;
       parts.push('', `Relationship so far: roughly ${exchangedCount} messages over ${span}. Let that history — not wishful thinking in either direction — set your pace.`);
     }
@@ -1151,7 +1175,7 @@ const ClaudeAPI = {
       parts.push('', `(About ${omittedCount} earlier messages aren't shown here. You still lived them — your scenes and memories above hold what matters. Never act like the visible start was the actual beginning.)`);
     }
     if (lastMessageTs) {
-      const gapMin = Math.round((Date.now() - lastMessageTs) / 60000);
+      const gapMin = Math.round((this._now() - lastMessageTs) / 60000);
       if (gapMin > 90) {
         const gap = gapMin > 60 * 48 ? `${Math.round(gapMin / 1440)} days` : gapMin > 90 ? `${Math.round(gapMin / 60)} hours` : `${gapMin} minutes`;
         parts.push('', `(It has been about ${gap} since the last message. React to the gap naturally if it matters to you.)`);
@@ -1266,7 +1290,7 @@ const ClaudeAPI = {
      a round trip discovering it. */
   entryAvailable(entry) {
     const u = this._usageFor(entry.id);
-    if (u.blockedUntil && u.blockedUntil > Date.now()) return false;
+    if (u.blockedUntil && u.blockedUntil > this._now()) return false;
     const hints = this._presetOf(entry);
     if (hints) {
       if (hints.rpd && u.requests >= hints.rpd) return false;
@@ -1313,7 +1337,7 @@ const ClaudeAPI = {
   _recordTokens(id, tokens) {
     if (!tokens) return;
     const u = this._usageFor(id);
-    const now = Date.now();
+    const now = this._now();
     u.minute = (u.minute || []).filter(x => now - x.t < 60000);
     u.minute.push({ t: now, tok: tokens });
     this._saveUsage();
@@ -1321,14 +1345,14 @@ const ClaudeAPI = {
 
   _minuteTokens(id) {
     const u = this._usageFor(id);
-    const now = Date.now();
+    const now = this._now();
     u.minute = (u.minute || []).filter(x => now - x.t < 60000);
     return u.minute.reduce((sum, x) => sum + x.tok, 0);
   },
 
   _blockEntry(id, ms) {
     const u = this._usageFor(id);
-    u.blockedUntil = Date.now() + ms;
+    u.blockedUntil = this._now() + ms;
     this._saveUsage();
   },
 
@@ -1338,14 +1362,14 @@ const ClaudeAPI = {
     return {
       requestsToday: u.requests,
       rpdHint: hints ? hints.rpd : null,
-      blockedUntil: u.blockedUntil > Date.now() ? u.blockedUntil : 0
+      blockedUntil: u.blockedUntil > this._now() ? u.blockedUntil : 0
     };
   },
 
   _noteServed(entry) {
     try {
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('frenz-last-served', JSON.stringify({ label: entry.label || entry.id, at: Date.now() }));
+        localStorage.setItem('frenz-last-served', JSON.stringify({ label: entry.label || entry.id, at: this._now() }));
       }
     } catch { /* cosmetic only */ }
   },
@@ -1374,7 +1398,7 @@ const ClaudeAPI = {
 
   _skipReason(entry) {
     const u = this._usageFor(entry.id);
-    if (u.blockedUntil && u.blockedUntil > Date.now()) {
+    if (u.blockedUntil && u.blockedUntil > this._now()) {
       return 'cooling down until ' + new Date(u.blockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     }
     const hints = this._presetOf(entry);
@@ -1948,7 +1972,7 @@ const ClaudeAPI = {
     const docs = mems.map(m => Array.from(this._keywords(m.text + ' ' + m.keywords.join(' '))));
     const rel = this._bm25(query, docs);
     const maxRel = Math.max(0.0001, ...rel);
-    const now = Date.now();
+    const now = this._now();
 
     const scored = mems.map((m, i) => {
       const anchor = m.lastAccessed || m.ts;
@@ -2041,7 +2065,7 @@ const ClaudeAPI = {
         keywords: (Array.isArray(parsed.keywords) ? parsed.keywords : []).map(k => String(k).toLowerCase()).slice(0, 10),
         facts: (Array.isArray(parsed.facts) ? parsed.facts : []).map(String).slice(0, 4),
         importance: Math.max(1, Math.min(5, Math.round(Number(parsed.importance) || 3))),
-        ts: Date.now(),
+        ts: this._now(),
         covers: [covered, covered + chunk.length]
       },
       covered: covered + chunk.length

@@ -25,13 +25,13 @@ function toast(msg, ms = 3200) {
 }
 
 function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  return ClaudeAPI._now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
 function initials(name) { return (name || '?').trim().charAt(0).toUpperCase(); }
 
 function fmtClock(t) {
-  return new Date(t || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return new Date(t || ClaudeAPI._now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
 let clockTimer = null;
@@ -213,8 +213,8 @@ async function startConversation(e) {
       opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.'
     },
     memories: [],
-    createdAt: Date.now(),
-    lastActivity: Date.now(),
+    createdAt: ClaudeAPI._now(),
+    lastActivity: ClaudeAPI._now(),
     lastPreview: ''
   };
 
@@ -224,7 +224,7 @@ async function startConversation(e) {
   if (greeting.length) friend.lastPreview = greeting[greeting.length - 1];
   await DB.saveFriend(friend);
   for (const g of greeting) {
-    await DB.addMessage({ friendId: friend.id, role: 'assistant', text: g, ts: Date.now() });
+    await DB.addMessage({ friendId: friend.id, role: 'assistant', text: g, ts: ClaudeAPI._now() });
   }
   await renderFriendsList();
   customizeTemplate = null;
@@ -311,8 +311,8 @@ async function saveFriendFromForm(e) {
         opinion_notes: 'Just starting to get to know them. No strong impressions yet.'
       },
       memories: [],
-      createdAt: Date.now(),
-      lastActivity: Date.now(),
+      createdAt: ClaudeAPI._now(),
+      lastActivity: ClaudeAPI._now(),
       lastPreview: ''
     };
   }
@@ -365,7 +365,7 @@ function relSeries(friend, events) {
     .sort((a, b) => a.ts - b.ts)
     .slice(-400);
   const cur = friend.state || {};
-  const nowPt = { ts: Date.now(), closeness: clamp(cur.closeness), comfort: clamp(cur.comfort), attraction: clamp(cur.attraction), tension: clamp(cur.tension) };
+  const nowPt = { ts: ClaudeAPI._now(), closeness: clamp(cur.closeness), comfort: clamp(cur.comfort), attraction: clamp(cur.attraction), tension: clamp(cur.tension) };
   let vals = Object.assign({}, nowPt);
   const pts = new Array(evs.length);
   for (let i = evs.length - 1; i >= 0; i--) {
@@ -391,12 +391,12 @@ function relSeries(friend, events) {
 function relTrend(pts, key) {
   const now = pts[pts.length - 1];
   if (pts.length < 2) return { word: 'just starting', arrow: '·', delta: 0, cls: 'steady' };
-  const weekAgo = Date.now() - 7 * 86400000;
+  const weekAgo = ClaudeAPI._now() - 7 * 86400000;
   let base = pts[0];
   for (const p of pts) { if (p.ts <= weekAgo) base = p; else break; }
   const delta = now[key] - base[key];
   const lastEvent = pts.length >= 2 ? pts[pts.length - 2].ts : 0;
-  if (Date.now() - lastEvent > 5 * 86400000) return { word: 'gone quiet', arrow: '…', delta, cls: 'stale' };
+  if (ClaudeAPI._now() - lastEvent > 5 * 86400000) return { word: 'gone quiet', arrow: '…', delta, cls: 'stale' };
   if (delta >= 3) return { word: 'progressing', arrow: '↑', delta, cls: 'up' };
   if (delta <= -3) return { word: 'declining', arrow: '↓', delta, cls: 'down' };
   return { word: 'holding steady', arrow: '→', delta, cls: 'steady' };
@@ -409,7 +409,7 @@ function relDailyDeltas(events, nDays = 14) {
   // bucket on the engine's own 5am-rolled day, so a midnight-crossing release
   // night lands in ONE bar instead of splitting across two
   const dayOf = ts => ClaudeAPI._dayKey(ts);
-  const nowTs = Date.now();
+  const nowTs = ClaudeAPI._now();
   const days = [];
   for (let i = nDays - 1; i >= 0; i--) days.push(dayOf(nowTs - i * 86400000));
   const idx = {};
@@ -509,8 +509,8 @@ async function maybeOpener(friend) {
     const last = msgs[msgs.length - 1];
     if (!ClaudeAPI.openerDue(friend, msgs)) return;
     // mark first so a slow request can't double-fire
-    friend.lastOpenerDay = ClaudeAPI._dayKey(Date.now());
-    friend.vibeSeed = Date.now() % 1e9; // openers always start a fresh burst
+    friend.lastOpenerDay = ClaudeAPI._dayKey(ClaudeAPI._now());
+    friend.vibeSeed = ClaudeAPI._now() % 1e9; // openers always start a fresh burst
     await DB.saveFriend(friend);
 
     sending = true;
@@ -522,14 +522,14 @@ async function maybeOpener(friend) {
     const history = msgs.map(m => ({ role: m.role, text: m.text }));
     // The nudge rides as an unsaved synthetic turn — it exists only in this
     // one request, never in stored history.
-    const nudge = { role: 'user', text: ClaudeAPI.openerNudge(Date.now() - last.ts, last.role === 'assistant') };
+    const nudge = { role: 'user', text: ClaudeAPI.openerNudge(ClaudeAPI._now() - last.ts, last.role === 'assistant') };
     const result = await ClaudeAPI.chat(friend, history.concat([nudge]), settings, last.ts, null);
     let openerPreviews = result.bubbles.filter(b => !PHOTO_MARKER.test(b));
     if (!currentFriend || currentFriend.id !== friend.id) {
       // he left the chat mid-generation — save quietly, no rendering. Photo
       // markers are dropped: generating into a chat nobody is watching
       // spends money on an image she can simply take next time.
-      for (const b of openerPreviews) await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() });
+      for (const b of openerPreviews) await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: ClaudeAPI._now() });
     } else {
       $('#typing').classList.add('hidden');
       openerPreviews = [];
@@ -547,12 +547,12 @@ async function maybeOpener(friend) {
       maybeFallbackNote(result);
     }
     if (result.state) {
-      const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, { history, gapMs: Date.now() - last.ts });
+      const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, { history, gapMs: ClaudeAPI._now() - last.ts });
       friend.state = outcome.state;
-      DB.addEvent(Object.assign({ friendId: friend.id, ts: Date.now() }, outcome.event)).catch(() => {});
+      DB.addEvent(Object.assign({ friendId: friend.id, ts: ClaudeAPI._now() }, outcome.event)).catch(() => {});
       if (result.state.new_memories.length) ClaudeAPI.mergeMemories(friend, result.state.new_memories);
     }
-    friend.lastActivity = Date.now();
+    friend.lastActivity = ClaudeAPI._now();
     if (openerPreviews.length) friend.lastPreview = openerPreviews[openerPreviews.length - 1];
     await DB.saveFriend(friend);
     renderFriendsList();
@@ -663,8 +663,8 @@ function maybeFallbackNote(result) {
   if (!result || result.providerKeyed) return; // the good provider answered
   const skippedKeyed = (result.skipped || []).filter(s => s.keyed);
   if (!skippedKeyed.length) return;            // nothing better exists to miss
-  if (Date.now() - fallbackNoteAt < 10 * 60000) return;
-  fallbackNoteAt = Date.now();
+  if (ClaudeAPI._now() - fallbackNoteAt < 10 * 60000) return;
+  fallbackNoteAt = ClaudeAPI._now();
   const s = skippedKeyed[0];
   const note = document.createElement('div');
   note.className = 'msg sys transient-note';
@@ -686,7 +686,7 @@ async function deliverBubble(friend, b) {
     $('#chat-messages').appendChild(el);
     refreshTails();
     scrollChat();
-    armMessageDelete(el, await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: Date.now() }));
+    armMessageDelete(el, await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: ClaudeAPI._now() }));
     return b;
   }
   const desc = b.replace(PHOTO_MARKER, '').trim();
@@ -698,7 +698,7 @@ async function deliverBubble(friend, b) {
   try {
     const dataUrl = await ClaudeAPI.generateImage(entry, desc);
     $('#typing').classList.add('hidden');
-    const msg = { friendId: friend.id, role: 'assistant', text: '', photo: dataUrl, photoDesc: desc, ts: Date.now() };
+    const msg = { friendId: friend.id, role: 'assistant', text: '', photo: dataUrl, photoDesc: desc, ts: ClaudeAPI._now() };
     const el = bubbleEl('assistant', '', msg);
     $('#chat-messages').appendChild(el);
     refreshTails();
@@ -777,10 +777,10 @@ async function sendMessage() {
   // she noticed the absence. It goes in the ledger like any other movement:
   // an invisible drift made the graph disagree with the meter.
   if (lastTs) {
-    const cooled = ClaudeAPI.applyAbsenceDrift(friend, Date.now() - lastTs);
+    const cooled = ClaudeAPI.applyAbsenceDrift(friend, ClaudeAPI._now() - lastTs);
     if (cooled) {
       DB.addEvent({
-        friendId: friend.id, ts: Date.now(), reason: 'absence — days without a word', confidence: 1,
+        friendId: friend.id, ts: ClaudeAPI._now(), reason: 'absence — days without a word', confidence: 1,
         deltas: { comfort: -cooled, closeness: 0, attraction: 0 },
         applied: { comfort: -cooled, closeness: 0, attraction: 0 },
         tension: Number(friend.state.tension) || 0,
@@ -791,7 +791,7 @@ async function sendMessage() {
 
   // a fresh conversation burst rerolls tonight's dice — same afternoon,
   // different sit-down, different her
-  if (!lastTs || Date.now() - lastTs > 90 * 60000) friend.vibeSeed = Date.now() % 1e9;
+  if (!lastTs || ClaudeAPI._now() - lastTs > 90 * 60000) friend.vibeSeed = ClaudeAPI._now() % 1e9;
 
   // show + persist the user's message
   const startHint = $('#chat-start-hint');
@@ -802,7 +802,7 @@ async function sendMessage() {
   refreshTails();
   updateSendButton();
   scrollChat();
-  armMessageDelete(meEl, await DB.addMessage({ friendId: friend.id, role: 'user', text, ts: Date.now() }));
+  armMessageDelete(meEl, await DB.addMessage({ friendId: friend.id, role: 'user', text, ts: ClaudeAPI._now() }));
 
   const history = priorMsgs
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -852,18 +852,18 @@ async function sendMessage() {
     if (result.state) {
       const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, {
         history,
-        gapMs: lastTs ? Date.now() - lastTs : null
+        gapMs: lastTs ? ClaudeAPI._now() - lastTs : null
       });
       friend.state = outcome.state;
       // every delta + reason lands in the ledger — the debugging window
-      DB.addEvent(Object.assign({ friendId: friend.id, ts: Date.now() }, outcome.event)).catch(() => {});
+      DB.addEvent(Object.assign({ friendId: friend.id, ts: ClaudeAPI._now() }, outcome.event)).catch(() => {});
       flashStateChange(outcome.event.applied);
       if (result.state.new_memories.length) {
         // near-duplicates strengthen the original instead of piling up
         ClaudeAPI.mergeMemories(friend, result.state.new_memories);
       }
     }
-    friend.lastActivity = Date.now();
+    friend.lastActivity = ClaudeAPI._now();
     friend.lastPreview = previews.length ? previews[previews.length - 1] : text;
     await DB.saveFriend(friend);
     renderFriendsList();
@@ -916,7 +916,17 @@ function openSettings() {
   $('#e-test-result').textContent = '';
   renderPool();
   renderPoolStatus();
+  renderTimeStatus();
   showView('view-settings');
+}
+
+function renderTimeStatus() {
+  const off = ClaudeAPI._timeOffset || 0;
+  const el = $('#time-status');
+  if (!el) return;
+  el.textContent = off
+    ? `In-app time: ${new Date(ClaudeAPI._now()).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })} — about ${Math.round(off / 3600000)}h ahead of your phone.`
+    : 'Running on real time.';
 }
 
 function saveSettings() {
@@ -1278,6 +1288,21 @@ function init() {
   });
 
   $('#btn-settings').addEventListener('click', openSettings);
+  $('#btn-skip-6h').addEventListener('click', () => {
+    ClaudeAPI.addTimeOffset(6 * 3600000);
+    renderTimeStatus(); updateChatClock();
+    toast('Skipped ahead 6 hours — it\'s now ' + fmtClock() + ' for everyone.');
+  });
+  $('#btn-skip-1d').addEventListener('click', () => {
+    ClaudeAPI.addTimeOffset(24 * 3600000);
+    renderTimeStatus(); updateChatClock();
+    toast('Skipped ahead a day.');
+  });
+  $('#btn-time-reset').addEventListener('click', () => {
+    ClaudeAPI.resetTimeOffset();
+    renderTimeStatus(); updateChatClock();
+    toast('Back to real time. Recently sent messages may show future timestamps until the clock catches up.');
+  });
   $('#btn-settings-back').addEventListener('click', () => showView('view-friends'));
   $('#btn-save-settings').addEventListener('click', saveSettings);
 
