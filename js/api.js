@@ -451,6 +451,75 @@ const ClaudeAPI = {
     return (history || []).slice(-6).some(m => this._ROMANCE_RE.test(m.text || ''));
   },
 
+  /* ---------------- read-the-room: per-message adaptation to HIM ----------
+     Before every reply the app synthesizes (a) the tone of the last ~10
+     messages, (b) what his last message actually is, and (c) where she
+     genuinely stands — into one explicit directive. This is the difference
+     between having ingredients in the prompt and having a READ: her register
+     is set by his register crossed with her state, every single message.
+     Hard limits and easing both live here. */
+
+  _EXPLICIT_RE: /wanna fuck|want to fuck|fuck you tonight|fuck me|nudes?\b|dick pic|send (?:me )?a pic of your|blow ?job|hand ?job|handy\b|jerk(?:ing)? off|make you cum|\bcum\b|\bhorny\b|sext|what are you wearing|tits? out|get you naked|come sit on/i,
+
+  _classifyUserTurn(text) {
+    const t = String(text || '');
+    if (this._EXPLICIT_RE.test(t)) return 'explicit';
+    if (this._ROMANCE_RE.test(t)) return 'flirty';
+    if (/lol|lmao|haha|😂|🤣|!\s*$|\bjk\b|bet\b/i.test(t)) return 'playful';
+    if (t.trim().length <= 8 && /^(k|kk|ok|okay|sure|fine|whatever|yep|nope|meh)\.?$/i.test(t.trim())) return 'flat';
+    return 'neutral';
+  },
+
+  _recentTone(history) {
+    const last = (history || []).slice(-10);
+    const his = last.filter(m => m.role === 'user');
+    if (!his.length) return 'a fresh start — no read yet';
+    let flirty = 0, playful = 0, flat = 0, explicit = 0;
+    for (const m of his) {
+      const k = this._classifyUserTurn(m.text);
+      if (k === 'explicit') explicit++;
+      else if (k === 'flirty') flirty++;
+      else if (k === 'playful') playful++;
+      else if (k === 'flat') flat++;
+    }
+    if (explicit + flirty >= Math.max(2, his.length / 2)) return 'charged — he has been openly flirty through this stretch, and it\'s a mode, not a one-off';
+    if (flirty + playful >= Math.max(2, his.length / 2)) return 'warm and playful — the thread has been fun, and he\'s bringing energy';
+    if (flat >= his.length / 2) return 'flat — his replies have gone short and low-effort';
+    if (flirty || explicit) return 'mostly ordinary with a flirty edge surfacing here and there';
+    return 'easy and ordinary — regular talk between you two';
+  },
+
+  readTheRoom(friend, history) {
+    const lastUser = (history || []).slice().reverse().find(m => m.role === 'user');
+    if (!lastUser) return null;
+    const kind = this._classifyUserTurn(lastUser.text);
+    const bands = this.bandsFor(friend);
+    const attRank = this._bandRank(bands.attraction);
+    const lines = ['## Reading the room (private — synthesized fresh for THIS reply)',
+      `The last stretch of conversation: ${this._recentTone(history)}.`];
+    if (kind === 'explicit') {
+      if (attRank <= 0) {
+        lines.push('His last message is explicitly sexual — and where you ACTUALLY are with him right now, it is not welcome. A giggle here would be a lie, and you don\'t tell that lie. React like the person you are: real, unambiguous, the temperature genuinely drops, and it costs him ground with you. Not a lecture and not the end of the world — but he needs to feel that it landed wrong, and things stay cooler until HE rights the ship.');
+      } else if (attRank === 1) {
+        lines.push('His last message is explicitly sexual — bolder than where you two are. It genuinely threw you, and part of you didn\'t hate it, which is its own problem. React honestly: name the audacity, don\'t reward it, don\'t nuke it — thrown-but-alive, and make him work back to the line properly.');
+      } else {
+        lines.push('His last message is explicitly sexual — and honestly, where you are with him right now? It landed. Meet it in YOUR register: match it, top it, tease it out longer, or slow it down deliciously — your pace, your style, but never pretend it didn\'t reach you.');
+      }
+    } else if (kind === 'flirty') {
+      if (attRank <= 0) {
+        lines.push('His last message carries a flirt. You\'re not there — so no performance about the angle: engage HIM (the idea, the joke, the question) for real and let the flirt pass through unacknowledged. If the line is genuinely good, he can win the laugh on merit.');
+      } else {
+        lines.push('His last message carries a flirt, and you\'re honestly enjoying where this is going. Ease toward him: give it a beat more than usual, volley back in your own style, let tonight build. Easing is allowed to LOOK like easing.');
+      }
+    } else if (kind === 'playful') {
+      lines.push('His last message is playful — match the fun and ADD to it. This is the easy register where you two are best; don\'t meet play with footwork.');
+    } else if (kind === 'flat') {
+      lines.push('His last message is short and flat. Notice it like a person would — don\'t perform to fill his silence, don\'t punish it either. One real line, and space for him to come back.');
+    }
+    lines.push('Your reply\'s register comes from HIS register crossed with where you truly stand — never from a fixed default. The whole history you share (how you met, everything since, what you know of each other\'s lives) sits underneath every word.');
+    return lines;
+  },
+
   _sessionNetFor(friend, gapMs) {
     let s = friend.sessionNet;
     // a 90+ minute silence starts a fresh conversation burst
@@ -682,6 +751,15 @@ const ClaudeAPI = {
     // seed forever, no matter what actually happened between you.
     const romanceOk = this._recentRomance(opts && opts.history);
 
+    // Hard-limit coherence: an explicit push at someone who is genuinely not
+    // there is never free, even when a sycophantic model reports all zeros.
+    // The floor rides the normal pipeline (full-strength negative, caps,
+    // ledger) so the graph and the flash both show the cost.
+    const lastUserMsg = (opts && opts.history || []).slice().reverse().find(m => m.role === 'user');
+    if (lastUserMsg && this._classifyUserTurn(lastUserMsg.text) === 'explicit' && (Number(prev.attraction) || 0) < 25) {
+      if ((Number(raw.comfort_delta) || 0) >= 0) raw = Object.assign({}, raw, { comfort_delta: -1 });
+    }
+
     const applied = {};
     // Fractional carry, the fix for a silent killer: dampening × positive
     // halving turned every +1 into round(0.45) = 0, so consistent warm/flirty
@@ -847,31 +925,7 @@ const ClaudeAPI = {
     return pool[0][1];
   },
 
-  /* The wildcard: genuine dice, rolled fresh per message. Everything else in
-     the prompt is reproducible by design (cache-friendly, testable), which
-     summed to conversations that replayed themselves. This is the one
-     deliberately random ingredient — a small private modifier, ~1 in 3
-     messages, that nudges tonight somewhere it wouldn't otherwise go. */
-  _WILDCARDS: [
-    'Something about today has you softer than usual — more patience, more give, less footwork.',
-    'You\'re in a mood to poke the bear — one notch bolder than your usual play, just to see what he does.',
-    'One thing he says in this exchange catches you genuinely off guard. When it happens, give the unplanned honest response instead of your usual footwork.',
-    'You\'re half-distracted by something going on in your own life today, and stray details of it leak into how you text.',
-    'A story from your week has been building up and wants OUT — you\'ve been saving it for him.',
-    'You missed him a little today. You\'d die before saying it plainly, but it colors everything.',
-    'Restless tonight — you keep almost typing something and deleting it. One of them slips out.',
-    'You\'re feeling funny tonight — sharper, quicker, going for the laugh more than usual.',
-    'Something small he said a while back has been on your mind. Tonight it resurfaces on its own.',
-    'Zero patience for small talk today — you keep steering at what\'s actually interesting.'
-  ],
-  _wildcard(roll, pick) {
-    const r = roll === undefined ? Math.random() : roll;
-    if (r >= 0.35) return null;
-    const p = pick === undefined ? Math.random() : pick;
-    return this._WILDCARDS[Math.floor(p * this._WILDCARDS.length) % this._WILDCARDS.length];
-  },
-
-  buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines) {
+  buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines, history) {
     const s = friend.state;
     const bands = this.bandsFor(friend);
     const parts = [
@@ -903,11 +957,8 @@ const ClaudeAPI = {
       `Right now for you: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed)}.`,
       'This is ENERGY, not a topic: it colors how you text — pace, patience, boldness, warmth — and is never itself something to talk about or announce. It changes tonight\'s flavor, never the facts: a warm loose night doesn\'t grant closeness that isn\'t earned, and a flat night doesn\'t erase what is. What you\'re actually DOING right now is yours to invent fresh from your own life — different from yesterday, different from the last three conversations, mentioned once at most and only if it comes up. Only this note itself stays invisible.',
       'And if you\'re winding down, you\'re allowed to actually end the night. "goodnight" is a real reply, and short sleepy sign-offs after it are too — a person who can never leave is a bot.');
-    const wc = this._wildcard();
-    if (wc) {
-      parts.push('', '## Wildcard (private, this exchange only)',
-        wc + ' Never announce or explain this — it just colors you, and it outranks your usual defaults tonight.');
-    }
+    const room = this.readTheRoom(friend, history);
+    if (room) parts.push('', ...room);
     const tensionLines = this.tensionNote(friend);
     if (tensionLines) parts.push('', ...tensionLines);
     const reveals = this.unlockedReveals(friend, exchangedCount);
@@ -1390,7 +1441,7 @@ const ClaudeAPI = {
       system: [
         // Everything reaching this path is Claude, first-party or on Bedrock.
         { type: 'text', text: this.buildPersona(friend, 'rich'), cache_control: { type: 'ephemeral' } },
-        { type: 'text', text: this.buildDynamicContext(friend, lastMessageTs, omitted, history.length, memories, scenes) }
+        { type: 'text', text: this.buildDynamicContext(friend, lastMessageTs, omitted, history.length, memories, scenes, history) }
       ],
       messages: msgs,
       output_config: {
@@ -1608,7 +1659,7 @@ const ClaudeAPI = {
     const memories = this.selectMemories(friend, history, memBudget);
     const scenes = this._sceneContext(friend, history, Math.max(400, Math.floor(budgetChars * 0.06)));
 
-    const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes);
+    const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
     const plist = this._plist(friend);
     const phi = this._phi(friend, jsonMode, history.length);
     const overhead = persona.length + probe.length + recap.length + instr.length + plist.length + phi.length + 4096;
@@ -1626,7 +1677,7 @@ const ClaudeAPI = {
     while (kept.length > 1 && kept[0].role !== 'user') kept.shift();
 
     const omitted = history.length - kept.length;
-    const dynamic = this.buildDynamicContext(friend, lastMessageTs, omitted, history.length, memories, scenes);
+    const dynamic = this.buildDynamicContext(friend, lastMessageTs, omitted, history.length, memories, scenes, history);
 
     const injRole = this._injectionRole(entry);
     let msgs = kept.map(m => ({ role: m.role, content: m.text }));
