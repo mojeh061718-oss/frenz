@@ -67,12 +67,15 @@ async function renderFriendsList() {
     const badge = f.profile.type === 'romantic'
       ? '<span class="friend-badge romantic">romance</span>'
       : (f.profile.type === 'close_friend' ? '<span class="friend-badge">close</span>' : '');
+    const unread = Number(f.unread) || 0;
+    if (unread) item.classList.add('has-unread');
     item.innerHTML = `
       <div class="avatar" style="background:${f.profile.color}">${initials(f.profile.name)}</div>
       <div class="friend-meta">
-        <div class="friend-name">${escapeHtml(f.profile.name)}${badge}</div>
+        <div class="friend-name">${escapeHtml(f.profile.name)}${badge}<span class="friend-when">${f.lastActivity ? fmtTime(f.lastActivity).replace(/^Today /, '') : ''}</span></div>
         <div class="friend-preview">${escapeHtml(f.lastPreview || 'Say hi 👋')}</div>
-      </div>`;
+      </div>
+      ${unread ? `<span class="unread-dot">${unread > 9 ? '9+' : unread}</span>` : ''}`;
     item.addEventListener('click', () => openChat(f.id));
     list.appendChild(item);
   }
@@ -121,6 +124,7 @@ const SLIDER_DEFS = [
   { key: 'flirtiness', label: 'Flirtiness', low: 'none', high: 'shameless' },
   { key: 'warmth', label: 'Warmth', low: 'reserved', high: 'cute' },
   { key: 'confidence', label: 'Confidence', low: 'unsure', high: 'bulletproof' },
+  { key: 'curiosity', label: 'Curiosity', low: 'incurious', high: 'asks anything' },
   { key: 'attraction', label: 'Attraction', low: 'not yet', high: 'already hers', romanticOnly: true }
 ];
 
@@ -196,6 +200,8 @@ async function startConversation(e) {
     userGender: $('#c-usergender').value,
     plist: t.plist || '',
     reveals: t.reveals || [],
+    established: !!t.established,
+    sliders,
     color: t.color
   };
   localStorage.setItem('frenz-user-name', profile.userName);
@@ -332,6 +338,7 @@ async function saveFriendFromForm(e) {
 async function openChat(friendId) {
   currentFriend = await DB.getFriend(friendId);
   if (!currentFriend) return;
+  if (currentFriend.unread) { currentFriend.unread = 0; await DB.saveFriend(currentFriend); }
   const p = currentFriend.profile;
   $('#chat-name').textContent = p.name;
   $('#chat-avatar').textContent = initials(p.name);
@@ -512,8 +519,35 @@ async function openRelationship() {
 /* Some days, when he opens a chat after a real gap, she's already typing —
    she texts FIRST, seeded from her day, her life, and hanging threads.
    Fire-and-forget; any failure is silent (the chat is simply as he left it). */
-async function maybeOpener(friend) {
-  if (sending) return;
+/* Sweep every friend at launch so unread messages are ALREADY on the main
+   screen when he opens the app, instead of materialising when he taps into a
+   chat. Runs quietly in the background, one friend at a time so a provider
+   never gets hammered, and never touches the friend he's currently reading. */
+async function sweepOpeners() {
+  let friends = [];
+  try { friends = await DB.listFriends(); } catch { return; }
+  friends.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  for (const f of friends) {
+    if (currentFriend && currentFriend.id === f.id) continue;
+    try {
+      const msgs = await DB.getMessages(f.id);
+      if (!msgs.length || !ClaudeAPI.openerDue(f, msgs)) continue;
+      await maybeOpener(f, true);
+    } catch { /* one friend failing never stops the sweep */ }
+  }
+}
+
+function notifyOpener(friend, text) {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (document.visibilityState === 'visible' && currentFriend && currentFriend.id === friend.id) return;
+    const n = new Notification(friend.profile.name, { body: text, tag: 'frenz-' + friend.id, icon: 'icons/icon-192.png' });
+    n.onclick = () => { window.focus(); openChat(friend.id); n.close(); };
+  } catch { /* notifications are a bonus, never a requirement */ }
+}
+
+async function maybeOpener(friend, background) {
+  if (sending && !background) return;
   try {
     const msgs = await DB.getMessages(friend.id);
     const last = msgs[msgs.length - 1];
@@ -524,10 +558,12 @@ async function maybeOpener(friend) {
     friend.vibeSeed = ClaudeAPI._now() % 1e9; // openers always start a fresh burst
     await DB.saveFriend(friend);
 
-    sending = true;
-    $('#typing').classList.remove('hidden');
-    $('#chat-status').textContent = 'typing…';
-    scrollChat();
+    if (!background) {
+      sending = true;
+      $('#typing').classList.remove('hidden');
+      $('#chat-status').textContent = 'typing…';
+      scrollChat();
+    }
 
     const settings = Settings.get();
     const history = msgs.map(m => ({ role: m.role, text: m.text }));
@@ -541,7 +577,7 @@ async function maybeOpener(friend) {
     // a phone of her own more cheaply than this.
     const openerTs = plausiblePastTs(friend, last.ts);
     let openerPreviews = result.bubbles.filter(b => !PHOTO_MARKER.test(b));
-    if (!currentFriend || currentFriend.id !== friend.id) {
+    if (background || !currentFriend || currentFriend.id !== friend.id) {
       // he left the chat mid-generation — save quietly, no rendering. Photo
       // markers are dropped: generating into a chat nobody is watching
       // spends money on an image she can simply take next time.
@@ -570,14 +606,23 @@ async function maybeOpener(friend) {
       DB.addEvent(Object.assign({ friendId: friend.id, ts: ClaudeAPI._now() }, outcome.event)).catch(() => {});
       if (result.state.new_memories.length) ClaudeAPI.mergeMemories(friend, result.state.new_memories);
     }
-    friend.lastActivity = ClaudeAPI._now();
-    if (openerPreviews.length) friend.lastPreview = openerPreviews[openerPreviews.length - 1];
+    friend.lastActivity = openerTs;
+    if (openerPreviews.length) {
+      friend.lastPreview = openerPreviews[openerPreviews.length - 1];
+      // unread only counts when he isn't the one looking at it
+      if (!currentFriend || currentFriend.id !== friend.id) {
+        friend.unread = (Number(friend.unread) || 0) + openerPreviews.length;
+        notifyOpener(friend, openerPreviews[0]);
+      }
+    }
     await DB.saveFriend(friend);
     renderFriendsList();
   } catch { /* silent — she just didn't text first today */ } finally {
-    sending = false;
-    $('#typing').classList.add('hidden');
-    $('#chat-status').textContent = fmtClock();
+    if (!background) {
+      sending = false;
+      $('#typing').classList.add('hidden');
+      $('#chat-status').textContent = fmtClock();
+    }
   }
 }
 
@@ -952,7 +997,18 @@ function openSettings() {
   renderPool();
   renderPoolStatus();
   renderTimeStatus();
+  renderNotifyState();
   showView('view-settings');
+}
+
+function renderNotifyState() {
+  const el = $('#notify-status');
+  if (!el) return;
+  const p = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+  el.textContent = p === 'granted' ? 'On — she can reach you when the app is closed.'
+    : p === 'denied' ? 'Blocked in your browser settings. Unread messages still appear on the main screen.'
+    : 'Off. Unread messages still appear on the main screen when you open the app.';
+  $('#btn-notify').classList.toggle('hidden', p === 'granted' || p === 'unsupported');
 }
 
 function renderTimeStatus() {
@@ -1350,6 +1406,18 @@ function init() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
 
+  // she may have texted while he was away — populate the main screen first
+  setTimeout(() => { sweepOpeners(); }, 1200);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !sending) sweepOpeners();
+  });
+  $('#btn-notify').addEventListener('click', async () => {
+    if (typeof Notification === 'undefined') { toast('This browser has no notification support.'); return; }
+    const p = await Notification.requestPermission();
+    toast(p === 'granted' ? 'Notifications on — you\'ll get a nudge when someone texts first.'
+      : 'Notifications stayed off. You\'ll still see unread messages on the main screen.');
+    renderNotifyState();
+  });
   $('#btn-settings').addEventListener('click', openSettings);
   $('#btn-skip-6h').addEventListener('click', () => {
     ClaudeAPI.addTimeOffset(6 * 3600000);

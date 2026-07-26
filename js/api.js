@@ -993,11 +993,12 @@ const ClaudeAPI = {
     // only flatline or decay. The sub-point remainder now banks per stat and
     // cashes in on the next turn: two +1 turns = one real point.
     const carry = Object.assign({}, prev._carry);
+    const lean = this._curiosityLean(friend);
     const applyOne = (key, deltaRaw, positiveAllowed) => {
       const bounded = Math.max(-T.MAX_DELTA, Math.min(T.MAX_DELTA, Math.round(Number(deltaRaw) || 0)));
       let exact;
       if (bounded > 0) {
-        exact = positiveAllowed === false ? 0 : bounded * scale * T.POSITIVE_SCALE;
+        exact = positiveAllowed === false ? 0 : bounded * scale * T.POSITIVE_SCALE * lean;
       } else {
         exact = bounded * scale;
       }
@@ -1270,6 +1271,7 @@ const ClaudeAPI = {
     // than any amount of style instruction.
     const dueLines = this.dueNotes(friend, undefined, history);
     if (dueLines) parts.push('', ...dueLines);
+    parts.push('', '## Your curiosity (private)', this.curiosityNote(friend));
     const life = this.lifeEventNote(friend);
     if (life) parts.push('', '## Your week (private)', life);
     const recip = this.reciprocityNote(friend, history);
@@ -2683,6 +2685,31 @@ const ClaudeAPI = {
     }
     return [...counts.entries()].filter(([, c]) => c >= 3)
       .sort((a, b) => b[1] - a[1]).slice(0, 3).map(([g]) => g);
+  },
+
+  /* Curiosity is the dial that decides whether she ever asks the question
+     other people wouldn't — and it TIPS the rest: a curious woman leans in,
+     so her warmth and pull move faster, while an incurious one stays exactly
+     where the friendship already is no matter how interesting he gets. */
+  _curiosity(friend) {
+    const s = (friend.profile && friend.profile.sliders) || {};
+    return s.curiosity === undefined ? 50 : Math.max(0, Math.min(100, Number(s.curiosity) || 0));
+  },
+  _curiosityLean(friend) {
+    return 0.85 + (this._curiosity(friend) / 100) * 0.4;   // 0.85x .. 1.25x on the way UP only
+  },
+  curiosityNote(friend) {
+    const q = this._curiosity(friend);
+    if (q >= 75) {
+      return 'Your curiosity is the loud kind and it is aimed at HIM. You ask what other people are too polite to ask — the personal question, the one about his relationship, the frankly sexual one — asked as genuine interest rather than as a move, usually out of nowhere, and then you leave it entirely to him whether to answer. A dodge is a completely acceptable answer and you never punish one; you just noticed what he did with it.';
+    }
+    if (q >= 50) {
+      return 'You are genuinely curious about him: real follow-up questions, you remember the answers, and once in a while you ask something more personal than the moment strictly required — then let him decide what to do with it.';
+    }
+    if (q >= 25) {
+      return 'Mild curiosity: you follow up when something catches you, but you do not dig, and you leave the uncomfortable questions unasked.';
+    }
+    return 'You are not curious about anything beyond the friendship exactly as it is. You do not probe, you do not ask personal or intimate questions, and it would not occur to you to — this is what it is, and that suits you.';
   },
 
   /* Her own week, not just her own night. A deterministic per-week roll gives

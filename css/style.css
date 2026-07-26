@@ -57,6 +57,15 @@ body {
 .friend-item:active { background: var(--bg2); }
 .friend-meta { flex: 1; min-width: 0; }
 .friend-name { font-weight: 600; font-size: 1.02rem; }
+.friend-item.has-unread .friend-name { font-weight: 700; }
+.friend-item.has-unread .friend-preview { color: var(--text); }
+.unread-dot {
+  align-self: center; flex: none; min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 10px; background: var(--ios-blue, #0a84ff); color: #fff;
+  font-size: 0.72rem; font-weight: 700; display: flex; align-items: center; justify-content: center;
+}
+.friend-when { margin-left: auto; color: var(--muted); font-size: 0.72rem; font-weight: 500; }
+.friend-name { display: flex; align-items: center; gap: 6px; }
 .friend-preview { color: var(--muted); font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .friend-badge { font-size: 0.68rem; color: var(--accent2); border: 1px solid var(--accent2); padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 2px; }
 .friend-badge.romantic { color: #ff8fb3; border-color: #ff8fb3; }
