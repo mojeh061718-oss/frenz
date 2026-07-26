@@ -384,6 +384,9 @@ function relSeries(friend, events) {
       tension: vals.tension
     };
   }
+  // prepend where she STARTED (state before the first event) — otherwise a
+  // climb that happened on day one never renders as a slope
+  if (evs.length) pts.unshift(Object.assign({ ts: evs[0].ts - 60000 }, vals));
   pts.push(nowPt);
   return pts;
 }
@@ -402,64 +405,74 @@ function relTrend(pts, key) {
   return { word: 'holding steady', arrow: '→', delta, cls: 'steady' };
 }
 
-/* Daily net change per element over the last N days — the bars. Absolute
-   0-100 lines hide ±1 days completely; change bars make every day's
-   movement visible, which is the entire point of checking the graph. */
-function relDailyDeltas(events, nDays = 14) {
-  // bucket on the engine's own 5am-rolled day, so a midnight-crossing release
-  // night lands in ONE bar instead of splitting across two
-  const dayOf = ts => ClaudeAPI._dayKey(ts);
-  const nowTs = ClaudeAPI._now();
-  const days = [];
-  for (let i = nDays - 1; i >= 0; i--) days.push(dayOf(nowTs - i * 86400000));
-  const idx = {};
-  days.forEach((d, i) => { idx[d] = i; });
-  const byDim = { closeness: new Array(nDays).fill(0), comfort: new Array(nDays).fill(0), attraction: new Array(nDays).fill(0), tension: new Array(nDays).fill(0) };
-  const evs = (events || []).filter(e => e && e.ts).sort((a, b) => a.ts - b.ts);
-  const tensionLast = {};
-  let tensionPrev = null; // last known value before the window
-  for (const e of evs) {
-    const k = dayOf(e.ts);
-    const ap = e.applied || {};
-    if (k in idx) {
-      byDim.closeness[idx[k]] += ap.closeness || 0;
-      byDim.comfort[idx[k]] += ap.comfort || 0;
-      byDim.attraction[idx[k]] += ap.attraction || 0;
-      if (typeof e.tension === 'number') tensionLast[k] = e.tension;
-    } else if (typeof e.tension === 'number') {
-      tensionPrev = e.tension;
-    }
-  }
-  for (const d of days) {
-    if (d in tensionLast) {
-      // no prior baseline → 0, so a first charged day shows its real climb
-      byDim.tension[idx[d]] = tensionLast[d] - (tensionPrev == null ? 0 : tensionPrev);
-      tensionPrev = tensionLast[d];
-    }
-  }
-  return { days, byDim, firstLabel: new Date(nowTs - (nDays - 1) * 86400000).toLocaleDateString([], { month: 'short', day: 'numeric' }) };
+/* Long histories sample to one point per (5am-rolled) day so weeks stay
+   readable; young histories keep every event point. */
+function relLinePoints(pts) {
+  if (!pts || pts.length < 2) return pts || [];
+  const span = pts[pts.length - 1].ts - pts[0].ts;
+  if (span <= 2 * 86400000 || pts.length <= 40) return pts;
+  const byDay = new Map();
+  for (const p of pts) byDay.set(ClaudeAPI._dayKey(p.ts), p); // last per day
+  const out = [...byDay.values()].sort((a, b) => a.ts - b.ts);
+  if (out[out.length - 1].ts !== pts[pts.length - 1].ts) out.push(pts[pts.length - 1]);
+  return out;
 }
 
-function relBarsSvg(daily, key) {
-  const vals = daily.byDim[key];
-  const STEP = 12, W = vals.length * STEP, H = 44, mid = H / 2;
-  const maxAbs = Math.max(3, ...vals.map(v => Math.abs(v)));
-  let out = `<line x1="0" y1="${mid}" x2="${W}" y2="${mid}" class="rel-grid"/>`;
-  vals.forEach((v, i) => {
-    if (!v) { out += `<rect x="${i * STEP + 3}" y="${mid - 1}" width="6" height="2" class="rel-bar zero"/>`; return; }
-    const h = Math.max(3, Math.abs(v) / maxAbs * (mid - 3));
-    out += `<rect x="${i * STEP + 3}" y="${v > 0 ? mid - h : mid}" width="6" height="${h}" rx="2" class="rel-bar ${v > 0 ? 'up' : 'down'}"></rect>`;
-  });
-  return `<svg class="rel-bars" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${out}</svg>`;
+/* The line graph, done right this time: the Y axis zooms to where the data
+   actually lives (a +2 day is a visible slope, not a flat pixel on 0-100),
+   and zooms tighter still when one element is focused. */
+function drawRelChart(pts) {
+  const svg = $('#rel-chart');
+  if (!svg) return;
+  const W = 640, H = 240, L = 34, R = 10, T = 12, B = 24;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const data = relLinePoints(pts);
+  if (!data.length) { svg.innerHTML = ''; return; }
+  const t1 = data[data.length - 1].ts;
+  const span = Math.max(t1 - data[0].ts, 3600000);
+  const dims = relSelected ? REL_DIMS.filter(d => d.key === relSelected) : REL_DIMS;
+  let lo = 100, hi = 0;
+  for (const p of data) for (const d of dims) { lo = Math.min(lo, p[d.key]); hi = Math.max(hi, p[d.key]); }
+  lo = Math.max(0, Math.floor((lo - 4) / 10) * 10);
+  hi = Math.min(100, Math.ceil((hi + 4) / 10) * 10);
+  if (hi - lo < 20) { hi = Math.min(100, lo + 20); lo = Math.max(0, hi - 20); }
+  const x = ts => (W - R) - ((t1 - ts) / span) * (W - L - R);
+  const y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  let out = '';
+  for (let g = 0; g <= 4; g++) {
+    const val = Math.round(lo + g * (hi - lo) / 4);
+    out += `<line x1="${L}" y1="${y(val)}" x2="${W - R}" y2="${y(val)}" class="rel-grid"/>` +
+           `<text x="${L - 6}" y="${y(val) + 3}" class="rel-axis" text-anchor="end">${val}</text>`;
+  }
+  const left = t1 - span;
+  const sameDay = new Date(left).toDateString() === new Date(t1).toDateString();
+  const fmt = ts => sameDay
+    ? new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  out += `<text x="${L}" y="${H - 6}" class="rel-axis">${fmt(left)}</text>` +
+         `<text x="${W - R}" y="${H - 6}" class="rel-axis" text-anchor="end">${sameDay ? 'now' : 'today'}</text>`;
+  for (const d of REL_DIMS) {
+    const focused = !relSelected || relSelected === d.key;
+    if (!focused) continue; // focused view hides the others entirely — cleaner than dimming on a zoomed axis
+    const path = data.map((p, i) => (i ? 'L' : 'M') + x(p.ts).toFixed(1) + ' ' + y(p[d.key]).toFixed(1)).join(' ');
+    out += `<path d="${path}" fill="none" stroke="${d.color}" class="rel-line" data-dim="${d.key}"/>`;
+    const last = data[data.length - 1];
+    out += `<circle cx="${x(last.ts).toFixed(1)}" cy="${y(last[d.key]).toFixed(1)}" r="3.5" fill="${d.color}"/>`;
+  }
+  svg.innerHTML = out;
+  svg.querySelectorAll('.rel-line').forEach(pth => pth.addEventListener('click', () => {
+    relSelected = relSelected === pth.dataset.dim ? null : pth.dataset.dim;
+    renderRelationship();
+  }));
 }
 
-let relPts = null;   // reconstructed absolute series (trends + current values)
-let relDaily = null; // per-day net changes (the bars)
+let relPts = null; // reconstructed absolute series
 
 function renderRelationship() {
   const friend = currentFriend;
-  if (!friend || !relPts || !relDaily) return;
+  if (!friend || !relPts) return;
   const pts = relPts;
+  drawRelChart(pts);
   const cards = $('#rel-cards');
   cards.innerHTML = '';
   const now = pts[pts.length - 1];
@@ -475,8 +488,6 @@ function renderRelationship() {
       <div class="rel-card-head"><span class="rel-dot" style="background:${d.color}"></span>${d.label}
         <span class="rel-trend ${t.cls}">${t.arrow} ${t.word}</span></div>
       <div class="rel-meter"><div class="rel-meter-fill" style="width:${now[d.key]}%;background:${d.color}"></div></div>
-      ${relBarsSvg(relDaily, d.key)}
-      <div class="rel-bar-days"><span>${relDaily.firstLabel}</span><span>today</span></div>
       <div class="rel-card-detail${sel ? '' : ' hidden'}">${now[d.key]} now · ${sign(t.delta)} this week · ${sign(total)} since the graph began</div>`;
     card.addEventListener('click', () => {
       relSelected = sel ? null : d.key;
@@ -492,7 +503,6 @@ async function openRelationship() {
   let events = [];
   try { events = await DB.getEvents(currentFriend.id); } catch { /* graph just starts today */ }
   relPts = relSeries(currentFriend, events);
-  relDaily = relDailyDeltas(events);
   $('#rel-empty').classList.toggle('hidden', relPts.length > 1);
   relSelected = null;
   renderRelationship();
