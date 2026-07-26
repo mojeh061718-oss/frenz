@@ -277,6 +277,7 @@ details.tune label { margin-top: 12px; }
 
 .msg.sys { align-self: center; background: none; color: var(--ios-gray-text); font-size: 0.78rem; text-align: center; max-width: 92%; }
 .msg-time { align-self: center; color: var(--ios-gray-text); font-size: 0.7rem; font-weight: 500; margin: 14px 0 2px; }
+.delivered.read { color: var(--accent2); font-weight: 600; }
 .delivered { align-self: flex-end; color: var(--ios-gray-text); font-size: 0.68rem; font-weight: 500; margin: 3px 5px 0; }
 .transient-note { font-style: italic; opacity: 0.75; }
 @keyframes pop { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }

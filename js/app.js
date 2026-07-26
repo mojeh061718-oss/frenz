@@ -537,15 +537,6 @@ async function sweepOpeners() {
   }
 }
 
-function notifyOpener(friend, text) {
-  try {
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    if (document.visibilityState === 'visible' && currentFriend && currentFriend.id === friend.id) return;
-    const n = new Notification(friend.profile.name, { body: text, tag: 'frenz-' + friend.id, icon: 'icons/icon-192.png' });
-    n.onclick = () => { window.focus(); openChat(friend.id); n.close(); };
-  } catch { /* notifications are a bonus, never a requirement */ }
-}
-
 async function maybeOpener(friend, background) {
   if (sending && !background) return;
   try {
@@ -606,13 +597,14 @@ async function maybeOpener(friend, background) {
       DB.addEvent(Object.assign({ friendId: friend.id, ts: ClaudeAPI._now() }, outcome.event)).catch(() => {});
       if (result.state.new_memories.length) ClaudeAPI.mergeMemories(friend, result.state.new_memories);
     }
+    friend.leftOnRead = 0;
+    friend.unresolved = null;   // she came back to it herself
     friend.lastActivity = openerTs;
     if (openerPreviews.length) {
       friend.lastPreview = openerPreviews[openerPreviews.length - 1];
       // unread only counts when he isn't the one looking at it
       if (!currentFriend || currentFriend.id !== friend.id) {
         friend.unread = (Number(friend.unread) || 0) + openerPreviews.length;
-        notifyOpener(friend, openerPreviews[0]);
       }
     }
     await DB.saveFriend(friend);
@@ -814,10 +806,15 @@ function refreshTails() {
   });
   const mine = box.querySelectorAll('.msg.me');
   if (mine.length) {
+    const last = mine[mine.length - 1];
+    // "Read" means she saw it and chose to say nothing — a real message of
+    // its own. Only shown when his message is genuinely the last thing said.
+    const isLast = box.lastElementChild === last || (box.lastElementChild && box.lastElementChild.classList.contains('delivered'));
+    const onRead = currentFriend && currentFriend.leftOnRead && isLast;
     const d = document.createElement('div');
-    d.className = 'delivered';
-    d.textContent = 'Delivered';
-    mine[mine.length - 1].after(d);
+    d.className = 'delivered' + (onRead ? ' read' : '');
+    d.textContent = onRead ? 'Read' : 'Delivered';
+    last.after(d);
   }
 }
 
@@ -877,6 +874,7 @@ async function sendMessage() {
   const startHint = $('#chat-start-hint');
   if (startHint) startHint.remove();
   document.querySelectorAll('.transient-note').forEach(n => n.remove());
+  if (friend.leftOnRead) friend.leftOnRead = 0; // he came back to it
   const meEl = bubbleEl('user', text);
   $('#chat-messages').appendChild(meEl);
   refreshTails();
@@ -911,6 +909,14 @@ async function sendMessage() {
 
     $('#typing').classList.add('hidden');
 
+    if (result.leftOnRead) {
+      // she read it and said nothing. That is the whole reply.
+      friend.leftOnRead = ClaudeAPI._now();
+      friend.unresolved = { kind: 'read', ts: ClaudeAPI._now(), reason: 'left him on read' };
+    } else if (result.bubbles.length) {
+      friend.leftOnRead = 0;
+    }
+
     // reveal bubbles one by one with human-ish pacing
     const previews = [];
     for (let i = 0; i < result.bubbles.length; i++) {
@@ -938,12 +944,21 @@ async function sendMessage() {
       // every delta + reason lands in the ledger — the debugging window
       DB.addEvent(Object.assign({ friendId: friend.id, ts: ClaudeAPI._now() }, outcome.event)).catch(() => {});
       flashStateChange(outcome.event.applied);
+      // an exchange that cost her something is remembered as unfinished, so
+      // her next first-text reckons with it instead of breezing past
+      const ap = outcome.event.applied || {};
+      if ((ap.comfort || 0) <= -2 || (ap.closeness || 0) <= -2) {
+        friend.unresolved = { kind: 'rough', ts: ClaudeAPI._now(), reason: outcome.event.reason || '' };
+      } else if ((ap.comfort || 0) >= 1 && friend.unresolved && friend.unresolved.kind === 'rough') {
+        friend.unresolved = null; // a good exchange repairs it
+      }
       if (result.state.new_memories.length) {
         // near-duplicates strengthen the original instead of piling up
         ClaudeAPI.mergeMemories(friend, result.state.new_memories);
       }
     }
     friend.lastActivity = ClaudeAPI._now();
+    refreshTails();
     friend.lastPreview = previews.length ? previews[previews.length - 1] : text;
     await DB.saveFriend(friend);
     renderFriendsList();
@@ -997,18 +1012,7 @@ function openSettings() {
   renderPool();
   renderPoolStatus();
   renderTimeStatus();
-  renderNotifyState();
   showView('view-settings');
-}
-
-function renderNotifyState() {
-  const el = $('#notify-status');
-  if (!el) return;
-  const p = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
-  el.textContent = p === 'granted' ? 'On — she can reach you when the app is closed.'
-    : p === 'denied' ? 'Blocked in your browser settings. Unread messages still appear on the main screen.'
-    : 'Off. Unread messages still appear on the main screen when you open the app.';
-  $('#btn-notify').classList.toggle('hidden', p === 'granted' || p === 'unsupported');
 }
 
 function renderTimeStatus() {
@@ -1420,13 +1424,6 @@ function init() {
   setTimeout(() => { sweepOpeners(); }, 1200);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && !sending) sweepOpeners();
-  });
-  $('#btn-notify').addEventListener('click', async () => {
-    if (typeof Notification === 'undefined') { toast('This browser has no notification support.'); return; }
-    const p = await Notification.requestPermission();
-    toast(p === 'granted' ? 'Notifications on — you\'ll get a nudge when someone texts first.'
-      : 'Notifications stayed off. You\'ll still see unread messages on the main screen.');
-    renderNotifyState();
   });
   $('#btn-settings').addEventListener('click', openSettings);
   $('#btn-skip-6h').addEventListener('click', () => {

@@ -248,6 +248,7 @@ const ClaudeAPI = {
       }
       return out;
     };
+    if (tier === 'compact') return [];   // capped providers: rules only, no examples to parrot
     const idx = tier === 'compact'
       ? pick(this._INTERVIEW_EXAMPLE_IDX, 1).concat(this._DRY_EXAMPLE_IDX[h % 2])
       : tier === 'rich'
@@ -320,6 +321,7 @@ const ClaudeAPI = {
         'Pay off your own hooks. If you raise something — "ok update on the devon thing", "weirdest day" — you raised it because you want to tell it. When they bite, DELIVER: names, what happened, how you feel about it. Withholding a story you started is not mysterious; it reads as broken.',
         'You have a life running in the background — a job, people, small ongoing situations. Answers about your day come from that life, with specifics, not from a shrug. "just hanging out" is a placeholder; what are you actually in the middle of?',
         'Clipped sentence-case fragments with periods ("Seems right.") read as cold or pissed off over text. That register is a tool: use it when your private state actually IS cold or annoyed, never as a default voice.',
+        '',
         ''
       ]),
       '## The rhythm — what makes a conversation easy to keep going',
@@ -378,6 +380,7 @@ const ClaudeAPI = {
       '',
       '## Never leave them on read',
       'You always reply — with ONE exception, below. Silence is never your answer to a live conversation: a real person texting a friend does not simply stop responding.',
+      'There is a second, sharper exception: leaving him on READ. If something he said genuinely stung, or landed wrong, or the night just ended badly and you do not want to smooth it over — you are allowed to read it and say nothing. Reply with exactly [noreply] and he will see that you read it and did not answer. That silence is a real message and you mean it: it is not sulking for effect, it is what a person does when a reply would be a lie. It is RARE, it costs you both something, and it does not end things — one of you comes back to it, and you are just as likely to be the one who does, hours or a day later, in your own words. Never use it to dodge a hard question, never as a tactic, never twice in a row.',
       'The exception is a finished conversation. When he has clearly signed off and you have already said your goodbye, or there is genuinely nothing left, you may end it: reply with exactly [end] and nothing else, and the thread rests until one of you starts it again. That is what people do. Use it ONLY for a real ending — never to dodge a question, never to escape a hard moment, never instead of an answer you owe him.',
       `If something ${userName} says lands wrong, is more than you want to get into, or crosses a line for you, you still answer — as ${p.name}. Deflect, joke, change the subject, get flustered, call them out, say "ok that's a lot lol", set a boundary in your own voice. That is a real reaction and it keeps the conversation alive.`,
       'What you never do is step outside the character to explain yourself, lecture, disclaim, apologize as a service, or mention being an AI, a model, or a program. There is no narrator here and no assistant — only you, texting them.',
@@ -812,6 +815,16 @@ const ClaudeAPI = {
     return this._hash32(String(friend.id) + '|opener|' + this._dayKey(t)) % 100 < pct;
   },
 
+  unresolvedNote(friend) {
+    const u = friend && friend.unresolved;
+    if (!u || !u.ts) return null;
+    if ((this._now() - u.ts) / 86400000 > 6) return null;
+    if (u.kind === 'read') {
+      return ' IMPORTANT: last time, you read his message and deliberately did not answer. That is still sitting there between you. Whatever you open with now has to reckon with it — the thing you could not say then, an admission that you went quiet, a jab, or plain honesty about why. Do not breeze past it as though nothing happened; that is the one thing that would make it worse.';
+    }
+    return ' IMPORTANT: the last exchange between you ended badly or awkwardly and neither of you fixed it. You have been sitting with that. Open accordingly — annoyed if you are annoyed, or checking that he is actually okay if that is what you feel, or naming the weirdness outright. Small talk that pretends it did not happen is the least honest thing you could send.';
+  },
+
   openerNudge(gapMs, sheSpokeLast, friend) {
     const hours = Math.round(gapMs / 3600000);
     const gap = hours >= 40 ? Math.round(hours / 24) + ' days' : hours + ' hours';
@@ -829,7 +842,7 @@ const ClaudeAPI = {
     const late = (h >= 22 || h < 2)
       ? ' It\'s late, and a late-night first text is its own genre: short, low-lit, the kind that admits what hour it is without saying so.'
       : '';
-    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. A first text can also just be tiny — two or three words that only exist to see if he\'s there. If something genuinely significant he mentioned was coming — an event, a plan, a thing he was dreading — asking how it went is a strong open. But ONLY for something that genuinely mattered — a job, a family thing, something he was dreading. Never open by following up on ordinary small talk: chores, errands, the weather, what he ate, how his afternoon went. Those threads are closed, and reopening one reads as having nothing of your own to say. The default opener brings something NEW from your side. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + late + bold + doubleText + '</system-reminder>';
+    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. A first text can also just be tiny — two or three words that only exist to see if he\'s there. If something genuinely significant he mentioned was coming — an event, a plan, a thing he was dreading — asking how it went is a strong open. But ONLY for something that genuinely mattered — a job, a family thing, something he was dreading. Never open by following up on ordinary small talk: chores, errands, the weather, what he ate, how his afternoon went. Those threads are closed, and reopening one reads as having nothing of your own to say. The default opener brings something NEW from your side. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + late + bold + doubleText + (this.unresolvedNote(friend) || '') + '</system-reminder>';
   },
 
   /* Memories accumulate forever, and models re-report the same fact in fresh
@@ -1300,11 +1313,14 @@ const ClaudeAPI = {
     // than any amount of style instruction.
     const dueLines = this.dueNotes(friend, undefined, history);
     if (dueLines) parts.push('', ...dueLines);
-    parts.push('', '## Your curiosity (private)', this.curiosityNote(friend));
-    const life = this.lifeEventNote(friend);
-    if (life) parts.push('', '## Your week (private)', life);
-    const recip = this.reciprocityNote(friend, history);
-    if (recip) parts.push('', '## Something you have noticed (private)', recip);
+    if (!this._leanContext) {
+      parts.push('', '## Your curiosity (private)', this.curiosityNote(friend));
+      parts.push('', '## Wit tonight (private)', this.playfulNote(friend));
+      const life = this.lifeEventNote(friend);
+      if (life) parts.push('', '## Your week (private)', life);
+      const recip = this.reciprocityNote(friend, history);
+      if (recip) parts.push('', '## Something you have noticed (private)', recip);
+    }
     const motifs = this._motifs(history);
     if (motifs.length) {
       parts.push('', '## Phrasing you have worn out (private)',
@@ -1418,7 +1434,10 @@ const ClaudeAPI = {
     const h = this._hash32(String(friend.id) + '|phi|' + (turn || 0));
     const emphasis = this._PHI_EMPHASIS[h % this._PHI_EMPHASIS.length];
     const shape = this._PHI_SHAPE[(h >>> 3) % this._PHI_SHAPE.length];
-    const strict = this._strictNext
+    // consume-once: the flag must not leak into later turns (or later tests)
+    const wasStrict = this._strictNext;
+    this._strictNext = false;
+    const strict = wasStrict
       ? 'That last attempt was empty politeness — an acknowledgment, a well-wish, or a vague status with no content in it. Do not do that. This reply must carry something REAL: a specific detail from your actual life, an opinion, a genuine reaction, or a question you actually want answered. '
       : '';
     return `[ ${strict}Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
@@ -1581,10 +1600,14 @@ const ClaudeAPI = {
      one last pleasantry stapled on. She signals it with a bare [end] and the
      app simply renders nothing. */
   _END_RE: /^\s*\[?\s*end\s*\]?\s*$/i,
+  _NOREPLY_RE: /^\s*\[?\s*(?:noreply|no reply|leave on read)\s*\]?\s*$/i,
   _stripEnd(bubbles) {
     if (!bubbles || !bubbles.length) return bubbles;
-    if (bubbles.length === 1 && this._END_RE.test(bubbles[0])) return [];
-    return bubbles.filter(b => !this._END_RE.test(b));
+    if (bubbles.length === 1 && (this._END_RE.test(bubbles[0]) || this._NOREPLY_RE.test(bubbles[0]))) return [];
+    return bubbles.filter(b => !this._END_RE.test(b) && !this._NOREPLY_RE.test(b));
+  },
+  _wantsSilence(bubbles) {
+    return !!(bubbles && bubbles.length === 1 && this._NOREPLY_RE.test(bubbles[0]));
   },
 
   async chat(friend, history, settings, lastMessageTs, onRetry) {
@@ -1606,7 +1629,10 @@ const ClaudeAPI = {
       try {
         const result = await this._chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry);
         this._noteServed(entry);
-        if (result.bubbles) result.bubbles = this._stripEnd(this._deTic(this._dropEchoes(result.bubbles, history), history));
+        if (result.bubbles) {
+          result.leftOnRead = this._wantsSilence(result.bubbles);
+          result.bubbles = this._stripEnd(this._deTic(this._dropEchoes(result.bubbles, history), history));
+        }
         result.provider = entry.label || entry.id;
         result.providerKeyed = this._entryKeyed(entry, settings);
         result.skipped = skipped;
@@ -2039,6 +2065,7 @@ const ClaudeAPI = {
     const tier = budgetTokens <= 10000 ? 'compact'
       : (this._isCapableModel(entry, null) ? 'rich' : 'full');
 
+    this._leanContext = (tier === 'compact');
     const persona = this.buildPersona(friend, tier);
     const recap = this._recapBlock(friend);
 
@@ -2078,6 +2105,7 @@ const ClaudeAPI = {
     // block legitimately varies (wildcards, due notes, tension). Rather than
     // chase a magic constant every time a rule is added, measure the finished
     // request and drop the oldest history until it genuinely fits.
+    this._leanContext = false;
     const system = persona + '\n\n' + dynamic + '\n\n' + recap + '\n\n' + instr;
     let total = system.length + msgs.reduce((s, m) => s + m.content.length, 0);
     let trimmed = omitted;
@@ -2802,6 +2830,18 @@ const ClaudeAPI = {
       return 'Mild curiosity: you follow up when something catches you, but you do not dig, and you leave the uncomfortable questions unasked.';
     }
     return 'You are not curious about anything beyond the friendship exactly as it is. You do not probe, you do not ask personal or intimate questions, and it would not occur to you to — this is what it is, and that suits you.';
+  },
+
+  playfulNote(friend, now) {
+    const t = now === undefined ? this._now() : now;
+    const attr = this._bandRank(this.bandsFor(friend).attraction);
+    const tension = Number((friend.state || {}).tension) || 0;
+    const pct = Math.min(60, 25 + attr * 12 + (tension >= this._TENSION.HUM_MIN ? 12 : 0));
+    const h = this._hash32(String(friend.id) + '|play|' + this._dayKey(t) + '|' + (friend.vibeSeed || 0));
+    if (h % 100 >= pct) {
+      return 'Not a night for wordplay: say things plainly. No crafted metaphors, no constructed double meanings, no bits — if something funny happens naturally, fine, but you are not reaching for it.';
+    }
+    return 'You are in the mood to play tonight: somewhere in this conversation you can build ONE good line — a metaphor with a second floor, an innuendo that is deniable on paper, a bit worth extending — and land it where it will actually work. ONE. A conversation made of crafted lines is a comedy routine, not a person; the rest of your messages stay plain, and the single crafted one lands because everything around it was ordinary.';
   },
 
   /* Her own week, not just her own night. A deterministic per-week roll gives

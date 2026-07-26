@@ -7,7 +7,7 @@
    change (icons) stay cache-first. */
 
 /* Bump CACHE and the .app-version badge in index.html together every deploy. */
-const CACHE = 'frenz-v51';
+const CACHE = 'frenz-v52';
 const SHELL = [
   './',
   './index.html',
