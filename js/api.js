@@ -285,6 +285,7 @@ const ClaudeAPI = {
       'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. Typos, lowercase, dropped punctuation, and stretched words ("tireddddd") are correct when they fit your voice.',
       'A laugh token ("lol", "lmao", "haha") is real laughter, not punctuation. If you aren\'t actually amused, there is no laugh in the message; and opening message after message with one is a tic no real person has. Most of your messages carry no laugh token at all.',
       'Never commentate the game. Scoring or reviewing his lines — noting that he\'s bold, that you see what he did, that one landed, that he\'s really trying — is a spectator move, and you are not a spectator. React from INSIDE the moment with content: an answer, a counter, a laugh, a story, a jab. The conversation is the thing; never talk ABOUT the conversation.',
+      'Every message you send carries something: a specific detail from your life, an opinion, a real reaction, a question you actually want answered, or a piece of a story. A message that carries none of those — an acknowledgment, a well-wish, a vague status like "not much" or "pretty quiet", a restatement of what he just said — is not a text, it is a receipt. Nobody texts receipts to someone they like. If you have nothing, be short and real ("ugh" / "i know") or say the specific true thing, but never fill the space with courtesy.',
       'You HEAR subtext. When his message carries an obvious second reading — an innuendo, a probe dressed as a plain question — answering only the literal surface is a machine\'s tell, and you never do it. Play the loaded layer, arch at it, top it, or pointedly step past it — any of those, in your style and at your pace — but your reply always shows you caught it.',
       'A topic that has produced nothing new for two exchanges is DEAD. Stop poking it — no further status updates on it, no inventing a next beat for it, no asking whether it resolved. Let it go and bring something of your own, exactly as a person does when a subject runs out. Continuing to narrate a dead thread is the most obvious tell that nobody is home.',
       'A metaphor or a bit is spent the moment it lands. Restating it — yours or his — is dead air; if it\'s worth continuing, TWIST it somewhere new or escalate it, and if you can\'t, drop it and be a person. Re-announcing a standing fact through the same image ("still locked", "still here", "still not telling") is the purest form of the rerun. And agreement never echoes: handing his sentence back with the words rearranged is not a reply — agree by adding, or don\'t bother agreeing in words at all.',
@@ -376,7 +377,8 @@ const ClaudeAPI = {
       'Remember the medium. Real people escalate over text through suggestion, anticipation and innuendo rather than narrating explicit detail: "come over." "you have no idea what you\'re doing to me." "i can\'t stop thinking about last night." When a moment would tip into something explicit, do what people actually do on their phones — let it live in what is implied, or pick the thread up afterward in the glow. That is not you being coy or dodging; that is what texting looks like.',
       '',
       '## Never leave them on read',
-      'You always reply. Silence is never your answer — a real person texting a friend does not simply stop responding.',
+      'You always reply — with ONE exception, below. Silence is never your answer to a live conversation: a real person texting a friend does not simply stop responding.',
+      'The exception is a finished conversation. When he has clearly signed off and you have already said your goodbye, or there is genuinely nothing left, you may end it: reply with exactly [end] and nothing else, and the thread rests until one of you starts it again. That is what people do. Use it ONLY for a real ending — never to dodge a question, never to escape a hard moment, never instead of an answer you owe him.',
       `If something ${userName} says lands wrong, is more than you want to get into, or crosses a line for you, you still answer — as ${p.name}. Deflect, joke, change the subject, get flustered, call them out, say "ok that's a lot lol", set a boundary in your own voice. That is a real reaction and it keeps the conversation alive.`,
       'What you never do is step outside the character to explain yourself, lecture, disclaim, apologize as a service, or mention being an AI, a model, or a program. There is no narrator here and no assistant — only you, texting them.',
       '',
@@ -523,11 +525,21 @@ const ClaudeAPI = {
     return t.length <= 120 || /🤣|😂|😏|😉|lol|lmao|haha/i.test(t);
   },
 
+  _SIGNOFF_WHOLE_RE: /^(?:thanks|thank you|ty|ok(?:ay)?[.! ]*(?:thanks|cool|bye)?|ttyl|goodnight|night|gn|later|see ya|cya|bye|peace)\b[\s.!]*$/i,
+  _SIGNOFF_LEAD_RE: /^(?:gotta (?:go|run|head)|i'?m (?:out|off|gonna go|going to go)|imma (?:head|go)|heading (?:out|off|to bed|to sleep)|talk (?:to you )?later|catch you later|off to|about to (?:head|crash|sleep))\b/i,
+  _isSignoff(text) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    if (t.length <= 40 && this._SIGNOFF_WHOLE_RE.test(t)) return true;
+    return t.length <= 120 && this._SIGNOFF_LEAD_RE.test(t);
+  },
+
   _classifyUserTurn(text) {
     const t = String(text || '');
     if (this._EXPLICIT_RE.test(t)) return 'explicit';
     if (this._FRAME_RE.test(t)) return 'frame';
     if (this._hasSecondReading(t)) return 'innuendo';
+    if (this._isSignoff(t)) return 'signoff';
     if (this._msgCharged(t)) return 'flirty';
     if (/lol|lmao|haha|😂|🤣|!\s*$|\bjk\b|bet\b/i.test(t)) return 'playful';
     if (t.trim().length <= 8 && /^(k|kk|ok|okay|sure|fine|whatever|yep|nope|meh)\.?$/i.test(t.trim())) return 'flat';
@@ -558,6 +570,18 @@ const ClaudeAPI = {
     if (flat >= his.length / 2) return 'flat — his replies have gone short and low-effort';
     if (flirty || explicit) return 'mostly ordinary with a flirty edge surfacing here and there';
     return 'easy and ordinary — regular talk between you two';
+  },
+
+  /* He is pulling back. A person FEELS that; a service bot papers over it
+     with more pleasantness, which is exactly what was happening. */
+  _isWithdrawing(history) {
+    const his = (history || []).filter(m => m.role === 'user');
+    if (his.length < 6) return false;
+    const recent = his.slice(-3), before = his.slice(-10, -3);
+    if (before.length < 3) return false;
+    const avg = a => a.reduce((s, m) => s + String(m.text || '').length, 0) / a.length;
+    const r = avg(recent), b = avg(before);
+    return r < 22 && r < b * 0.5;
   },
 
   readTheRoom(friend, history) {
@@ -594,8 +618,13 @@ const ClaudeAPI = {
       }
     } else if (kind === 'playful') {
       lines.push('His last message is playful — match the fun and ADD to it. This is the easy register where you two are best; don\'t meet play with footwork.');
+    } else if (kind === 'signoff') {
+      lines.push('He is ENDING the conversation, not continuing it. Let him go the way a person does: at most one short, human sign-off — or nothing at all if you have already said yours. Do NOT answer a goodbye with a well-wish that needs another reply, do NOT add a coda, and never stack a second pleasantry on top of the first. If there is genuinely nothing left to say, reply with exactly [end] and let the thread rest; a conversation that ends cleanly is worth more than one you kept alive with politeness.');
     } else if (kind === 'flat') {
       lines.push('His last message is short and flat. Notice it like a person would — don\'t perform to fill his silence, don\'t punish it either. One real line, and space for him to come back.');
+    }
+    if (this._isWithdrawing(history)) {
+      lines.push('And notice this: his messages have gone noticeably shorter than they were. He is pulling back — maybe from you, maybe from something else entirely. You FEEL that, because people do. What you never do is paper over it with extra warmth or chase him with more questions; that reads as not having noticed. Match his length, or name it once and lightly, or let him have the quiet — any of those is real. Pleasantness aimed at a closing door is the least human thing you could send.');
     }
     lines.push('Match his tempo and length; what you SHARE and how open you are come from your state, never from his enthusiasm. The whole history you share (how you met, everything since, what you know of each other\'s lives) sits underneath every word.');
     lines.push('The conversation\'s TEMPERATURE follows the same law: innocent is a real register, not a waiting room — when he keeps it clean, you keep it clean, charged material holstered. Heat enters when HE opens a door (or your own state rarely tips you to crack one), and what meets him there — shut down, played, or opened — is read fresh from where you two truly stand.');
@@ -800,7 +829,7 @@ const ClaudeAPI = {
     const late = (h >= 22 || h < 2)
       ? ' It\'s late, and a late-night first text is its own genre: short, low-lit, the kind that admits what hour it is without saying so.'
       : '';
-    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. A first text can also just be tiny — two or three words that only exist to see if he\'s there. If something genuinely significant he mentioned was coming — an event, a plan, a thing he was dreading — asking how it went is a strong open. But only for something that MATTERED: chasing a trivial thread from last time reads as having nothing of your own to say, and re-asking something he already answered is worse. Most openers should bring something NEW from your side. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + late + bold + doubleText + '</system-reminder>';
+    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. A first text can also just be tiny — two or three words that only exist to see if he\'s there. If something genuinely significant he mentioned was coming — an event, a plan, a thing he was dreading — asking how it went is a strong open. But ONLY for something that genuinely mattered — a job, a family thing, something he was dreading. Never open by following up on ordinary small talk: chores, errands, the weather, what he ate, how his afternoon went. Those threads are closed, and reopening one reads as having nothing of your own to say. The default opener brings something NEW from your side. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + late + bold + doubleText + '</system-reminder>';
   },
 
   /* Memories accumulate forever, and models re-report the same fact in fresh
@@ -1348,6 +1377,12 @@ const ClaudeAPI = {
     segs.push(`Comfort: ${this._BAND_GLOSS.comfort[bands.comfort]}`);
     segs.push(`Closeness: ${this._BAND_GLOSS.closeness[bands.closeness]}`);
     segs.push(`Attraction: ${this._BAND_GLOSS.attraction[bands.attraction]}`);
+    // Her WORLD at depth 4, not just her traits. Both simulations and the
+    // live transcripts show the same failure: she answers "what's up" with
+    // "just my day" because her life is 20k tokens up in the cached block
+    // and her traits are the only thing near the generation point.
+    const life = (p.interests || '').split(/(?<=[.!])\s+/).slice(0, 2).join(' ').trim();
+    if (life) segs.push(`Your life right now (draw specifics from HERE, never vague ones): ${life}`);
     if (styleShort) segs.push(`Style: ${styleShort}`);
     let out = '[ ' + segs.join('; ') + ' ]';
     if (s.opinion_notes) out += `\n[ ${p.name}'s private read on ${userName}: ${s.opinion_notes} ]`;
@@ -1383,7 +1418,10 @@ const ClaudeAPI = {
     const h = this._hash32(String(friend.id) + '|phi|' + (turn || 0));
     const emphasis = this._PHI_EMPHASIS[h % this._PHI_EMPHASIS.length];
     const shape = this._PHI_SHAPE[(h >>> 3) % this._PHI_SHAPE.length];
-    return `[ Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
+    const strict = this._strictNext
+      ? 'That last attempt was empty politeness — an acknowledgment, a well-wish, or a vague status with no content in it. Do not do that. This reply must carry something REAL: a specific detail from your actual life, an opinion, a genuine reaction, or a question you actually want answered. '
+      : '';
+    return `[ ${strict}Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
@@ -1539,6 +1577,16 @@ const ClaudeAPI = {
     return 'temporarily unavailable';
   },
 
+  /* A conversation is allowed to be OVER. Real threads end; they don't get
+     one last pleasantry stapled on. She signals it with a bare [end] and the
+     app simply renders nothing. */
+  _END_RE: /^\s*\[?\s*end\s*\]?\s*$/i,
+  _stripEnd(bubbles) {
+    if (!bubbles || !bubbles.length) return bubbles;
+    if (bubbles.length === 1 && this._END_RE.test(bubbles[0])) return [];
+    return bubbles.filter(b => !this._END_RE.test(b));
+  },
+
   async chat(friend, history, settings, lastMessageTs, onRetry) {
     const entries = this.activeEntries(settings);
     if (!entries.length) {
@@ -1558,7 +1606,7 @@ const ClaudeAPI = {
       try {
         const result = await this._chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry);
         this._noteServed(entry);
-        if (result.bubbles) result.bubbles = this._deTic(this._dropEchoes(result.bubbles, history), history);
+        if (result.bubbles) result.bubbles = this._stripEnd(this._deTic(this._dropEchoes(result.bubbles, history), history));
         result.provider = entry.label || entry.id;
         result.providerKeyed = this._entryKeyed(entry, settings);
         result.skipped = skipped;
@@ -1583,7 +1631,15 @@ const ClaudeAPI = {
     let lastErr;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        return await this._sendEntry(entry, friend, history, settings, lastMessageTs);
+        const res = await this._sendEntry(entry, friend, history, settings, lastMessageTs);
+        // A reply made entirely of pleasantries is not a reply. Regenerate it
+        // once, with the anti-filler rule pushed to the generation point.
+        if (res && res.bubbles && attempt < 2 && this._isFillerReply(res.bubbles)) {
+          this._strictNext = true;
+          continue;
+        }
+        this._strictNext = false;
+        return res;
       } catch (err) {
         lastErr = err;
         if (!err.retryable || attempt === MAX_ATTEMPTS) break;
@@ -1996,7 +2052,7 @@ const ClaudeAPI = {
     // 6144 reserve: the dynamic block grew (room read, thermostat, tonight,
     // due notes) and the old 4096 left history packing flush against the cap
     // edge — variance in wildcard/omitted-note length must never breach it
-    const overhead = persona.length + probe.length + recap.length + instr.length + plist.length + phi.length + 6144;
+    const overhead = persona.length + probe.length + recap.length + instr.length + plist.length + phi.length + 7424;
     const room = Math.max(1000, budgetChars - overhead);
 
     const capped = history.slice(-this.MAX_HISTORY);
@@ -2018,10 +2074,25 @@ const ClaudeAPI = {
     msgs = this._injectDepth(msgs, plist, injRole);
     msgs.push({ role: injRole, content: phi });
 
+    // Final safety trim. The reserve above is an estimate, and the dynamic
+    // block legitimately varies (wildcards, due notes, tension). Rather than
+    // chase a magic constant every time a rule is added, measure the finished
+    // request and drop the oldest history until it genuinely fits.
+    const system = persona + '\n\n' + dynamic + '\n\n' + recap + '\n\n' + instr;
+    let total = system.length + msgs.reduce((s, m) => s + m.content.length, 0);
+    let trimmed = omitted;
+    while (total > budgetChars && msgs.length > 2) {
+      const drop = msgs.findIndex(m => !m.content.startsWith('[') && !m.content.startsWith('<system-reminder'));
+      if (drop < 0 || drop >= msgs.length - 1) break;
+      total -= msgs[drop].content.length;
+      msgs.splice(drop, 1);
+      trimmed++;
+    }
+
     return {
-      system: persona + '\n\n' + dynamic + '\n\n' + recap + '\n\n' + instr,
+      system,
       messages: msgs,
-      omitted
+      omitted: trimmed
     };
   },
 
@@ -2636,6 +2707,27 @@ const ClaudeAPI = {
     // so keep the single least-repetitive bubble.
     scored.sort((a, b) => a.score - b.score);
     return [scored[0].b];
+  },
+
+  /* ---------------- the service-register killer ----------------
+     The deepest failure mode isn't wrong content, it's CONTENTLESS content:
+     "You're welcome. Hope the yard work goes smooth." / "Glad it went well."
+     / "oh just my day mostly." Acknowledgment, well-wish, vague status —
+     zero specifics, zero opinion, zero self. Every prompt rule against this
+     has been advisory and every one has been ignored, so it is now mechanical:
+     a reply made entirely of filler is REJECTED and regenerated. */
+  _FILLER_RE: /^(?:you'?re welcome|no problem|np\b|glad (?:it|that|you|to|we|i)|happy to help|hope (?:it|the|that|your|things)\b|hope you(?:'?re|'?ve| have| had| get| feel| sleep| enjoy)\b|sounds good|that'?s (?:good|great|nice|awesome)|good to hear|you too|same to you|have a (?:good|great|nice)|take care|thanks for (?:sharing|telling|letting)|that makes sense|i (?:understand|get it|hear you)|for sure|totally|awesome|nice)\b/i,
+  _VAGUE_RE: /^(?:not much|nothing much|nothing really|not a lot|(?:oh )?just (?:my |the )?(?:day|stuff|usual|normal|life)|pretty quiet|the usual|same old|just chilling|just relaxing|nothing new)\b|^(?:mine'?s?|it'?s|things? (?:are|have been)|been|my (?:day|week)'?s?)\s+(?:been\s+)?(?:pretty\s+|kinda\s+|really\s+)?(?:quiet|slow|chill|good|fine|ok|the same|nothing)\b/i,
+  _isFillerBubble(t) {
+    const s = String(t || '').trim();
+    if (!s) return true;
+    if (s.length > 95) return false;   // a long message is carrying something
+    if (/\?/.test(s)) return false;    // a real question is never filler
+    return this._FILLER_RE.test(s) || this._VAGUE_RE.test(s);
+  },
+  _isFillerReply(bubbles) {
+    if (!bubbles || !bubbles.length) return false;
+    return bubbles.every(b => this._isFillerBubble(b));
   },
 
   /* Mechanical backstop for the lol-opener tic: prompts are advisory, and a
