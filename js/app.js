@@ -535,12 +535,19 @@ async function maybeOpener(friend) {
     // one request, never in stored history.
     const nudge = { role: 'user', text: ClaudeAPI.openerNudge(ClaudeAPI._now() - last.ts, last.role === 'assistant', friend) };
     const result = await ClaudeAPI.chat(friend, history.concat([nudge]), settings, last.ts, null);
+    // She texted while he was away, not the instant he opened the app: place
+    // the message at a believable past moment inside her waking hours since
+    // the gap began. Nothing else in the app makes her feel like a person with
+    // a phone of her own more cheaply than this.
+    const openerTs = plausiblePastTs(friend, last.ts);
     let openerPreviews = result.bubbles.filter(b => !PHOTO_MARKER.test(b));
     if (!currentFriend || currentFriend.id !== friend.id) {
       // he left the chat mid-generation — save quietly, no rendering. Photo
       // markers are dropped: generating into a chat nobody is watching
       // spends money on an image she can simply take next time.
-      for (const b of openerPreviews) await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: ClaudeAPI._now() });
+      for (let i = 0; i < openerPreviews.length; i++) {
+        await DB.addMessage({ friendId: friend.id, role: 'assistant', text: openerPreviews[i], ts: openerTs + i * 40000 });
+      }
     } else {
       $('#typing').classList.add('hidden');
       openerPreviews = [];
@@ -552,7 +559,7 @@ async function maybeOpener(friend) {
           await new Promise(r => setTimeout(r, Math.min(2200, 400 + b.length * 18)));
           $('#typing').classList.add('hidden');
         }
-        const p = await deliverBubble(friend, b);
+        const p = await deliverBubble(friend, b, openerTs);
         if (p) openerPreviews.push(p);
       }
       maybeFallbackNote(result);
@@ -662,6 +669,23 @@ function armMessageDelete(el, msgId) {
   el.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
+/* An opener is written the moment he opens the app, but she "sent" it while
+   he was gone. Pick a believable past moment: inside her waking hours, at
+   least a few minutes ago, never before the last message. Deterministic per
+   friend+day so it doesn't jitter between renders. */
+function plausiblePastTs(friend, lastTs) {
+  const now = ClaudeAPI._now();
+  const gap = now - lastTs;
+  if (gap < 3 * 3600000) return now - Math.min(gap / 2, 9 * 60000);
+  const h = ClaudeAPI._hash32(String(friend.id) + '|arrive|' + ClaudeAPI._dayKey(now));
+  // somewhere in the last stretch of the gap, capped at 14h back
+  const back = 20 * 60000 + (h % (Math.min(gap * 0.6, 14 * 3600000) - 20 * 60000));
+  let ts = now - back;
+  const hour = new Date(ts).getHours();
+  if (hour >= 2 && hour < 8) ts = now - Math.min(gap - 60000, 90 * 60000); // she wasn't up at 4am
+  return Math.max(lastTs + 60000, Math.min(ts, now - 5 * 60000));
+}
+
 /* ---- provider-downgrade visibility ----
    When the provider the user actually set up (Bedrock, Anthropic, any keyed
    entry) fails or is cooling down and a FREE backup model writes the reply,
@@ -690,14 +714,14 @@ function maybeFallbackNote(result) {
    when no image model is configured / generation fails, disappears. */
 const PHOTO_MARKER = /^\s*\[\s*photo\s*\]?\s*[:\-—]?\s*/i;
 
-async function deliverBubble(friend, b) {
+async function deliverBubble(friend, b, atTs) {
   const isPhoto = PHOTO_MARKER.test(b);
   if (!isPhoto) {
     const el = bubbleEl('assistant', b);
     $('#chat-messages').appendChild(el);
     refreshTails();
     scrollChat();
-    armMessageDelete(el, await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: ClaudeAPI._now() }));
+    armMessageDelete(el, await DB.addMessage({ friendId: friend.id, role: 'assistant', text: b, ts: atTs || ClaudeAPI._now() }));
     return b;
   }
   const desc = b.replace(PHOTO_MARKER, '').trim();

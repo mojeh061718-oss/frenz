@@ -1270,6 +1270,15 @@ const ClaudeAPI = {
     // than any amount of style instruction.
     const dueLines = this.dueNotes(friend, undefined, history);
     if (dueLines) parts.push('', ...dueLines);
+    const life = this.lifeEventNote(friend);
+    if (life) parts.push('', '## Your week (private)', life);
+    const recip = this.reciprocityNote(friend, history);
+    if (recip) parts.push('', '## Something you have noticed (private)', recip);
+    const motifs = this._motifs(history);
+    if (motifs.length) {
+      parts.push('', '## Phrasing you have worn out (private)',
+        'You have leaned on ' + motifs.map(m => '"' + m + '"').join(', ') + ' repeatedly. That is a rut and he can feel it. Retire ' + (motifs.length > 1 ? 'them' : 'it') + ' — do not use ' + (motifs.length > 1 ? 'those phrasings' : 'that phrasing') + ' again, and do not swap in a synonym for the same bit. Find something else to talk about entirely.');
+    }
     const tensionLines = this.tensionNote(friend);
     if (tensionLines) parts.push('', ...tensionLines);
     const reveals = this.unlockedReveals(friend, exchangedCount);
@@ -2649,6 +2658,61 @@ const ClaudeAPI = {
       else if (bubbles.length === 1) out.push(b);
     });
     return out.length ? out : bubbles;
+  },
+
+  /* Running-bit rut: the echo guard compares whole messages, so a phrase she
+     keeps reaching for ("door adventures") rides along inside fresh sentences
+     forever and never trips it. This finds the phrase itself and tells her to
+     retire it — prompt-side, so no good bubble ever gets eaten. */
+  _MOTIF_STOP: new Set(('a an the and or but if so it is was be been am are i you he she we they me him her them my your his our their this that these those to of in on at for with from by as not no yes do did does done get got go going im ive youre thats dont cant just really very much more most only also then than there here what when where who how why all any some out up down off over about like well ok okay lol haha yeah yea nah hey oh omg thing things one two now still even back after before never always').split(' ')),
+  _motifs(history) {
+    const mine = (history || []).filter(m => m.role === 'assistant').slice(-30);
+    if (mine.length < 6) return [];
+    const counts = new Map();
+    for (const m of mine) {
+      const w = this._normBubble(m.text).split(' ').filter(x => x && !this._MOTIF_STOP.has(x));
+      const seen = new Set();
+      for (let n = 2; n <= 3; n++) {
+        for (let i = 0; i + n <= w.length; i++) {
+          const g = w.slice(i, i + n).join(' ');
+          if (g.length < 7 || seen.has(g)) continue;
+          seen.add(g);                       // once per message, so repetition means ACROSS messages
+          counts.set(g, (counts.get(g) || 0) + 1);
+        }
+      }
+    }
+    return [...counts.entries()].filter(([, c]) => c >= 3)
+      .sort((a, b) => b[1] - a[1]).slice(0, 3).map(([g]) => g);
+  },
+
+  /* Her own week, not just her own night. A deterministic per-week roll gives
+     her something running underneath — the band between tonight's dice and
+     the months-long arc was empty, so she could never have a bad week. */
+  _LIFE_EVENTS: [
+    { tone: 'heavy', text: 'Something in your own life has been sitting badly all week — you know exactly what it is; invent it from your life and keep it consistent. It shortens your fuse and shows up as distraction more than complaint.' },
+    { tone: 'bright', text: 'You are in a genuinely good stretch this week — something went right for you. You are more generous, quicker to laugh, more likely to say the warm thing out loud.' },
+    { tone: 'stressed', text: 'This week is overloaded — too much on you, not enough hours. You are shorter, later to reply, and quietly resentful of anyone who wants something from you.' },
+    { tone: 'tired', text: 'You have been run down all week — sleep is bad, your body is annoyed with you. Less energy for performance of any kind, which paradoxically makes you more honest.' },
+    { tone: 'restless', text: 'You have been restless all week — itchy for something to change, no idea what. It makes you bolder and worse at leaving things alone.' }
+  ],
+  lifeEventNote(friend, now) {
+    const t = now === undefined ? this._now() : now;
+    const week = Math.floor(this._dayKey(t) / 7);
+    const h = this._hash32(String(friend.id) + '|life|' + week);
+    if (h % 100 >= 40) return null;                    // ~2 weeks in 5 have one
+    const e = this._LIFE_EVENTS[(h >>> 8) % this._LIFE_EVENTS.length];
+    return e.text + ' It is background, not an announcement: it colors how you are, and only gets named if he actually notices and asks.';
+  },
+
+  /* She keeps score of being asked about. A month of him talking only about
+     himself should cost him, and she should be allowed to say so. */
+  reciprocityNote(friend, history) {
+    const his = (history || []).filter(m => m.role === 'user').slice(-14);
+    if (his.length < 10) return null;
+    const asked = his.filter(m => /\?/.test(m.text || '')).length;
+    if (asked > 1) return null;
+    if (this._bandRank(this.bandsFor(friend).closeness) < 1) return null;
+    return 'Something you have half-noticed: across this whole stretch he has not asked you one real question. You have been carrying this thread. It is starting to cost him, and you are allowed to point it out in your own voice — a jab, a flat observation, or simply less effort back.';
   },
 
   _splitBubbles(text) {
