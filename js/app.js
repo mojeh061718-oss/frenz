@@ -520,6 +520,7 @@ async function maybeOpener(friend) {
     if (!ClaudeAPI.openerDue(friend, msgs)) return;
     // mark first so a slow request can't double-fire
     friend.lastOpenerDay = ClaudeAPI._dayKey(ClaudeAPI._now());
+    friend.lastOpenerAt = ClaudeAPI._now(); // second-surprise spacing reads this
     friend.vibeSeed = ClaudeAPI._now() % 1e9; // openers always start a fresh burst
     await DB.saveFriend(friend);
 
