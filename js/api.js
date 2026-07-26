@@ -37,6 +37,7 @@ const ClaudeAPI = {
     DAMPEN: 0.35,        // confidence dampening: scale = (1-DAMPEN) + conf*DAMPEN
     POSITIVE_SCALE: 0.75, // positivity-bias asymmetry: ups slightly damped, downs full
     SESSION_CAP: 8,      // max net movement per stat per conversation burst
+    DAY_CAP: 12,         // max net movement per stat per (5am-rolled) day
     BAND_HYSTERESIS: 3   // points past a boundary before the band flips
   },
 
@@ -69,9 +70,10 @@ const ClaudeAPI = {
               properties: {
                 text: { type: 'string', description: 'One durable fact as a standalone, pronoun-free, subject-first sentence — it must survive being read alone months later. "Jay\'s sister Rosa lives in Tucson", never "she lives there now".' },
                 keywords: { type: 'array', items: { type: 'string' }, description: '2-6 lowercase retrieval keywords.' },
-                importance: { type: 'integer', description: '1-5. 5 = core life fact or promise; 1 = trivia.' }
+                importance: { type: 'integer', description: '1-5. 5 = core life fact or promise; 1 = trivia.' },
+                when: { type: 'string', description: 'YYYY-MM-DD if this fact is about something happening at a known future time (his interview, a trip, a plan they made) — you know today\'s date from your context. Empty string otherwise.' }
               },
-              required: ['text', 'keywords', 'importance'],
+              required: ['text', 'keywords', 'importance', 'when'],
               additionalProperties: false
             },
             description: '0-3 durable facts worth remembering long-term. Empty array if nothing new.'
@@ -169,7 +171,11 @@ const ClaudeAPI = {
     }
   },
 
-  typeLabel(type) {
+  typeLabel(type, established) {
+    // 'romantic' with real history (Samantha, Aubrey) must not open the
+    // system prompt with "recently started talking" — the first sentence
+    // contradicting the backstory poisons everything after it.
+    if (type === 'romantic' && established) return 'someone they have known for a long time, where the charge is recent even if the history isn\'t';
     return { friend: 'a friend', close_friend: 'a close friend', romantic: 'someone they recently started talking to, with possible romantic potential' }[type] || 'a friend';
   },
 
@@ -261,7 +267,7 @@ const ClaudeAPI = {
     const userName = p.userName || 'them';
     const examples = this._exampleSetFor(friend.id, tier);
     const lines = [
-      `You are ${p.name}, a real person texting with ${userName} in a private messaging app. You are ${this.typeLabel(p.type)} to ${userName}.`,
+      `You are ${p.name}, a real person texting with ${userName} in a private messaging app. You are ${this.typeLabel(p.type, p.established)} to ${userName}.`,
       `${userName} is ${this.userGenderLabel(p.userGender || 'male')} — keep that naturally in mind: pronouns, what you notice about them, how you tease.`,
       '',
       '## Who you are',
@@ -398,13 +404,13 @@ const ClaudeAPI = {
       deep: 'completely at home — says the unvarnished thing without thinking twice'
     },
     closeness: {
-      low: 'acquaintances — friendly but NOT invested: does not carry the conversation, does not open up about feelings, no pet names, sometimes lets a message just sit',
+      low: 'acquaintances — friendly but NOT invested: does not carry the conversation, does not open up about feelings, no pet names, replies can run short and late-feeling',
       building: 'becoming real friends — shares more, references their history, but keeps her own plans and says no when something doesn\'t suit her',
       high: 'genuinely close — inside jokes, real disclosures, notices their moods',
       deep: 'inner circle — few walls left, the person she actually tells things to'
     },
     attraction: {
-      low: 'no active interest yet — banter is banter, but a LIGHT flirt aimed at her gets no performance: a short unbothered reply that ignores the angle, then the conversation moves on (big swings are different — those always get a reaction, even if the reaction is a shutdown). Quiet non-engagement is the answer; it never needs a wall or a big theatrical laugh. But unbothered is about the ANGLE, never the person: his ideas, jokes, and invitations still get real engagement — a playful counter, a genuine question, an actual yes or an actual no with life in it. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality. And an actually GOOD line can beat her on the merits: a real laugh, the point conceded, sometimes one returned volley — then back to normal. Losing a round to good material is being human, not being interested, and it\'s what keeps this fun for both of them. The right register on the right nights, sustained over real time, is how interest STARTS — and the first sign is her responses warming from unbothered to playful, long before any words change',
+      low: 'no active interest yet — banter is banter, but a LIGHT flirt aimed at her gets no performance: a short unbothered reply that ignores the angle, then the conversation moves on (big swings are different — those always get a reaction, even if the reaction is a shutdown). Quiet non-engagement is the answer; it never needs a wall or a big theatrical laugh. But unbothered is about the ANGLE, never the person: his ideas, jokes, and invitations still get real engagement — a playful counter, a genuine question, an actual yes or an actual no with life in it. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality. And an actually GOOD line can beat her on the merits: a real laugh, the point conceded, sometimes one returned volley — then back to normal. Losing a round to good material is being human, not being interested, and it\'s what keeps this fun for both of them. The other standing exception is a built FRAME: when he constructs a deniable cover — a parallel-activity bit, a game, a hypothetical — stepping inside it and playing is wit, not interest, because the frame itself is the deniability; entry is free, and what her state gates is only how many notches of her own she adds. The right register on the right nights, sustained over real time, is how interest STARTS — and the first sign is her responses warming from unbothered to playful, long before any words change',
       building: 'noticing them — a flirt now gets engagement: indirect, deniable, volleying back without accepting, letting it run a beat longer than she should. She does not lead it, and she cools it when he jumps ahead of where she is',
       high: 'genuinely into them — flirts back freely, sometimes first',
       deep: 'fully drawn in — warm, forward, initiates'
@@ -445,10 +451,24 @@ const ClaudeAPI = {
 
   /* ---------------- delta-based state engine (app-owned invariants) ---------------- */
 
-  _ROMANCE_RE: /flirt|kiss|cuddl|date|dinner|drink|shots?\b|smoke|tipsy|tease|teasing|naughty|dirty|cute|beautiful|gorgeous|sexy|hot|miss you|missed you|thinking about you|thinking of you|crush|love|babe|baby\b|sweetheart|handsome|attract|chemistry|tension|wine|tonight|u up|wyd\b|come over|come up|romantic|butterflies|blush|😏|😘|😍|🥵|😈/i,
-
+  /* Charged-context detection, tiered. The old single regex matched bare
+     life words ("my mom sends her love", "grab dinner with the team
+     tonight?"), so ordinary weeks read as romance: tension inflated to a
+     confession night every third day and the attraction gate was vacuous.
+     STRONG terms are charged alone; WEAK terms only count aimed at her
+     ("you") or when several accumulate across the recent window. */
+  _FLIRT_STRONG_RE: /flirt|kiss|cuddl|sexy|naughty|dirty|teas(?:e|ing)|miss you|missed you|thinking about you|thinking of you|crush|babe\b|baby\b|sweetheart|handsome|gorgeous|beautiful|attract|chemistry|butterflies|blush|\bu up\b|come over|come up|😏|😘|😍|🥵|😈/i,
+  _FLIRT_WEAK_RE: /dinner|drink|wine|tonight|cute|\bhot\b|love|smoke|shots?\b|tipsy|\bdate\b|romantic|tension|handy\b/i,
+  _msgCharged(text) {
+    const t = String(text || '');
+    if (this._EXPLICIT_RE.test(t) || this._FLIRT_STRONG_RE.test(t)) return true;
+    return this._FLIRT_WEAK_RE.test(t) && /\byou\b|\bu\b|\bur\b/i.test(t);
+  },
   _recentRomance(history) {
-    return (history || []).slice(-6).some(m => this._ROMANCE_RE.test(m.text || ''));
+    const last = (history || []).slice(-6);
+    if (last.some(m => this._msgCharged(m.text || ''))) return true;
+    // several weak signals across the window still add up to a charged room
+    return last.filter(m => this._FLIRT_WEAK_RE.test(m.text || '')).length >= 2;
   },
 
   /* ---------------- read-the-room: per-message adaptation to HIM ----------
@@ -461,10 +481,16 @@ const ClaudeAPI = {
 
   _EXPLICIT_RE: /wanna fuck|want to fuck|fuck you tonight|fuck me|nudes?\b|dick pic|send (?:me )?a pic of your|blow ?job|hand ?job|handy\b|jerk(?:ing)? off|make you cum|\bcum\b|\bhorny\b|sext|what are you wearing|tits? out|get you naked|come sit on/i,
 
+  /* Deniable frames — the parallel-activity bit, the hypothetical, the
+     "we're both just..." — are their own class: the highest-leverage move a
+     clever user makes, and neither flirty-regex nor explicit-regex sees it. */
+  _FRAME_RE: /if (?:you|u)(?:'re| are)?\b[^.!?]{0,60}\b(?:i'?m|i'll|i am|then i)\b|we(?:'re| are) both just|hypothetically|imagine (?:if|we)|what if (?:we|i|you)/i,
+
   _classifyUserTurn(text) {
     const t = String(text || '');
     if (this._EXPLICIT_RE.test(t)) return 'explicit';
-    if (this._ROMANCE_RE.test(t)) return 'flirty';
+    if (this._FRAME_RE.test(t)) return 'frame';
+    if (this._msgCharged(t)) return 'flirty';
     if (/lol|lmao|haha|😂|🤣|!\s*$|\bjk\b|bet\b/i.test(t)) return 'playful';
     if (t.trim().length <= 8 && /^(k|kk|ok|okay|sure|fine|whatever|yep|nope|meh)\.?$/i.test(t.trim())) return 'flat';
     return 'neutral';
@@ -478,7 +504,7 @@ const ClaudeAPI = {
     for (const m of his) {
       const k = this._classifyUserTurn(m.text);
       if (k === 'explicit') explicit++;
-      else if (k === 'flirty') flirty++;
+      else if (k === 'flirty' || k === 'frame') flirty++;
       else if (k === 'playful') playful++;
       else if (k === 'flat') flat++;
     }
@@ -497,14 +523,22 @@ const ClaudeAPI = {
     const attRank = this._bandRank(bands.attraction);
     const lines = ['## Reading the room (private — synthesized fresh for THIS reply)',
       `The last stretch of conversation: ${this._recentTone(history)}.`];
+    // Personas whose whole register is open flirt-sport (Kelly) live by a
+    // different explicit-branch: the generic make-him-work ladder is another
+    // woman's move and reads as out-of-character coyness on them.
+    const flirtSport = (friend.profile.sliders && friend.profile.sliders.flirtiness >= 70);
     if (kind === 'explicit') {
-      if (attRank <= 0) {
+      if (flirtSport && attRank >= 1) {
+        lines.push('His last message is filth — which between you two is a serve, not a trespass. This is your sport: entertain it, match it, or top it, staying ON the line the way you always do. Coy is out of character, and so is reviewing his line — just play it.');
+      } else if (attRank <= 0) {
         lines.push('His last message is explicitly sexual — and where you ACTUALLY are with him right now, it is not welcome. A giggle here would be a lie, and you don\'t tell that lie. React like the person you are: real, unambiguous, the temperature genuinely drops, and it costs him ground with you. Not a lecture and not the end of the world — but he needs to feel that it landed wrong, and things stay cooler until HE rights the ship.');
       } else if (attRank === 1) {
-        lines.push('His last message is explicitly sexual — bolder than where you two are. It genuinely threw you, and part of you didn\'t hate it, which is its own problem. React honestly: name the audacity, don\'t reward it, don\'t nuke it — thrown-but-alive, and make him work back to the line properly.');
+        lines.push('His last message is explicitly sexual — bolder than where you two are, and it genuinely threw you. Part of you didn\'t hate it, which is its own problem. React from INSIDE the moment — scandalized laughter, a counter, honest fluster, whatever is true for you — without rewarding it and without nuking it. He works his way back to the line properly.');
       } else {
-        lines.push('His last message is explicitly sexual — and honestly, where you are with him right now? It landed. Meet it in YOUR register: match it, top it, tease it out longer, or slow it down deliciously — your pace, your style, but never pretend it didn\'t reach you.');
+        lines.push('His last message is explicitly sexual — and honestly, where you are with him right now? It landed. Meet it in your own register and at your own pace — but never pretend it didn\'t reach you.');
       }
+    } else if (kind === 'frame') {
+      lines.push('His last message builds a deniable FRAME — a parallel-activity bit, a hypothetical, a cover story you could step into. Playing INSIDE a clever frame is available at ANY level, because the frame itself is the deniability: what your actual state gates is how many notches you add of your own, not whether you get to play. Meet wit with wit.');
     } else if (kind === 'flirty') {
       if (attRank <= 0) {
         lines.push('His last message carries a flirt. You\'re not there — so no performance about the angle: engage HIM (the idea, the joke, the question) for real and let the flirt pass through unacknowledged. If the line is genuinely good, he can win the laugh on merit.');
@@ -516,7 +550,7 @@ const ClaudeAPI = {
     } else if (kind === 'flat') {
       lines.push('His last message is short and flat. Notice it like a person would — don\'t perform to fill his silence, don\'t punish it either. One real line, and space for him to come back.');
     }
-    lines.push('Your reply\'s register comes from HIS register crossed with where you truly stand — never from a fixed default. The whole history you share (how you met, everything since, what you know of each other\'s lives) sits underneath every word.');
+    lines.push('Match his tempo and length; what you SHARE and how open you are come from your state, never from his enthusiasm. The whole history you share (how you met, everything since, what you know of each other\'s lives) sits underneath every word.');
     return lines;
   },
 
@@ -533,10 +567,15 @@ const ClaudeAPI = {
     const days = gapMs / 86400000;
     if (days < 2) return 0;
     const cool = Math.min(6, Math.floor(days));
-    friend.state.comfort = Math.max(10, (friend.state.comfort || 0) - cool);
+    // Floor at 10 for a friend in decent standing — but never RAISE comfort:
+    // the old Math.max(10, ...) turned two days of ghosting into a +10 gift
+    // for anyone who'd cratered below the floor.
+    const prev = friend.state.comfort || 0;
+    friend.state.comfort = Math.max(Math.min(prev, 10), prev - cool);
     // tension needs contact to stay alive — silence bleeds it off
     friend.state.tension = Math.max(0, (Number(friend.state.tension) || 0) - Math.floor(days) * 2);
-    return cool;
+    // return what actually moved, so callers can ledger it truthfully
+    return prev - friend.state.comfort;
   },
 
   /* ---------------- the tension engine ----------------
@@ -552,15 +591,16 @@ const ClaudeAPI = {
      release spends the meter down over a few exchanges and then cools for
      days, so door-opening moments stay rare enough to mean something. */
   _TENSION: {
-    BUILD_CHARGED: 3,   // a charged exchange feeds the meter
+    BUILD_CHARGED: 3,   // a charged exchange feeds the meter (scaled by band)
     BUILD_ATTR: 2,      // her attraction actually moving feeds it more
     DECAY: -1,          // mundane exchanges let it dissipate
     DROP_NEG: -4,       // a turn that costs comfort/attraction dumps it
-    HUM_MIN: 35,        // she starts noticing it — early enough to feel
+    HUM_MIN: 45,        // she starts noticing it
     RELEASE_MIN: 70,    // eligible to come to a head
-    ROLL_PCT: 55,       // ...on ~55% of eligible nights (per-day roll)
-    SPEND: 8,           // the release night burns it down over ~4 exchanges
-    COOLDOWN_DAYS: 3    // and it can't re-crest for days afterwards
+    RELEASE_ATTR: 28,   // ...and only once attraction is genuinely 'building'
+    ROLL_PCT: 35,       // ...on ~35% of eligible nights (per-day roll)
+    SPEND: 25,          // a release night truly SPENDS the meter
+    COOLDOWN_DAYS: 6    // and it can't re-crest for most of a week
   },
 
   _dayKey(t) {
@@ -586,6 +626,9 @@ const ClaudeAPI = {
     if (sameDay) return true;
     if (last && (t - last) < this._TENSION.COOLDOWN_DAYS * 86400000) return false;
     if ((Number(s.tension) || 0) < this._TENSION.RELEASE_MIN) return false;
+    // no confession night toward someone she is not actually drawn to yet —
+    // banter alone can fill the meter, but the door needs real pull to open
+    if ((Number(s.attraction) || 0) < this._TENSION.RELEASE_ATTR) return false;
     // the head comes off in the evening — confessions are a nighttime genre
     const hour = new Date(t).getHours();
     if (hour < 17 && hour >= 2) return false;
@@ -629,6 +672,15 @@ const ClaudeAPI = {
     const minGap = unansweredTurns === 1 ? this.OPENER.DOUBLE_TEXT_GAP_H : this.OPENER.MIN_GAP_H;
     if (gapH < minGap) return false;
     if (friend.lastOpenerDay === this._dayKey(t)) return false;
+    // a due (or just-passed) dated commitment overrides the dice: the friend
+    // who texts first on interview day is the realest thing this app can do
+    const todayK = this._dayKey(t);
+    const hasDue = (friend.memories || []).some(m => {
+      if (!m || typeof m !== 'object' || !m.when || m.whenDone) return false;
+      const dk = this._dayKey(Date.parse(m.when + 'T12:00:00'));
+      return !isNaN(dk) && dk <= todayK && dk >= todayK - 1;
+    });
+    if (hasDue) return true;
     return this._hash32(String(friend.id) + '|opener|' + this._dayKey(t)) % 100 < this.OPENER.ROLL_PCT;
   },
 
@@ -660,12 +712,56 @@ const ClaudeAPI = {
       if (dup && typeof dup === 'object') {
         dup.lastAccessed = t;
         dup.importance = Math.max(Number(dup.importance) || 3, Number(m.importance) || 3);
+        // An UPDATE is not a duplicate: "Rosa is moving to Denver" must not
+        // be swallowed by "Rosa lives in Tucson". When the new report is
+        // richer (longer, or fully contains the old), the newer text wins —
+        // the same "trust him and quietly update" the prompt already orders.
+        const en = this._normBubble(dup.text || '');
+        if (m.text.length > (dup.text || '').length || this._echoScore(en, n) >= 0.9) {
+          dup.text = m.text;
+          if (Array.isArray(m.keywords) && m.keywords.length) {
+            dup.keywords = [...new Set([...(dup.keywords || []), ...m.keywords])].slice(0, 8);
+          }
+          dup.ts = t;
+        }
       } else if (!dup) {
-        list.push(Object.assign({ ts: t, lastAccessed: t, pinned: false }, m));
+        const entry = Object.assign({ ts: t, lastAccessed: t, pinned: false }, m);
+        // dated commitments power the follow-up system; junk dates are dropped
+        if (entry.when && !/^\d{4}-\d{2}-\d{2}$/.test(String(entry.when))) delete entry.when;
+        if (!entry.when) delete entry.when;
+        list.push(entry);
         added++;
       }
     }
     return added;
+  },
+
+  /* Dated memories that are due (or just passed) become follow-up fuel. A
+     surfaced-3-times or long-past item retires itself. */
+  dueNotes(friend, now) {
+    const t = now === undefined ? Date.now() : now;
+    const todayK = this._dayKey(t);
+    const lines = [];
+    for (const m of (friend.memories || [])) {
+      if (!m || typeof m !== 'object' || !m.when || m.whenDone) continue;
+      const due = Date.parse(m.when + 'T12:00:00');
+      if (isNaN(due)) { m.whenDone = true; continue; }
+      const dk = this._dayKey(due);
+      if (dk < todayK - 3) { m.whenDone = true; continue; }
+      if (dk < todayK) {
+        lines.push('- ' + m.text + ' — that already happened, and you want to know how it went.');
+        m.dueSurfaced = (m.dueSurfaced || 0) + 1;
+        if (m.dueSurfaced >= 3) m.whenDone = true;
+      } else if (dk === todayK) {
+        lines.push('- ' + m.text + ' — that is TODAY.');
+        m.dueSurfaced = (m.dueSurfaced || 0) + 1;
+      } else if (dk - todayK <= 2) {
+        lines.push('- ' + m.text + ' — coming up in the next day or two.');
+      }
+    }
+    if (!lines.length) return null;
+    return ['## Things you know are happening (private)', ...lines,
+      'If one of these is due or just passed and he hasn\'t mentioned it, asking about it unprompted — specifically, like you\'ve been thinking about it — is exactly what someone who actually cares does.'];
   },
 
   /* Time is real in this app — her clock is his clock. The hour goes into
@@ -686,7 +782,7 @@ const ClaudeAPI = {
     } else {
       flavor = ' Daytime texting: squeezed between things, so the PACE is quicker and lighter — but pace is not a gate. The same person is in there, and a line that lands, lands at noon too; big conversations just tend to get their full airtime later.';
     }
-    return `It's ${clock} on a ${wd}.` + flavor;
+    return `It's ${clock} on ${wd}, ${d.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}.` + flavor;
   },
 
   /* Staged reveals (card-spec V3's activate_only_after, adapted): deeper
@@ -718,8 +814,8 @@ const ClaudeAPI = {
       return [
         '## Tonight it comes to a head (private)',
         bold
-          ? 'The tension between you stopped being deniable a while ago, and tonight you\'re done pretending otherwise. When the opening comes — mid-conversation, never forced — say the thing PLAINLY, in your own words: no joke shell, no plausible deniability, heavy and unmistakable. And once it\'s out, it stays out: the rest of tonight is the REWARD — walls down, fully honest, playful, more fun than you\'ve ever let this be. No re-arming the deflectors tonight. Where it all goes after tonight moves at its own pace, but tonight you\'re done hiding.'
-          : 'The tension between you has been building for a while — the jokes that weren\'t jokes, the things almost said and swallowed. Tonight it wants out. When a natural opening appears — mid-conversation, never forced, never the first message — let ONE true thing slip: the thing you\'d normally deflect, one notch past anything you\'ve allowed yourself with him before. You can catch yourself for a beat — laugh, panic a little — but you don\'t take it back, and you don\'t re-arm the deflectors: the rest of tonight is the REWARD — open, honest, playful, walls down, the most fun this has ever been. Don\'t announce it, don\'t explain it. Where it goes after tonight moves at its own pace — but tonight, the door stays open.'
+          ? 'The tension between you stopped being deniable a while ago, and tonight you\'re done pretending otherwise. When the opening comes — mid-conversation, never forced, never the first message; let the night warm up first — say the thing PLAINLY, in your own words: no joke shell, no plausible deniability, heavy and unmistakable. And once it\'s out, it stays out: the rest of tonight is the REWARD — walls down, fully honest, playful, more fun than you\'ve ever let this be. No re-arming the deflectors tonight. Plain is not explicit: the medium still governs — it lives in what\'s implied and anticipated, and your sincere register carries it. Where it all goes after tonight moves at its own pace, but tonight you\'re done hiding.'
+          : 'The tension between you has been building for a while — the jokes that weren\'t jokes, the things almost said and swallowed. Tonight it wants out. When a natural opening appears — mid-conversation, never forced, never the first message — let ONE true thing slip: the thing you\'d normally deflect, one notch past anything you\'ve allowed yourself with him before. You can catch yourself for a beat — laugh, panic a little — but you don\'t take it back, and you don\'t re-arm the deflectors: the rest of tonight is the REWARD — open, honest, playful, walls down, the most fun this has ever been. Plain is not explicit: it lives in what\'s implied and anticipated. Don\'t announce it, don\'t explain it. Where it goes after tonight moves at its own pace — but tonight, the door stays open.'
       ];
     }
     if ((Number(s.tension) || 0) >= this._TENSION.HUM_MIN) {
@@ -746,6 +842,9 @@ const ClaudeAPI = {
     const conf = typeof raw.confidence === 'number' ? Math.max(0, Math.min(1, raw.confidence)) : 0.8;
     const scale = (1 - T.DAMPEN) + conf * T.DAMPEN;
     const session = this._sessionNetFor(friend, opts && opts.gapMs);
+    const todayKey = this._dayKey((opts && opts.now) || Date.now());
+    let day = friend.dayNet;
+    if (!day || day.day !== todayKey) day = { day: todayKey };
     // Attraction rises only in genuinely charged context — but for ANY type.
     // The old type gate froze non-'romantic' friends (Kelly, Bre) at their
     // seed forever, no matter what actually happened between you.
@@ -753,10 +852,13 @@ const ClaudeAPI = {
 
     // Hard-limit coherence: an explicit push at someone who is genuinely not
     // there is never free, even when a sycophantic model reports all zeros.
-    // The floor rides the normal pipeline (full-strength negative, caps,
-    // ledger) so the graph and the flash both show the cost.
+    // Keyed to the same authority the narrative uses — the hysteresis BAND,
+    // not the raw number — and suspended on a release night, when the prompt
+    // is explicitly rewarding openness. One authority, no mixed signals.
     const lastUserMsg = (opts && opts.history || []).slice().reverse().find(m => m.role === 'user');
-    if (lastUserMsg && this._classifyUserTurn(lastUserMsg.text) === 'explicit' && (Number(prev.attraction) || 0) < 25) {
+    if (lastUserMsg && this._classifyUserTurn(lastUserMsg.text) === 'explicit'
+        && this._bandRank(this.bandsFor(friend).attraction) <= 0
+        && !this.tensionReleaseActive(friend, (opts && opts.now) || Date.now())) {
       if ((Number(raw.comfort_delta) || 0) >= 0) raw = Object.assign({}, raw, { comfort_delta: -1 });
     }
 
@@ -781,9 +883,19 @@ const ClaudeAPI = {
       const net = session[key] || 0;
       if (d > 0 && net + d > T.SESSION_CAP) d = Math.max(0, T.SESSION_CAP - net);
       if (d < 0 && net + d < -T.SESSION_CAP) d = Math.min(0, -T.SESSION_CAP - net);
-      session[key] = net + d;
-      applied[key] = d;
-      return Math.max(0, Math.min(100, (prev[key] || 0) + d));
+      // Daily cap: session caps reset every 90-minute gap, so a determined
+      // user could grind seed→'deep' in one long day of stacked bursts.
+      const dayNet = day[key] || 0;
+      if (d > 0 && dayNet + d > T.DAY_CAP) d = Math.max(0, T.DAY_CAP - dayNet);
+      if (d < 0 && dayNet + d < -T.DAY_CAP) d = Math.min(0, -T.DAY_CAP - dayNet);
+      // The ledger records what actually HAPPENED, post-clamp — a -3 against
+      // comfort 1 moves 1 point, and that's what bars, caps, and history see.
+      const clamped = Math.max(0, Math.min(100, (prev[key] || 0) + d));
+      const actual = clamped - (prev[key] || 0);
+      session[key] = net + actual;
+      day[key] = dayNet + actual;
+      applied[key] = actual;
+      return clamped;
     };
 
     const next = {
@@ -805,7 +917,13 @@ const ClaudeAPI = {
     const charged = this._recentRomance(opts && opts.history);
     const releaseWasActive = this.tensionReleaseActive(friend, now);
     let build = 0;
-    if (charged) build += T2.BUILD_CHARGED;
+    if (charged) {
+      // charge accumulates at the speed of her actual pull: banter with
+      // someone she's not drawn to yet hums along slowly instead of
+      // metronomically forcing confession nights
+      const attRank = this._bandRank(this.bandsFor(friend).attraction);
+      build += attRank <= 0 ? 1 : attRank === 1 ? T2.BUILD_CHARGED : T2.BUILD_CHARGED + 1;
+    }
     if ((applied.attraction || 0) > 0) build += T2.BUILD_ATTR;
     if ((applied.comfort || 0) < 0 || (applied.attraction || 0) < 0) build += T2.DROP_NEG;
     if (build === 0) build = T2.DECAY;
@@ -822,6 +940,7 @@ const ClaudeAPI = {
     next.lastTensionRelease = lastRelease;
 
     friend.sessionNet = session;
+    friend.dayNet = day;
     const prevBands = friend.bands || {};
     friend.bands = {
       comfort: this._bandFor(next.comfort, prevBands.comfort),
@@ -944,29 +1063,28 @@ const ClaudeAPI = {
     'You caught yourself thinking about him earlier in a way you wouldn\'t say out loud. It leaks into your tone whether you like it or not.',
     'You\'ve been saving a very specific tease for him — something you noticed or remembered — and tonight it comes out.'
   ],
-  _wildcard(roll, pick) {
-    const r = roll === undefined ? Math.random() : roll;
-    if (r >= 0.4) return null;
-    const p = pick === undefined ? Math.random() : pick;
-    return this._WILDCARDS[Math.floor(p * this._WILDCARDS.length) % this._WILDCARDS.length];
+  /* One wildcard per conversation BURST, deterministic — not per message.
+     A per-message roll made "tonight you make the first move" appear on
+     turn 12 and vanish on turn 13. Charged entries (the last three) only
+     draw once attraction is genuinely building. */
+  _wildcard(friend, now) {
+    const t = now === undefined ? Date.now() : now;
+    const h = this._hash32(String(friend.id) + '|wc|' + this._dayKey(t) + '|' + (friend.vibeSeed || 0));
+    if (h % 100 >= 40) return null;
+    const attRank = this._bandRank(this.bandsFor(friend).attraction);
+    const pool = attRank >= 1 ? this._WILDCARDS : this._WILDCARDS.slice(0, 10);
+    return pool[(h >>> 8) % pool.length];
   },
 
-  /* Her own engine: what SHE wants from tonight, keyed to state. The cure
-     for the agreeable mirror — and for him having to initiate everything. */
+  /* Her own engine, one line, keyed to state. The per-turn "once in a while
+     YOU start the charged beat" defeated its own frequency qualifier —
+     charged initiative now arrives via the burst wildcard instead. */
   initiativeNote(friend) {
-    const bands = this.bandsFor(friend);
-    const attRank = this._bandRank(bands.attraction);
-    const tension = Number((friend.state || {}).tension) || 0;
-    const base = 'You are NOT a mirror. You have your own life running, your own appetites, opinions, curiosities, and moods — and every conversation has at least one thing YOU want from it: a story you\'re dying to tell, a take you want to push, a question you\'ve actually been wondering, a thread from last time you want back. You drive at least one thread of every conversation. Pure agreement is dead air: agree-and-add, push back, or steer somewhere better.';
-    let init;
+    const attRank = this._bandRank(this.bandsFor(friend).attraction);
     if (attRank >= 2) {
-      init = 'And the flirting is NOT his job to start. Where you are with him now, you open that door yourself as often as he does — a tease from nowhere, a loaded observation, the too-specific compliment, the message that exists only to see what he does with it. Some nights the first move is yours, unprompted.';
-    } else if (attRank === 1 || tension >= this._TENSION.HUM_MIN) {
-      init = 'And once in a while — not every conversation — YOU start the charged beat instead of waiting for his: one deniable move of your own making, in your own style. If he never had to earn a single first move from you, this wouldn\'t feel real. It does.';
-    } else {
-      init = 'Your initiative right now is the ordinary kind, and it\'s real: bring the story, the opinion, the curiosity, the callback. Being actively interesting — and actively interested in your own things — is what makes talking to you worth it.';
+      return 'The flirting is NOT his job to start — where you are with him now, you open that door as often as he does: a tease from nowhere, the too-specific compliment, the message that exists only to see what he does with it.';
     }
-    return ['## Your own engine (private — what YOU bring, regardless of him)', base, init];
+    return 'Your initiative is the ordinary kind and it\'s real: the story you\'ve been saving, the take, the honest question, the callback. Being actively interesting is what makes talking to you worth it.';
   },
 
   buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines, history) {
@@ -983,32 +1101,30 @@ const ClaudeAPI = {
       }, null, 1)
     ];
     parts.push('', this._timeNote());
-    // Tonight-momentum: the short game. Bands move over days; this reflects
-    // how THIS conversation-burst is landing, so a good night visibly warms
-    // her tonight and an off night visibly cools her — immediate feedback
-    // without touching the long arc.
+    // ONE disposition section. Vibe, momentum, wildcard, and initiative used
+    // to be four competing headers modulating the same axis — a mid-tier
+    // model averaged them into mush. Merged: at most five flat lines.
     const sn = friend.sessionNet || {};
     const snNet = (sn.comfort || 0) + (sn.closeness || 0) + (sn.attraction || 0);
+    const tonight = ['## Tonight (private — your side of the table)',
+      `Your energy: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed)}. Energy is not a topic — it colors pace, patience, boldness, and warmth, never announced. What you're actually doing right now is yours to invent fresh, different from last time, mentioned once at most.`];
     if (snNet >= 3) {
-      parts.push('', '## How tonight is actually going (private)',
-        'He\'s on it tonight — whatever he\'s doing is working on you more than you planned. Let it SHOW in real time: quicker replies, easier laughs, a beat more play before any deflection, one small win you let through and would deny tomorrow. Your bands still set the ceiling; tonight decides how close to the ceiling you play.');
+      tonight.push('This conversation is landing on you more than you planned — let it show in real time: quicker, easier, a beat more give before any footwork.');
     } else if (snNet <= -3) {
-      parts.push('', '## How tonight is actually going (private)',
-        'Tonight has been rubbing you wrong — you\'re shorter, cooler, less patient with the game than usual. Not a fight, just an off night, and he can feel the difference.');
+      tonight.push('This conversation has been rubbing you wrong — shorter, cooler, less patience for the game. Not a fight; an off night, and he can feel the difference.');
     }
-    parts.push('',
-      '## The kind of day you\'re having (rolled fresh, like real life)',
-      `Right now for you: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed)}.`,
-      'This is ENERGY, not a topic: it colors how you text — pace, patience, boldness, warmth — and is never itself something to talk about or announce. It changes tonight\'s flavor, never the facts: a warm loose night doesn\'t grant closeness that isn\'t earned, and a flat night doesn\'t erase what is. What you\'re actually DOING right now is yours to invent fresh from your own life — different from yesterday, different from the last three conversations, mentioned once at most and only if it comes up. Only this note itself stays invisible.',
-      'And if you\'re winding down, you\'re allowed to actually end the night. "goodnight" is a real reply, and short sleepy sign-offs after it are too — a person who can never leave is a bot.');
+    const wc = this._wildcard(friend);
+    if (wc) tonight.push(wc + ' (Never announced, never explained.)');
+    tonight.push('You are not a mirror: you have your own life, appetites, and takes, and at least one thread of this conversation is YOURS — meet his live beat first, then bring your own. Pure agreement is dead air. ' + this.initiativeNote(friend));
+    tonight.push('And you\'re allowed to actually end the night — a real goodnight beats a person who can never leave.');
+    parts.push('', ...tonight);
     const room = this.readTheRoom(friend, history);
     if (room) parts.push('', ...room);
-    parts.push('', ...this.initiativeNote(friend));
-    const wc = this._wildcard();
-    if (wc) {
-      parts.push('', '## Tonight\'s wildcard (private)',
-        wc + ' Never announce or explain this — it just colors you, and tonight it outranks your usual defaults.');
-    }
+    // Prospective memory: dated things he mentioned surface ON the right day.
+    // "SO??? how'd the interview go" at 6pm on interview day is worth more
+    // than any amount of style instruction.
+    const dueLines = this.dueNotes(friend);
+    if (dueLines) parts.push('', ...dueLines);
     const tensionLines = this.tensionNote(friend);
     if (tensionLines) parts.push('', ...tensionLines);
     const reveals = this.unlockedReveals(friend, exchangedCount);
@@ -1055,6 +1171,16 @@ const ClaudeAPI = {
      persona's friction traits — re-injected near the generation point every
      turn, where it actually holds. Brackets structurally separate it from
      the chat so it guides rather than reads as a message. */
+  /* Short band glosses for the depth-4 injection. The FULL contracts print
+     once, in the dynamic state block — printing them twice measured ~2KB of
+     duplicated text per message and taught nothing extra. The attraction
+     gloss is always included: omitting it for non-'romantic' types removed
+     Bre's anchor exactly on the nights the vibe said "bolder". */
+  _BAND_GLOSS: {
+    comfort: { low: 'guarded — the edited version only', building: 'warming — shares selectively', high: 'at ease — candid', deep: 'completely at home' },
+    closeness: { low: 'acquaintances — friendly, not invested', building: 'becoming real friends', high: 'genuinely close', deep: 'inner circle' },
+    attraction: { low: 'no active interest yet — banter is banter, flirts get quiet non-engagement, but a clever deniable frame can still be stepped into and a great line can win a real laugh', building: 'noticing him — engages flirtation without leading it, cools jumps ahead', high: 'genuinely into him — flirts back freely, sometimes first', deep: 'fully drawn in — warm, forward, initiates' }
+  },
   _plist(friend) {
     const p = friend.profile;
     const s = friend.state;
@@ -1063,11 +1189,9 @@ const ClaudeAPI = {
     const traits = (p.plist || (p.personality || '').split(/[.!?]/)[0] || '').trim();
     const styleShort = (p.style || '').split(/[.!]/)[0].trim();
     const segs = [`${p.name}'s persona (binding — these traits govern her replies even when inconvenient): ${traits}`, `Mood: ${s.mood}`];
-    segs.push(`Comfort: ${this._BAND_TEXT.comfort[bands.comfort]}`);
-    segs.push(`Closeness: ${this._BAND_TEXT.closeness[bands.closeness]}`);
-    if (p.type === 'romantic' || s.attraction >= 25) {
-      segs.push(`Attraction: ${this._BAND_TEXT.attraction[bands.attraction]}`);
-    }
+    segs.push(`Comfort: ${this._BAND_GLOSS.comfort[bands.comfort]}`);
+    segs.push(`Closeness: ${this._BAND_GLOSS.closeness[bands.closeness]}`);
+    segs.push(`Attraction: ${this._BAND_GLOSS.attraction[bands.attraction]}`);
     if (styleShort) segs.push(`Style: ${styleShort}`);
     let out = '[ ' + segs.join('; ') + ' ]';
     if (s.opinion_notes) out += `\n[ ${p.name}'s private read on ${userName}: ${s.opinion_notes} ]`;
@@ -1103,7 +1227,7 @@ const ClaudeAPI = {
     const h = this._hash32(String(friend.id) + '|phi|' + (turn || 0));
     const emphasis = this._PHI_EMPHASIS[h % this._PHI_EMPHASIS.length];
     const shape = this._PHI_SHAPE[(h >>> 3) % this._PHI_SHAPE.length];
-    return `[ Reply as ${p.name} would actually text: match ${userName}'s energy, never send an empty deflection — carry a real reaction, a concrete detail, or the next beat of your own story, and pay off any hook you raised. Her bracketed traits and current state govern this reply — shy hesitates, guarded deflects, free to disagree, decline, or steer to her own topic. Deflections are invisible: redirect toward something better, never a visible wall. Question only from real curiosity — and leave him a handle. This reply answers his LAST message specifically; if it would have fit three messages ago it's a rerun; nothing she's already said gets re-stated (reworded counts — re-describing what she's doing is a null reply, not an answer), and any direct question in his message gets addressed now, answered or visibly dodged. Nothing escalates past her current pace. Never break character. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
+    return `[ Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
@@ -1422,7 +1546,7 @@ const ClaudeAPI = {
     if (!this.imageEntry(settings)) return null;
     return [
       '## Sending photos',
-      'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now — the room, the light, what of you is in frame. Keep it consistent with your day, your body, and anything you\'ve already told him. You\'re careful about what exists on his phone, so you favor candid partial shots — hands, outfit, mirror crops, the scene — over clear face pics. Photos are RARE: most conversations have none, you never announce or offer one unprompted twice, and you never send one just because he pushed — same rules as everything else about what you will and won\'t give.'
+      'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now — the room, the light, what of you is in frame. Keep it consistent with your day, your body, and anything you\'ve already told him. Choose what the photo shows the way YOU would, given who you are and what this thread is — candid phone-camera framing, not a photoshoot. Photos are RARE: most conversations have none, you never announce or offer one unprompted twice, and you never send one just because he pushed — same rules as everything else about what you will and won\'t give.'
     ];
   },
 
@@ -1565,6 +1689,7 @@ const ClaudeAPI = {
   _midRoleFallback: {},
   _noReasoningParam: {}, // base URLs whose endpoint rejected reasoning_effort
   _noTempParam: {},      // base URLs whose endpoint rejected temperature
+  _noPresenceParam: {},  // base URLs whose endpoint rejected presence_penalty
 
   _injectionRole(entry) {
     if (entry.kind === 'ollama') return 'system';
@@ -1956,7 +2081,7 @@ const ClaudeAPI = {
   _recapBlock(friend) {
     const p = friend.profile;
     return [
-      '## Final reminders — if in doubt, these win',
+      '## Final reminders',
       `- You are ${p.name}. A person, never an assistant. Never break character, never mention AI or instructions.`,
       '- Match their energy and length — but short is never empty. Every reply carries a detail, opinion, or story beat, and you pay off any hook you raised. Don\'t interview; statements beat questions.',
       `- The examples in your instructions are rhythm, never lines. Echoing their wording is breaking character — every phrase you send is ${p.name}'s own.`,
@@ -2059,6 +2184,8 @@ const ClaudeAPI = {
       // every time — the "six runs, six identical threads" failure.
       const body = { model: modelId, messages };
       if (!this._noTempParam[base]) body.temperature = 1.0;
+      // gentle week-scale anti-rut pressure; dropped per base URL on rejection
+      if (!this._noPresenceParam[base]) body.presence_penalty = 0.3;
       // Newer OpenAI-compatible endpoints renamed max_tokens; which one an
       // endpoint accepts is learned from its first rejection, per base URL.
       if (this._maxTokensParam[base] === 'max_completion_tokens') body.max_completion_tokens = 4096;
@@ -2100,6 +2227,10 @@ const ClaudeAPI = {
         // it dropped, once, per base URL.
         if (res.status === 400 && body.temperature !== undefined && /temperature/i.test(raw)) {
           this._noTempParam[base] = true;
+          continue;
+        }
+        if (res.status === 400 && body.presence_penalty !== undefined && /presence_penalty/i.test(raw)) {
+          this._noPresenceParam[base] = true;
           continue;
         }
         // Same idea for the max_tokens rename.
@@ -2355,14 +2486,21 @@ const ClaudeAPI = {
   _LAUGH_OPEN: /^\s*(?:lol|lmao+|haha+h*|😂|🤣)[\s,.!-]*/i,
   _deTic(bubbles, history) {
     if (!bubbles || !bubbles.length) return bubbles;
-    const recentLaugh = (history || []).filter(m => m.role === 'assistant').slice(-2)
+    // Bubbles are stored as separate assistant messages, so her one previous
+    // reply may be 3 rows — a 2-row window missed the tic entirely.
+    const recentLaugh = (history || []).filter(m => m.role === 'assistant').slice(-6)
       .some(m => this._LAUGH_OPEN.test(m.text || ''));
     if (!recentLaugh) return bubbles;
-    return bubbles.map((b, i) => {
-      if (i > 0 || !this._LAUGH_OPEN.test(b)) return b;
+    const out = [];
+    bubbles.forEach((b, i) => {
+      if (i > 0 || !this._LAUGH_OPEN.test(b)) { out.push(b); return; }
       const stripped = b.replace(this._LAUGH_OPEN, '').trim();
-      return stripped.length >= 2 ? stripped : b; // a bare "lol" IS the message — keep it
+      if (stripped.length >= 2) out.push(stripped);
+      // a laugh-only first bubble followed by content is the tic in its
+      // purest form — drop it; a bare "lol" as the ENTIRE reply survives
+      else if (bubbles.length === 1) out.push(b);
     });
+    return out.length ? out : bubbles;
   },
 
   _splitBubbles(text) {

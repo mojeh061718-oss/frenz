@@ -406,12 +406,12 @@ function relTrend(pts, key) {
    0-100 lines hide ±1 days completely; change bars make every day's
    movement visible, which is the entire point of checking the graph. */
 function relDailyDeltas(events, nDays = 14) {
-  const dayOf = ts => new Date(ts).toDateString();
+  // bucket on the engine's own 5am-rolled day, so a midnight-crossing release
+  // night lands in ONE bar instead of splitting across two
+  const dayOf = ts => ClaudeAPI._dayKey(ts);
+  const nowTs = Date.now();
   const days = [];
-  const now = new Date();
-  for (let i = nDays - 1; i >= 0; i--) {
-    days.push(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i).toDateString());
-  }
+  for (let i = nDays - 1; i >= 0; i--) days.push(dayOf(nowTs - i * 86400000));
   const idx = {};
   days.forEach((d, i) => { idx[d] = i; });
   const byDim = { closeness: new Array(nDays).fill(0), comfort: new Array(nDays).fill(0), attraction: new Array(nDays).fill(0), tension: new Array(nDays).fill(0) };
@@ -432,11 +432,12 @@ function relDailyDeltas(events, nDays = 14) {
   }
   for (const d of days) {
     if (d in tensionLast) {
-      byDim.tension[idx[d]] = tensionPrev == null ? 0 : tensionLast[d] - tensionPrev;
+      // no prior baseline → 0, so a first charged day shows its real climb
+      byDim.tension[idx[d]] = tensionLast[d] - (tensionPrev == null ? 0 : tensionPrev);
       tensionPrev = tensionLast[d];
     }
   }
-  return { days, byDim, firstLabel: new Date(days[0]).toLocaleDateString([], { month: 'short', day: 'numeric' }) };
+  return { days, byDim, firstLabel: new Date(nowTs - (nDays - 1) * 86400000).toLocaleDateString([], { month: 'short', day: 'numeric' }) };
 }
 
 function relBarsSvg(daily, key) {
@@ -773,8 +774,20 @@ async function sendMessage() {
   const lastTs = priorMsgs.length ? priorMsgs[priorMsgs.length - 1].ts : null;
 
   // a multi-day silence cools her comfort a little before we even ask —
-  // she noticed the absence
-  if (lastTs) ClaudeAPI.applyAbsenceDrift(friend, Date.now() - lastTs);
+  // she noticed the absence. It goes in the ledger like any other movement:
+  // an invisible drift made the graph disagree with the meter.
+  if (lastTs) {
+    const cooled = ClaudeAPI.applyAbsenceDrift(friend, Date.now() - lastTs);
+    if (cooled) {
+      DB.addEvent({
+        friendId: friend.id, ts: Date.now(), reason: 'absence — days without a word', confidence: 1,
+        deltas: { comfort: -cooled, closeness: 0, attraction: 0 },
+        applied: { comfort: -cooled, closeness: 0, attraction: 0 },
+        tension: Number(friend.state.tension) || 0,
+        after: { comfort: friend.state.comfort, closeness: friend.state.closeness, attraction: friend.state.attraction, tension: Number(friend.state.tension) || 0 }
+      }).catch(() => {});
+    }
+  }
 
   // a fresh conversation burst rerolls tonight's dice — same afternoon,
   // different sit-down, different her
@@ -1204,6 +1217,10 @@ async function upgradeTemplateFriends() {
     if (!f.profile.reveals || !f.profile.reveals.length) {
       const t = Personas.templates.find(x => x.name === f.profile.name);
       if (t && t.reveals) { f.profile.reveals = t.reveals; changed = true; }
+    }
+    {
+      const t = Personas.templates.find(x => x.name === f.profile.name);
+      if (t && t.established && !f.profile.established) { f.profile.established = true; changed = true; }
     }
     // One-time floor to the current template seed: a rounding bug froze all
     // positive state movement for weeks, so long-running friends sit at their
