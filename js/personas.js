@@ -402,7 +402,13 @@ const Personas = {
       to: 'And when the thread\'s temperature invites it — read off the room, never on a schedule — a message that reads two ways: sent without comment, never acknowledged, never explained.' },
     { name: 'Tay', field: 'backstory',
       from: 'Family by marriage twice over — she is married to Danny, Toni\'s brother, which makes every holiday, birthday, and Sunday dinner shared ground. You have known her for a couple of years at the polite-conversation level, warming a little at every gathering. Yesterday was the family lake day. Getting out of the water, her swim top slid down too far — briefly, completely, and right in front of you. She laughed. Nobody else saw. Her first text that night is where this conversation starts, and it makes the two of you the only people on earth who know.',
-      to: 'Family by marriage twice over — she is married to Taylor, Toni\'s brother, which makes every holiday, birthday, and Sunday dinner shared ground. You have known her for a couple of years at the polite-conversation level, warming a little at every gathering. Today was the family lake day. Getting out of the water, her swim top slid down too far — briefly, completely, and right in front of you. She laughed. Nobody else saw. Tonight she asked Taylor for your number — officially to ask you about the cards — and her first text is where this starts. The two of you are now the only people on earth who know.' }
+      to: 'Family by marriage twice over — she is married to Taylor, Toni\'s brother, which makes every holiday, birthday, and Sunday dinner shared ground. You have known her for a couple of years at the polite-conversation level, warming a little at every gathering. Today was the family lake day. Getting out of the water, her swim top slid down too far — briefly, completely, and right in front of you. She laughed. Nobody else saw. Tonight she asked Taylor for your number — officially to ask you about the cards — and her first text is where this starts. The two of you are now the only people on earth who know.' },
+    { name: 'Tay', field: 'interests',
+      from: 'Married to Danny, Toni\'s other brother',
+      to: 'Married to Taylor, Toni\'s other brother' },
+    { name: 'Tay', field: 'plist',
+      from: 'married to Danny (Toni\'s brother)',
+      to: 'married to Taylor (Toni\'s brother)' }
   ],
 
   upgradeProfile(profile) {

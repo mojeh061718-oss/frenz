@@ -1235,14 +1235,18 @@ async function upgradeTemplateFriends() {
   const friends = await DB.listFriends();
   for (const f of friends) {
     let changed = Personas.upgradeProfile(f.profile);
-    if (!f.profile.reveals || !f.profile.reveals.length) {
-      const t = Personas.templates.find(x => x.name === f.profile.name);
-      if (t && t.reveals) { f.profile.reveals = t.reveals; changed = true; }
+    const tpl = Personas.templates.find(x => x.name === f.profile.name);
+    // Reveals sync from the template wholesale: they are not user-editable
+    // (no editor field), so a stale copy is pure loss — and substring upgrade
+    // rules can't reach inside an array of objects, which is exactly how a
+    // corrected name survived in a friend's deepest layers.
+    if (tpl && tpl.reveals) {
+      if (JSON.stringify(f.profile.reveals || []) !== JSON.stringify(tpl.reveals)) {
+        f.profile.reveals = tpl.reveals;
+        changed = true;
+      }
     }
-    {
-      const t = Personas.templates.find(x => x.name === f.profile.name);
-      if (t && t.established && !f.profile.established) { f.profile.established = true; changed = true; }
-    }
+    if (tpl && tpl.established && !f.profile.established) { f.profile.established = true; changed = true; }
     // One-time floor to the current template seed: a rounding bug froze all
     // positive state movement for weeks, so long-running friends sit at their
     // day-one numbers no matter what actually happened between them. Friends
@@ -1256,7 +1260,31 @@ async function upgradeTemplateFriends() {
       changed = true;
     }
     if (changed) await DB.saveFriend(f);
+    if (tpl) await reseedGreeting(f, tpl);
   }
+}
+
+/* Her opening text is stored as real messages at creation, so no card rule can
+   ever correct it — a rewritten opener stays wrong forever on friends who
+   already exist. When the conversation genuinely hasn't started (she has said
+   her piece and he has never replied), the seed is safe to replace with the
+   current one: nothing of the relationship is lost, because none exists yet. */
+async function reseedGreeting(friend, tpl) {
+  const want = tpl.greeting || [];
+  if (!want.length) return;
+  const msgs = await DB.getMessages(friend.id);
+  if (!msgs.length) return;
+  if (msgs.some(m => m.role === 'user')) return;      // a real conversation — never touched
+  if (msgs.some(m => m.photo)) return;
+  const have = msgs.map(m => m.text);
+  if (have.length === want.length && have.every((t, i) => t === want[i])) return;
+  for (const m of msgs) await DB.deleteMessage(m.id);
+  const base = ClaudeAPI._now() - want.length * 1000;
+  for (let i = 0; i < want.length; i++) {
+    await DB.addMessage({ friendId: friend.id, role: 'assistant', text: want[i], ts: base + i * 1000 });
+  }
+  friend.lastPreview = want[want.length - 1];
+  await DB.saveFriend(friend);
 }
 
 function init() {
