@@ -892,6 +892,15 @@ async function sendMessage() {
 
   $('#typing').classList.remove('hidden');
   $('#chat-status').textContent = 'typing…';
+  // Slow must never look like dead: after 20s the status starts counting, so
+  // a long reasoning stall reads as "still working" instead of a hang.
+  const sentAt = Date.now();
+  const slowTick = setInterval(() => {
+    const s = Math.round((Date.now() - sentAt) / 1000);
+    if (s >= 20 && $('#chat-status').textContent.startsWith('typing')) {
+      $('#chat-status').textContent = `typing… (${s}s — long one)`;
+    }
+  }, 5000);
 
   try {
     const result = await ClaudeAPI.chat(friend, history, settings, lastTs, (attempt) => {
@@ -1003,6 +1012,7 @@ async function sendMessage() {
     $('#typing').classList.add('hidden');
     providerDown(err);
   } finally {
+    clearInterval(slowTick);
     sending = false;
     $('#btn-send').disabled = false;
     $('#chat-status').textContent = fmtClock();

@@ -1839,13 +1839,13 @@ const ClaudeAPI = {
     for (const a of attempts) {
       let res;
       try {
-        res = await fetch(a.url, {
+        res = await this._timedFetch(a.url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + entry.apiKey },
           body: JSON.stringify(a.body)
-        });
-      } catch {
-        lastErr = null; // transport/CORS — the next route may still work
+        }, this.TIMEOUTS.image, 'The image');
+      } catch (e) {
+        lastErr = e && e.timeout ? e : null; // transport/CORS — the next route may still work
         continue;
       }
       allTransport = false;
@@ -1877,7 +1877,7 @@ const ClaudeAPI = {
     const base = (entry.baseUrl || '').replace(/\/+$/, '');
     let res;
     try {
-      res = await fetch(base + '/images/generations', {
+      res = await this._timedFetch(base + '/images/generations', {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + entry.apiKey },
         body: JSON.stringify({
@@ -1888,8 +1888,9 @@ const ClaudeAPI = {
           aspect_ratio: this._nearestAspect(width, height),
           resolution: '1k'
         })
-      });
-    } catch {
+      }, this.TIMEOUTS.image, 'The image');
+    } catch (e) {
+      if (e && e.timeout) throw e;
       throw new Error("Couldn't reach xAI's image endpoint — check your internet. The chat models are unaffected.");
     }
     if (!res.ok) {
@@ -1930,8 +1931,12 @@ const ClaudeAPI = {
       + `?width=${width}&height=${height}&nologo=true&seed=${s}`;
     let res;
     try {
-      res = await fetch(url, { headers: { accept: 'image/*' } });
-    } catch {
+      res = await this._timedFetch(url, { headers: { accept: 'image/*' } }, this.TIMEOUTS.image, 'The free image service');
+    } catch (e) {
+      if (e && e.timeout) {
+        // the free host's overload mode is a hang, not an error — say so
+        throw new Error('The free image service is overloaded right now — her photo can wait. The chat is unaffected.');
+      }
       throw new Error("Couldn't reach the free image service — check your internet. The chat models are unaffected.");
     }
     if (!res.ok) {
@@ -2051,12 +2056,13 @@ const ClaudeAPI = {
     let res;
     const t0 = this._now();
     try {
-      res = await fetch(url, {
+      res = await this._timedFetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body)
-      });
-    } catch {
+      }, this.TIMEOUTS.chat, 'Claude');
+    } catch (e) {
+      if (e && e.timeout) throw e;
       const netErr = new Error('Connection problem — check your internet.');
       netErr.retryable = true;
       netErr.transport = true;
@@ -2814,6 +2820,34 @@ const ClaudeAPI = {
 
   /* ---------------- transports ---------------- */
 
+  /* Nothing here had a timeout, and the app holds a global send-lock while a
+     request runs — so one stalled fetch (a long reasoning stall, an
+     overloaded free image host, a dead radio) froze the app forever with no
+     error: "stops responding but doesn't fail". Every network call now runs
+     through this. A timeout throws a RETRYABLE transport error, so the
+     existing backoff/failover machinery turns a hang into a visible retry
+     and the send-lock always releases. */
+  TIMEOUTS: { chat: 150000, image: 90000, list: 20000, probe: 30000 },
+  async _timedFetch(url, opts, ms, what) {
+    const limit = ms || this.TIMEOUTS.chat;
+    const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ac ? setTimeout(() => ac.abort(), limit) : null;
+    try {
+      return await fetch(url, ac ? Object.assign({}, opts, { signal: ac.signal }) : opts);
+    } catch (e) {
+      if (ac && ac.signal.aborted) {
+        const err = new Error(`${what || 'The request'} took longer than ${Math.round(limit / 1000)}s — retrying…`);
+        err.retryable = true;
+        err.transport = true;
+        err.timeout = true;
+        throw err;
+      }
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
   // Per-base-URL adaptations learned from an endpoint's first rejection:
   // which structured-output rung it accepts, and what it calls max_tokens.
   _oaiFormat: {},
@@ -2880,8 +2914,9 @@ const ClaudeAPI = {
       let res;
       const t0 = this._now();
       try {
-        res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-      } catch {
+        res = await this._timedFetch(url, { method: 'POST', headers, body: JSON.stringify(body) }, this.TIMEOUTS.chat, 'Grok');
+      } catch (e) {
+        if (e && e.timeout) throw e;
         const err = new Error('Connection problem — check your internet (and the base URL in Settings).');
         err.retryable = true;
         err.transport = true;
@@ -3521,7 +3556,7 @@ const ClaudeAPI = {
           if (r.refusal) return null;
           return r.text || null;
         }
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
+        const res = await this._timedFetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -3586,7 +3621,7 @@ const ClaudeAPI = {
   async listModels(baseUrl, key) {
     const base = (baseUrl || '').replace(/\/+$/, '');
     const headers = key ? { authorization: 'Bearer ' + key } : {};
-    const res = await fetch(base + '/models', { headers });
+    const res = await this._timedFetch(base + '/models', { headers }, this.TIMEOUTS.list, 'The model list');
     if (!res.ok) {
       const err = new Error(res.status === 401 || res.status === 403
         ? 'Invalid API key for this provider.'
@@ -3702,7 +3737,7 @@ const ClaudeAPI = {
       const model = 'anthropic.' + String(entry.model).replace(/^anthropic\./, '');
       let res;
       try {
-        res = await fetch(`https://bedrock-mantle.${region}.api.aws/anthropic/v1/messages`, {
+        res = await this._timedFetch(`https://bedrock-mantle.${region}.api.aws/anthropic/v1/messages`, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -3735,7 +3770,7 @@ const ClaudeAPI = {
 
     // anthropic
     if (!settings.apiKey) throw new Error('Enter your API key first.');
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await this._timedFetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
