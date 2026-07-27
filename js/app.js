@@ -1156,8 +1156,8 @@ function openEntryEditor(id) {
     $('#e-img-region').value = e.imageRegion || '';
     $('#e-img-model').placeholder = isXai ? 'grok-imagine-image' : 'amazon.nova-canvas-v1:0';
     $('#e-imghint').textContent = isXai
-      ? 'grok-imagine-image (≈2¢/photo) or grok-imagine-image-quality (≈5¢). Same key as chat. Clear the field to turn photos off.'
-      : 'A Bedrock image model ID, e.g. amazon.nova-canvas-v1:0. Clear the field to turn photos off.';
+      ? 'grok-imagine-image (≈2¢/photo) or grok-imagine-image-quality (≈5¢), same key as chat. Or type pollinations for free photos via a keyless community service (photo descriptions go there, chats never do). Clear the field to turn photos off.'
+      : 'A Bedrock image model ID like amazon.nova-canvas-v1:0 (needs model access in the Bedrock console). No access? Type pollinations for free photos via a keyless community service (photo descriptions go there, chats never do). Clear the field to turn photos off.';
   }
   $('#e-modelhint').textContent = isBedrock
     ? 'Claude models are listed. For anything else on Bedrock — Grok, GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'

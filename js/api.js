@@ -1760,13 +1760,25 @@ const ClaudeAPI = {
     try { return /(^|\.)api\.x\.ai$/i.test(new URL(entry.baseUrl || '').hostname); } catch { return false; }
   },
 
+  /* 'pollinations' (or 'free') in the image-model field routes photos to the
+     keyless community image service — the escape hatch for keys that can't
+     reach any paid image model (e.g. a Bedrock account that won't grant
+     Nova Canvas access). Opt-in by typing it: photo descriptions leave for
+     a third-party service, so it is never defaulted on. */
+  _isFreeImageModel(m) { return /^(pollinations|free)$/i.test(String(m || '').trim()); },
+
   imageEntry(settings) {
     return ((settings && settings.pool) || []).find(e =>
-      e && e.enabled && e.apiKey && e.imageModel
-      && (e.kind === 'bedrock' || this._isXaiEntry(e))) || null;
+      e && e.enabled && e.imageModel
+      && (this._isFreeImageModel(e.imageModel)
+        || (e.apiKey && (e.kind === 'bedrock' || this._isXaiEntry(e))))) || null;
   },
 
   _IMAGE_NEGATIVE: 'professional studio photography, posed fashion model, perfect makeup, watermark, text, caption, logo, cartoon, illustration, 3d render, oversaturated, hdr, extra fingers, deformed hands',
+
+  // Inline avoid-clause for routes with no negativeText parameter (xAI,
+  // Pollinations) — same intent as _IMAGE_NEGATIVE, phrased as prose.
+  _IMAGE_AVOID: ' Not an illustration or 3d render; no text, watermarks, or logos.',
 
   _imagePrompt(desc) {
     return 'Candid amateur smartphone photo: ' + desc +
@@ -1788,6 +1800,7 @@ const ClaudeAPI = {
     const width = o.width || 768, height = o.height || 1280;
     const prompt = (o.raw ? description : this._imagePrompt(description)).slice(0, 1000);
 
+    if (this._isFreeImageModel(model)) return this._pollinationsImage(prompt, width, height);
     if (this._isXaiEntry(entry)) return this._xaiImage(entry, model, prompt, width, height);
 
     const attempts = [
@@ -1854,7 +1867,7 @@ const ClaudeAPI = {
         headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + entry.apiKey },
         body: JSON.stringify({
           model,
-          prompt: prompt + ' Not an illustration or 3d render; no text, watermarks, or logos.',
+          prompt: prompt + this._IMAGE_AVOID,
           n: 1,
           response_format: 'b64_json',
           aspect_ratio: this._nearestAspect(width, height),
@@ -1885,6 +1898,34 @@ const ClaudeAPI = {
       return 'data:' + (item.mime_type || 'image/png') + ';base64,' + item.b64_json;
     }
     throw new Error('xAI answered but returned no image' + (data && data.error ? ' — ' + String(data.error.message || data.error).slice(0, 180) : '.'));
+  },
+
+  /* Keyless route: image.pollinations.ai serves FLUX-family generations over
+     a plain GET (CORS *, verified live). No auth, no params beyond the URL;
+     the random seed keeps repeat photo requests from returning the same
+     frame. Response is raw image bytes → dataURL, same contract as the
+     other routes. */
+  async _pollinationsImage(prompt, width, height) {
+    const url = 'https://image.pollinations.ai/prompt/'
+      + encodeURIComponent((prompt + this._IMAGE_AVOID).slice(0, 800))
+      + `?width=${width}&height=${height}&nologo=true&seed=${Math.floor(Math.random() * 1e9)}`;
+    let res;
+    try {
+      res = await fetch(url, { headers: { accept: 'image/*' } });
+    } catch {
+      throw new Error("Couldn't reach the free image service — check your internet. The chat models are unaffected.");
+    }
+    if (!res.ok) {
+      throw new Error(res.status === 429
+        ? 'The free image service is busy right now — her photo can wait a minute.'
+        : `The free image service failed (${res.status}) — try again, or set a paid image model in Settings.`);
+    }
+    const mime = ((res.headers && res.headers.get && res.headers.get('content-type')) || 'image/jpeg').split(';')[0];
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (!buf.length) throw new Error('The free image service returned an empty image — try again.');
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return 'data:' + mime + ';base64,' + btoa(bin);
   },
 
   /* Cheap 512px probe for the settings screen: proves key + model access +
