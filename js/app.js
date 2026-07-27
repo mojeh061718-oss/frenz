@@ -589,7 +589,6 @@ async function maybeOpener(friend, background) {
         const p = await deliverBubble(friend, b, openerTs);
         if (p) openerPreviews.push(p);
       }
-      maybeFallbackNote(result);
     }
     if (result.state) {
       const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, { history, gapMs: ClaudeAPI._now() - last.ts });
@@ -723,26 +722,25 @@ function plausiblePastTs(friend, lastTs) {
   return Math.max(lastTs + 60000, Math.min(ts, now - 5 * 60000));
 }
 
-/* ---- provider-downgrade visibility ----
-   When the provider the user actually set up (Bedrock, Anthropic, any keyed
-   entry) fails or is cooling down and a FREE backup model writes the reply,
-   the voice quality visibly drops — and with no explanation it reads as the
-   personas regressing. Surface it: one small transient line in the chat,
-   naming who was skipped, why, and who answered. Throttled so an outage
-   doesn't stamp every message. */
-let fallbackNoteAt = 0;
-function maybeFallbackNote(result) {
-  if (!result || result.providerKeyed) return; // the good provider answered
-  const skippedKeyed = (result.skipped || []).filter(s => s.keyed);
-  if (!skippedKeyed.length) return;            // nothing better exists to miss
-  if (ClaudeAPI._now() - fallbackNoteAt < 10 * 60000) return;
-  fallbackNoteAt = ClaudeAPI._now();
-  const s = skippedKeyed[0];
-  const note = document.createElement('div');
-  note.className = 'msg sys transient-note';
-  note.textContent = `⚠️ ${s.label} didn't answer (${s.reason}) — a free backup model (${result.provider}) wrote this, so her voice may be off until it recovers. It retries automatically.`;
-  $('#chat-messages').appendChild(note);
-  scrollChat();
+/* ---- provider-down badge ----
+   There is no second provider to quietly swap in any more, so an outage is
+   reported rather than hidden. The badge is persistent, not a toast: it stays
+   in the corner until a message actually goes through, because the honest
+   state of the app while Grok is unreachable is "not working", and a
+   notification that scrolls away tells you that for two seconds. */
+function providerDown(err) {
+  const el = $('#provider-down');
+  if (!el) return;
+  const status = err && err.status;
+  el.querySelector('.pd-code').textContent = status ? String(status) : '404';
+  el.querySelector('.pd-text').textContent = (err && err.message) || 'Grok is unreachable';
+  el.title = (err && err.message) || 'Grok is unreachable — tap to open Settings';
+  el.classList.remove('hidden');
+}
+
+function providerUp() {
+  const el = $('#provider-down');
+  if (el) el.classList.add('hidden');
 }
 
 /* ---- her photos (Bedrock image model, optional) ----
@@ -836,8 +834,8 @@ async function sendMessage() {
 
   const settings = Settings.get();
   if (!ClaudeAPI.activeEntries(settings).length) {
-    toast('No provider configured — add a key in Settings');
-    showView('view-settings');
+    providerDown({ status: 401, message: 'No Grok key yet — tap to add one' });
+    openSettings();
     return;
   }
 
@@ -894,6 +892,7 @@ async function sendMessage() {
     const result = await ClaudeAPI.chat(friend, history, settings, lastTs, (attempt) => {
       $('#chat-status').textContent = `reconnecting… (${attempt})`;
     });
+    providerUp();   // something came back, so whatever was wrong isn't any more
 
     if (result.refusal) {
       // Not persisted — a hiccup here shouldn't leave a permanent scar in the
@@ -930,7 +929,6 @@ async function sendMessage() {
       const p = await deliverBubble(friend, b);
       if (p) previews.push(p);
     }
-    maybeFallbackNote(result);
 
     // apply the friend's private state deltas — the model proposes, the app
     // disposes (clamps, dampens, gates, caps). Persisted, never displayed.
@@ -983,7 +981,7 @@ async function sendMessage() {
     }
   } catch (err) {
     $('#typing').classList.add('hidden');
-    toast(err.message || 'Something went wrong', 5000);
+    providerDown(err);
   } finally {
     sending = false;
     $('#btn-send').disabled = false;
@@ -1004,9 +1002,6 @@ function openSettings() {
   const s = Settings.get();
   poolDraft = JSON.parse(JSON.stringify(s.pool));
   selectedEntryId = null;
-  $('#s-apikey').value = s.apiKey;
-  $('#s-model').value = s.model;
-  $('#s-effort').value = s.effort;
   $('#entry-editor').classList.add('hidden');
   $('#e-test-result').textContent = '';
   renderPool();
@@ -1026,32 +1021,19 @@ function renderTimeStatus() {
 
 function saveSettings() {
   const s = Settings.get();
-  const hadKey = !!s.apiKey;
-  s.apiKey = $('#s-apikey').value.trim();
-  s.model = $('#s-model').value;
-  s.effort = $('#s-effort').value;
   const before = Settings.get();
   if (poolDraft) s.pool = poolDraft;
 
-  // Adding a key to ANY provider is the quality upgrade — Claude, Gemini,
-  // Groq, whatever. Promote it above the keyless tier so it actually answers,
-  // instead of parking it below models it was chosen to beat.
-  const newlyKeyed = s.pool.filter(e => {
-    if (!entryHasKey(e, s)) return false;
-    const prior = e.kind === 'anthropic'
-      ? (hadKey ? e : null)
-      : (before.pool || []).find(p => p.id === e.id && p.apiKey && p.apiKey.trim());
-    return !prior;
-  });
+  // Whichever Grok route you just keyed is the one you meant to use, so it
+  // goes to the front — the other stays as a slot you can key later.
+  const newlyKeyed = s.pool.filter(e =>
+    entryHasKey(e) && !(before.pool || []).some(p => p.id === e.id && p.apiKey && p.apiKey.trim()));
 
   if (newlyKeyed.length) {
-    // Straight to the front. Configuring a provider is an explicit choice, so
-    // it should take effect immediately rather than landing behind whatever
-    // was there before — and it stays reorderable afterwards.
     const ids = new Set(newlyKeyed.map(e => e.id));
     s.pool = [...s.pool.filter(e => ids.has(e.id)), ...s.pool.filter(e => !ids.has(e.id))];
     Settings.set(s);
-    toast(`${newlyKeyed[0].label} key saved — it answers first now`);
+    toast(`${newlyKeyed[0].label} key saved`);
   } else {
     Settings.set(s);
     toast('Settings saved');
@@ -1067,13 +1049,8 @@ function renderPool() {
     row.className = 'pool-row' + (e.id === selectedEntryId ? ' selected' : '');
     const info = ClaudeAPI.usageInfo(e);
     const preset = e.preset ? ClaudeAPI.POOL_PRESETS[e.preset] : null;
-    let sub;
-    if (e.kind === 'anthropic') {
-      sub = $('#s-apikey').value.trim() ? $('#s-model').value : 'optional — add a key below for the best personas';
-    } else {
-      sub = e.model || 'not configured yet';
-      if (preset && preset.keyless) sub += ' · no key needed';
-    }
+    let sub = e.model || 'not configured yet';
+    if (!entryHasKey(e)) sub += ' · needs a key';
     if (info.rpdHint) sub += ` · ${info.requestsToday}/${info.rpdHint} today`;
     else if (info.requestsToday) sub += ` · ${info.requestsToday} today`;
     if (info.blockedUntil) sub += ' · capped until ' + fmtTime(info.blockedUntil);
@@ -1086,7 +1063,7 @@ function renderPool() {
       <div class="pool-actions">
         <button type="button" class="icon-btn" data-act="up" title="Higher priority">↑</button>
         <button type="button" class="icon-btn" data-act="down" title="Lower priority">↓</button>
-        ${e.kind === 'anthropic' ? '' : '<button type="button" class="icon-btn" data-act="edit" title="Configure">⚙</button>'}
+        <button type="button" class="icon-btn" data-act="edit" title="Configure">⚙</button>
       </div>`;
     row.querySelector('input[type=checkbox]').addEventListener('change', (ev) => { e.enabled = ev.target.checked; });
     row.querySelector('[data-act=up]').addEventListener('click', () => movePoolEntry(i, -1));
@@ -1119,26 +1096,14 @@ function addPreset(name) {
     enabled: true
   };
   if (preset.kind === 'bedrock') entry.region = 'us-east-1';
-  if (name !== 'custom') entry.preset = name;
-  // A provider you deliberately add is an upgrade over the keyless tier, so it
-  // goes above it rather than at the bottom where it would rarely be reached.
-  const at = poolDraft.findIndex(isKeylessEntry);
-  if (at >= 0) poolDraft.splice(at, 0, entry); else poolDraft.push(entry);
+  entry.preset = name;
+  poolDraft.push(entry);
   renderPool();
   openEntryEditor(entry.id);
 }
 
-/* Keyless entries always work but are the weakest models — they're the floor,
-   not the preference. Anything you've given a key to should outrank them. */
-function isKeylessEntry(e) {
-  const p = e && e.preset ? ClaudeAPI.POOL_PRESETS[e.preset] : null;
-  return !!(p && p.keyless);
-}
-
-function entryHasKey(e, settings) {
-  if (!e) return false;
-  if (e.kind === 'anthropic') return !!(settings && settings.apiKey);
-  return !!(e.apiKey && e.apiKey.trim());
+function entryHasKey(e) {
+  return !!(e && e.apiKey && String(e.apiKey).trim());
 }
 
 function openEntryEditor(id) {
@@ -1150,10 +1115,10 @@ function openEntryEditor(id) {
   $('#e-label').value = e.label || '';
   $('#e-url').value = e.baseUrl || '';
   $('#e-key').value = e.apiKey || '';
-  $('#e-keyhint').textContent = preset ? preset.keyHint : (e.kind === 'ollama' ? 'No key needed.' : 'Some local endpoints need no key.');
-  $('#e-key-label').classList.toggle('hidden', e.kind === 'ollama' || !!(preset && preset.keyless));
+  $('#e-keyhint').textContent = preset ? preset.keyHint : 'Paste the key for this endpoint.';
+  $('#e-key-label').classList.remove('hidden');
   $('#e-model').value = e.model || '';
-  $('#e-ctx').value = e.contextTokens || 8000;
+  $('#e-ctx').value = e.contextTokens || 1000000;
   $('#e-test-result').textContent = '';
   // Bedrock is addressed by region rather than a base URL, and its model list
   // is fixed rather than fetched.
@@ -1223,13 +1188,12 @@ function renderPoolStatus() {
   const last = ClaudeAPI.lastServed();
   if (last) parts.push('Last message served by ' + last.label + '.');
   for (const e of poolDraft) {
-    if (e.kind === 'anthropic') continue;
     const info = ClaudeAPI.usageInfo(e);
     if (info.requestsToday || info.rpdHint) {
       parts.push(`${e.label}: ${info.requestsToday}${info.rpdHint ? ' of ~' + info.rpdHint : ''} requests today.`);
     }
   }
-  parts.push('Free-tier limits change without warning — the app reads each provider\'s live rate-limit headers and adapts rather than trusting fixed numbers.');
+  parts.push('There is no second provider behind this one — if Grok is down you will be told, not quietly handed a weaker model.');
   $('#pool-status').textContent = parts.join(' ');
 }
 
@@ -1269,25 +1233,6 @@ function healStoredSettings() {
     }
   }
   if (changed) Settings.set(s);
-}
-
-/* Older builds auto-picked Gemini flash-lite (chosen for its bigger daily
-   quota). It is markedly worse at holding a persona, so a stored lite entry
-   upgrades itself to the best non-lite flash — from the LIVE model list, so
-   we only ever set a model this key can actually reach. Fire-and-forget. */
-async function upgradeGeminiModel() {
-  const s = Settings.get();
-  const e = (s.pool || []).find(x => x.preset === 'gemini' && x.apiKey && /flash-lite/i.test(x.model || ''));
-  if (!e) return;
-  try {
-    const models = await ClaudeAPI.listModels(e.baseUrl, e.apiKey);
-    const best = ClaudeAPI.pickDefaultModel(models, 'gemini');
-    if (best && !/flash-lite/i.test(best) && best !== e.model) {
-      e.model = best;
-      Settings.set(s);
-      toast('Gemini switched to ' + best + ' — the stronger model for conversation.', 5000);
-    }
-  } catch { /* live list unavailable — keep what works */ }
 }
 
 /* A now-fixed bug let the model's private-state JSON render as chat bubbles
@@ -1383,7 +1328,6 @@ async function reseedGreeting(friend, tpl) {
 
 function init() {
   healStoredSettings();
-  upgradeGeminiModel();
   purgeStateArtifacts();
   upgradeTemplateFriends();
   $('#btn-new-friend').addEventListener('click', openGallery);
@@ -1426,6 +1370,7 @@ function init() {
     if (document.visibilityState === 'visible' && !sending) sweepOpeners();
   });
   $('#btn-settings').addEventListener('click', openSettings);
+  $('#provider-down').addEventListener('click', () => { providerUp(); openSettings(); });
   $('#btn-skip-6h').addEventListener('click', () => {
     ClaudeAPI.addTimeOffset(6 * 3600000);
     renderTimeStatus(); updateChatClock();
@@ -1466,7 +1411,7 @@ function init() {
   });
   $('#e-ctx').addEventListener('input', () => {
     const e = draftEntry(selectedEntryId);
-    if (e) e.contextTokens = parseInt($('#e-ctx').value, 10) || 8000;
+    if (e) e.contextTokens = parseInt($('#e-ctx').value, 10) || 1000000;
   });
   $('#e-region').addEventListener('input', () => {
     const e = draftEntry(selectedEntryId);
@@ -1511,7 +1456,7 @@ function init() {
       out.textContent = r.message;
       // never discover a too-small window mid-conversation: shrink the budget
       // to the detected context if needed
-      if (r.context && r.context < (parseInt($('#e-ctx').value, 10) || 8000)) {
+      if (r.context && r.context < (parseInt($('#e-ctx').value, 10) || 1000000)) {
         e.contextTokens = Math.max(2000, r.context - 1024);
         $('#e-ctx').value = e.contextTokens;
         out.textContent += ' · budget lowered to fit';

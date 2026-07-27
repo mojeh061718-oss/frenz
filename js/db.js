@@ -128,23 +128,19 @@ const DB = {
 
 /* settings live in localStorage.
 
-   Providers are a POOL, not a picker: an ordered list of entries tried top to
-   bottom, with automatic failover on rate limits / daily caps / outages (never
-   on a content refusal — that's the provider's call and it stands). The
-   Anthropic entry's credentials live in the top-level apiKey/model/effort
-   fields; free-pool entries carry their own config. */
+   One provider: Grok, by whichever route your key takes — xAI direct, or Grok
+   hosted on AWS Bedrock. There is no failover pool behind it any more. A pool
+   silently swapped in a weaker model whenever the good one hiccuped, and the
+   only symptom was that she suddenly wrote badly; one provider that says "I
+   couldn't reach Grok" is worth more than three that quietly write worse. */
 const DEFAULT_SETTINGS = {
   apiKey: '', model: 'claude-opus-5', effort: 'low',
-  // Fresh install: keyless providers preconfigured and enabled at the top —
-  // the app holds a real conversation with ZERO setup. LLM7 and OpenCode Zen
-  // verified keyless; Pollinations' anonymous tier is documented keyless.
-  // The Anthropic entry rides along unconfigured and is skipped until a key
-  // is added (at which point it's promoted to the front — see saveSettings).
+  // Both routes ship disabled-until-keyed: Grok has no keyless tier, so a
+  // fresh install genuinely cannot talk until a key is in. The entries exist
+  // so Settings shows two labelled slots to paste into rather than a blank.
   pool: [
-    { id: 'llm7', kind: 'openai', preset: 'llm7', label: 'LLM7 (no key)', baseUrl: 'https://api.llm7.io/v1', apiKey: '', model: 'gpt-oss:20b', contextTokens: 16000, enabled: true },
-    { id: 'pollinations', kind: 'openai', preset: 'pollinations', label: 'Pollinations (no key)', baseUrl: 'https://text.pollinations.ai/openai', apiKey: '', model: 'openai-fast', contextTokens: 12000, enabled: true },
-    { id: 'zen', kind: 'openai', preset: 'zen', label: 'OpenCode Zen (no key)', baseUrl: 'https://opencode.ai/zen/v1', apiKey: '', model: 'big-pickle', contextTokens: 12000, enabled: true },
-    { id: 'anthropic', kind: 'anthropic', label: 'Anthropic (Claude)', enabled: true }
+    { id: 'grok', kind: 'openai', preset: 'grok', label: 'Grok (xAI)', baseUrl: 'https://api.x.ai/v1', apiKey: '', model: 'grok-4-fast-reasoning', contextTokens: 1000000, enabled: true },
+    { id: 'bedrock', kind: 'bedrock', preset: 'bedrock', label: 'Grok (AWS Bedrock)', apiKey: '', model: 'xai.grok-4-fast-reasoning-v1:0', region: 'us-east-1', contextTokens: 1000000, enabled: true }
   ]
 };
 
@@ -153,19 +149,25 @@ const Settings = {
     let stored;
     try { stored = JSON.parse(localStorage.getItem('frenz-settings') || '{}'); } catch { stored = {}; }
     const s = Object.assign({}, DEFAULT_SETTINGS, stored);
-    if (!Array.isArray(s.pool) || !s.pool.length) {
-      s.pool = DEFAULT_SETTINGS.pool.map(e => Object.assign({}, e));
-    }
-    if (!s.pool.some(e => e.kind === 'anthropic')) {
-      s.pool.unshift({ id: 'anthropic', kind: 'anthropic', label: 'Anthropic (Claude)', enabled: true });
-    }
-    // Existing installs gain any missing keyless entries at the BOTTOM —
-    // they only serve when everything the user configured is unavailable,
-    // so an existing setup is never silently demoted.
+    if (!Array.isArray(s.pool)) s.pool = [];
+    // Retired providers are dropped rather than left dangling: their preset
+    // no longer exists, so they'd have no budget, no key hint, and no model
+    // list behind them. A Bedrock entry the user already keyed SURVIVES —
+    // that's the route their AWS credits are on, whatever model it names.
+    const RETIRED = ['llm7', 'pollinations', 'zen', 'gemini', 'groq', 'cerebras', 'openrouter', 'ollama', 'custom'];
+    s.pool = s.pool.filter(e => e && e.kind !== 'anthropic' && RETIRED.indexOf(e.preset) < 0);
+    // Both Grok slots always exist so Settings has somewhere to paste a key.
     for (const def of DEFAULT_SETTINGS.pool) {
-      if (def.preset && !s.pool.some(e => e.preset === def.preset || e.id === def.id)) {
+      if (!s.pool.some(e => e.preset === def.preset || e.id === def.id)) {
         s.pool.push(Object.assign({}, def));
       }
+    }
+    // A budget saved under an old provider's ceiling (or hand-set low, like
+    // 25k) keeps squeezing the prompt for no reason: Grok's window is 1M.
+    // Anything below 100k is an artifact of the old pool, not a choice that
+    // makes sense against this model, so it is raised once on load.
+    for (const e of s.pool) {
+      if (!(parseInt(e.contextTokens, 10) > 0) || parseInt(e.contextTokens, 10) < 100000) e.contextTokens = 1000000;
     }
     return s;
   },

@@ -201,18 +201,12 @@
         <span></span>
       </header>
       <div class="form scroll-area">
-        <h3>Providers — works out of the box, no account needed</h3>
-        <p class="muted small">frenz ships with free keyless providers already set up: install it, open a conversation, she answers. Providers are tried top to bottom — if one is rate-limited, capped, or down, the next takes over mid-send. Free providers may log or train on your conversations, and their limits change without warning.</p>
-        <p class="muted small"><b>Optional upgrade:</b> keyless models are smaller, so personas are simpler and the subtext lands less reliably. Adding a free key (Gemini, Groq, Cerebras, OpenRouter — no card required) makes them sharper; an Anthropic key below is the full experience.</p>
+        <h3>Provider — Grok</h3>
+        <p class="muted small">One model, two routes: paste an xAI key, or an AWS Bedrock key if that's where your credits are. Whichever one is keyed is the one that answers. There is no failover behind it on purpose — a pool used to swap in a weaker model whenever Grok hiccuped, and the only thing you'd notice was that she started writing badly. If Grok can't be reached now, you get a plain error in the corner instead.</p>
         <div id="pool-list" class="pool-list"></div>
         <div class="preset-row">
-          <button type="button" class="btn-secondary btn-preset" data-preset="bedrock">+ AWS Bedrock</button>
-          <button type="button" class="btn-secondary btn-preset" data-preset="gemini">+ Gemini</button>
-          <button type="button" class="btn-secondary btn-preset" data-preset="groq">+ Groq</button>
-          <button type="button" class="btn-secondary btn-preset" data-preset="cerebras">+ Cerebras</button>
-          <button type="button" class="btn-secondary btn-preset" data-preset="openrouter">+ OpenRouter</button>
-          <button type="button" class="btn-secondary btn-preset" data-preset="ollama">+ Ollama</button>
-          <button type="button" class="btn-secondary btn-preset" data-preset="custom">+ Custom</button>
+          <button type="button" class="btn-secondary btn-preset" data-preset="grok">+ Grok (xAI)</button>
+          <button type="button" class="btn-secondary btn-preset" data-preset="bedrock">+ Grok (AWS Bedrock)</button>
         </div>
 
         <div id="entry-editor" class="entry-editor hidden">
@@ -237,7 +231,7 @@
           </label>
           <label>Context budget (tokens)
             <input type="number" id="e-ctx" min="2000" step="1000">
-            <small>How much is sent per message. Her persona, private state, and the most relevant memories always fit first; older chat folds into scene records she keeps.</small>
+            <small>How much may be sent per message. Grok's window is 1M tokens, so nothing gets squeezed: her whole character, her private state, her memories and the full thread all fit with room to spare. This is a ceiling, not a target — a short conversation still sends a short prompt, and you're only billed for what's actually sent. Lowering it below 10k puts her into a stripped-down mode that noticeably flattens her, so don't unless you have to.</small>
           </label>
           <div id="e-image-wrap" class="hidden">
             <label>Image model — lets her send photos (optional)
@@ -260,27 +254,6 @@
 
         <small id="pool-status" class="muted"></small>
 
-        <hr>
-        <h3>Anthropic (Claude) — optional, the quality ceiling</h3>
-        <label>Anthropic API key
-          <input type="password" id="s-apikey" placeholder="sk-ant-...">
-          <small>Stored only on this device. Your conversations go directly from your browser to the Claude API — no middleman server. Get a key at <b>console.anthropic.com</b>.</small>
-        </label>
-        <label>Model
-          <select id="s-model">
-            <option value="claude-fable-5">Claude Fable 5 — the most lifelike, ~2× the cost of Opus 5</option>
-            <option value="claude-opus-5">Claude Opus 5 — excellent (default)</option>
-            <option value="claude-sonnet-5">Claude Sonnet 5 — fast &amp; cheaper</option>
-            <option value="claude-haiku-4-5">Claude Haiku 4.5 — fastest, most affordable</option>
-          </select>
-        </label>
-        <label>Reply depth
-          <select id="s-effort">
-            <option value="low">Snappy (recommended for chat)</option>
-            <option value="medium">Balanced</option>
-            <option value="high">Deep</option>
-          </select>
-        </label>
         <button class="btn-primary" id="btn-save-settings">Save settings</button>
         <hr>
         <h3>Time</h3>
@@ -306,6 +279,14 @@
 
   </div>
   <div id="toast" class="toast hidden"></div>
+
+  <!-- Grok is the only provider, so an outage has nowhere to fail over to.
+       It gets its own corner badge instead of a toast that scrolls away:
+       it stays up until a message actually goes through. Tap it for why. -->
+  <button type="button" id="provider-down" class="provider-down hidden" title="Grok is unreachable">
+    <span class="pd-code">404</span>
+    <span class="pd-text"></span>
+  </button>
   <div id="photo-viewer" class="photo-viewer hidden"><img alt="photo"></div>
 
   <script src="js/db.js"></script>

@@ -2,12 +2,12 @@
    Each reply is requested as structured JSON: the visible chat bubbles plus a
    private update to the friend's internal state (never shown in the UI).
 
-   Provider pool: an ordered list of entries (Anthropic, plus free tiers like
-   Gemini / Groq / Cerebras / OpenRouter, plus local Ollama) tried top to
-   bottom. Failover happens ONLY on rate limits, exhausted quotas, server
-   errors, and network failures — never on a content refusal; each provider's
-   own policy decision stands, and this app layers no content filtering of its
-   own on top.
+   Provider: Grok, reached either through xAI directly or through AWS Bedrock,
+   whichever one you keyed. There is no failover pool behind it — a second
+   provider only ever silently downgraded the writing, so an outage is now
+   reported instead of routed around. A content refusal is never treated as an
+   outage: the provider's own policy decision stands, and this app layers no
+   content filtering of its own on top.
 
    Prompt assembly (per roleplay-community practice: the lowest position in
    context dominates generation):
@@ -87,89 +87,38 @@ const ClaudeAPI = {
     additionalProperties: false
   },
 
-  /* Free-tier presets. rpd/tpm are HINTS for proactive skipping and the
-     status line only — limits change without warning, so the real authority
-     is always the provider's own 429s and rate-limit headers. */
+  /* One provider: Grok. rpd/tpm are HINTS for the status line only — limits
+     change without warning, so the real authority is always the provider's
+     own 429s and rate-limit headers.
+
+     Two routes to the same model, because the key you already have decides
+     which one you use: xAI direct, or Grok hosted on AWS Bedrock. There is
+     deliberately no failover target behind them — a single provider that
+     tells you plainly when it is down beats a pool that silently degrades
+     the writing and leaves you wondering why she got worse. */
   POOL_PRESETS: {
-    /* Keyless tier — no account, no key, preconfigured on a fresh install so
-       the app works out of the box. Smaller models, so these default to split
-       mode (plain-prose reply + separate state call): the combined JSON is
-       exactly what they fumble, while their prose voice is genuinely good. */
-    llm7: {
-      kind: 'openai', label: 'LLM7 (no key)',
-      baseUrl: 'https://api.llm7.io/v1',
-      keyUrl: null, keyHint: 'No account, no key — works out of the box.',
-      keyless: true, splitDefault: true,
-      contextTokens: 16000, rpd: null, tpm: null
-    },
-    pollinations: {
-      kind: 'openai', label: 'Pollinations (no key)',
-      baseUrl: 'https://text.pollinations.ai/openai',
-      keyUrl: null, keyHint: 'No account, no key — anonymous tier.',
-      keyless: true, splitDefault: true,
-      contextTokens: 12000, rpd: null, tpm: null
-    },
-    zen: {
-      kind: 'openai', label: 'OpenCode Zen (no key)',
-      baseUrl: 'https://opencode.ai/zen/v1',
-      keyUrl: null, keyHint: 'No account, no key — community free tier.',
-      keyless: true, splitDefault: true,
-      contextTokens: 12000, rpd: null, tpm: null
-    },
-    gemini: {
-      kind: 'openai', label: 'Google Gemini',
-      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-      keyUrl: 'aistudio.google.com/apikey', keyHint: 'Free key at aistudio.google.com/apikey — no card required.',
-      // splitSticky: Gemini parses combined JSON fine, but JSON mode visibly
-      // stiffens its prose ("Just felt like it.") — the plain-prose reply call
-      // is where the voice lives, so it never gets probe-promoted back into
-      // combined mode on parse success alone.
-      splitDefault: true, splitSticky: true,
-      contextTokens: 32000, rpd: 1000, tpm: 250000
-    },
-    groq: {
-      kind: 'openai', label: 'Groq',
-      baseUrl: 'https://api.groq.com/openai/v1',
-      keyUrl: 'console.groq.com', keyHint: 'Free key at console.groq.com — no card required.',
-      contextTokens: 10000, rpd: 14400, tpm: 6000
+    grok: {
+      kind: 'openai', label: 'Grok (xAI)',
+      baseUrl: 'https://api.x.ai/v1',
+      keyUrl: 'console.x.ai', keyHint: 'Key at console.x.ai — the model list is fetched live once the key is in.',
+      models: ['grok-4-fast-reasoning', 'grok-4', 'grok-3'],
+      contextTokens: 1000000, rpd: null, tpm: null
     },
     bedrock: {
-      kind: 'bedrock', label: 'AWS Bedrock',
+      kind: 'bedrock', label: 'Grok (AWS Bedrock)',
       baseUrl: '', // built from region
       keyUrl: 'console.aws.amazon.com/bedrock',
-      keyHint: 'New AWS accounts get $200 in credits, and they work here. Bedrock console → API keys → generate a long-term key.',
-      // Claude ids are stable and known, so they're offered directly. Every
-      // other model on Bedrock is reached by pasting the Model ID printed on
-      // its page in the console — guessing vendor prefixes here would just
-      // produce 404s the user can't diagnose.
-      models: ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5'],
-      contextTokens: 60000, rpd: null, tpm: null
-    },
-    cerebras: {
-      kind: 'openai', label: 'Cerebras',
-      baseUrl: 'https://api.cerebras.ai/v1',
-      keyUrl: 'cloud.cerebras.ai', keyHint: 'Free key at cloud.cerebras.ai — 1M tokens/day, but an 8K context cap.',
-      contextTokens: 7000, rpd: null, tpm: 30000, contextCap: 7000
-    },
-    openrouter: {
-      kind: 'openai', label: 'OpenRouter',
-      baseUrl: 'https://openrouter.ai/api/v1',
-      keyUrl: 'openrouter.ai/keys', keyHint: 'Free key at openrouter.ai/keys — pick a ":free" model.',
-      contextTokens: 16000, rpd: 50, tpm: null
-    },
-    ollama: {
-      kind: 'ollama', label: 'Ollama (local)',
-      baseUrl: 'http://localhost:11434',
-      keyUrl: null, keyHint: 'No key — runs on your own machine, nothing leaves it.',
-      contextTokens: 8000, rpd: null, tpm: null
-    },
-    custom: {
-      kind: 'openai', label: 'Custom',
-      baseUrl: '',
-      keyUrl: null, keyHint: 'Any endpoint speaking /v1/chat/completions (Together, LM Studio, vLLM…).',
-      contextTokens: 8000, rpd: null, tpm: null
+      keyHint: 'New AWS accounts get $200 in credits, and they work here. Bedrock console \u2192 API keys \u2192 generate a long-term key.',
+      // Bedrock model ids are region-gated and change; these are suggestions
+      // in a datalist, not a whitelist. Anything you paste is sent as typed.
+      models: ['xai.grok-4-fast-reasoning-v1:0', 'xai.grok-4-fast-non-reasoning-v1:0', 'xai.grok-code-fast-1-v1:0'],
+      contextTokens: 1000000, rpd: null, tpm: null
     }
   },
+
+  /* Presets that used to exist. A saved pool entry pointing at one of these
+     is dropped on load rather than left dangling with no preset behind it. */
+  RETIRED_PRESETS: ['llm7', 'pollinations', 'zen', 'gemini', 'groq', 'cerebras', 'openrouter', 'ollama', 'custom'],
 
   typeLabel(type, established) {
     // 'romantic' with real history (Samantha, Aubrey) must not open the
@@ -1463,8 +1412,10 @@ const ClaudeAPI = {
     if (!entry) return false;
     if (entry.kind === 'anthropic') return !!(settings && settings.apiKey);
     if (entry.kind === 'bedrock') return !!(entry.apiKey && entry.model);
-    if (entry.kind === 'ollama') return !!entry.model;
-    return !!(entry.baseUrl && entry.model); // openai-compatible (key optional: LM Studio etc.)
+    // xAI has no keyless tier, so an unkeyed entry is a slot waiting for a
+    // key, not a provider — treating it as live would burn a doomed round
+    // trip on every send just to learn there's no key.
+    return !!(entry.baseUrl && entry.model && entry.apiKey && String(entry.apiKey).trim());
   },
 
   activeEntries(settings) {
@@ -1581,7 +1532,6 @@ const ClaudeAPI = {
     if (!entry) return false;
     if (entry.kind === 'anthropic') return !!(settings && settings.apiKey);
     if (entry.kind === 'bedrock') return !!entry.apiKey;
-    if (entry.kind === 'ollama') return true;
     return !!(entry.apiKey && String(entry.apiKey).trim());
   },
 
@@ -1789,10 +1739,6 @@ const ClaudeAPI = {
   },
 
   _sendEntry(entry, friend, history, settings, lastMessageTs) {
-    if (entry.kind === 'ollama') {
-      const call = (messages, format) => this._ollamaRequest(entry, messages, format);
-      return this._plainProviderChat(entry, call, friend, history, lastMessageTs);
-    }
     if (entry.kind === 'bedrock' && !this._bedrockIsClaude(entry.model)) {
       const oai = this._bedrockOaiEntry(entry);
       const call = (messages, format) => this._openaiRequest(oai, messages, format);
@@ -1848,7 +1794,7 @@ const ClaudeAPI = {
 
     const body = {
       model,
-      max_tokens: 2048,
+      max_tokens: 8192,
       temperature: 1.0,
       system: [
         // Everything reaching this path is Claude, first-party or on Bedrock.
@@ -1930,14 +1876,10 @@ const ClaudeAPI = {
   _noPresenceParam: {},  // base URLs whose endpoint rejected presence_penalty
 
   _injectionRole(entry) {
-    if (entry.kind === 'ollama') return 'system';
-    // Gemini's OpenAI-compat layer never REJECTS mid-array system messages —
-    // it silently hoists them into systemInstruction at the top of the
-    // prompt. No error, so the 400-triggered fallback never fires, and the
-    // depth-4 voice/state injection plus the final per-turn instruction (our
-    // two strongest levers) quietly lose their position. Bracketed user-role
-    // blocks keep their place — the community-standard Author's Note role.
-    if (entry.preset === 'gemini' || /generativelanguage\.googleapis\.com/.test(entry.baseUrl || '')) return 'user';
+    // Mid-array system messages are the two strongest levers in the prompt
+    // (the depth-4 injection and the final per-turn instruction). An endpoint
+    // that rejects them gets bracketed user-role blocks instead — the
+    // community-standard Author's Note role, which keeps its position.
     return this._midRoleFallback[entry.baseUrl] ? 'user' : 'system';
   },
 
@@ -1957,7 +1899,7 @@ const ClaudeAPI = {
     }
   },
 
-  /* One driver for OpenAI-compatible and Ollama entries. 'single' mode asks
+  /* One driver for the OpenAI-compatible entries. 'single' mode asks
      for the combined JSON in one call — preferred, since a second call
      doubles RPM consumption against tight free limits. A model that
      repeatedly fumbles the combined JSON self-tunes to 'split' mode. */
@@ -2062,6 +2004,10 @@ const ClaudeAPI = {
     const budgetChars = budgetTokens * 4; // rough chars-per-token heuristic
     // Budget and capability are separate constraints: a capable model on a
     // tight budget still needs the trimmed prompt, so compact wins.
+    // 'compact' is a survival mode for a context too small to hold the whole
+    // character — it drops examples and the enhancement blocks, which visibly
+    // flattens her. Grok's window is 200k, so this should never trigger; it
+    // stays only so a hand-lowered budget degrades instead of overflowing.
     const tier = budgetTokens <= 10000 ? 'compact'
       : (this._isCapableModel(entry, null) ? 'rich' : 'full');
 
@@ -2069,9 +2015,14 @@ const ClaudeAPI = {
     const persona = this.buildPersona(friend, tier);
     const recap = this._recapBlock(friend);
 
-    const memBudget = Math.max(600, Math.floor(budgetChars * 0.12));
-    const memories = this.selectMemories(friend, history, memBudget);
-    const scenes = this._sceneContext(friend, history, Math.max(400, Math.floor(budgetChars * 0.06)));
+    // Shares of the window, but bounded at both ends. The floor stops a tiny
+    // context from dropping recall entirely; the ceiling stops a 200k window
+    // from meaning 90k chars of remembered trivia crowding out the actual
+    // conversation. More recall is not linearly better — past a point it just
+    // dilutes what matters.
+    const share = (pct, lo, hi) => Math.min(hi, Math.max(lo, Math.floor(budgetChars * pct)));
+    const memories = this.selectMemories(friend, history, share(0.12, 600, 9000));
+    const scenes = this._sceneContext(friend, history, share(0.06, 400, 4500));
 
     const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
     const plist = this._plist(friend);
@@ -2369,55 +2320,9 @@ const ClaudeAPI = {
 
   /* ---------------- transports ---------------- */
 
-  async _ollamaRequest(entry, messages, format) {
-    const base = (entry.baseUrl || 'http://localhost:11434').replace(/\/+$/, '');
-    let res;
-    try {
-      const body = {
-        model: entry.model,
-        stream: false,
-        options: { num_ctx: this._effectiveBudget(entry), num_predict: 1024 },
-        messages
-      };
-      if (format === 'json') body.format = 'json';
-      res = await fetch(base + '/api/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-    } catch {
-      const err = new Error(`Can't reach Ollama at ${base} — is it running? (try: ollama serve)`);
-      err.retryable = false;
-      err.transport = true; // fail over to the next provider
-      throw err;
-    }
-    this._recordRequest(entry.id);
-    if (!res.ok) {
-      let msg = `Ollama error (${res.status})`;
-      try { const e = await res.json(); if (e.error) msg = 'Ollama: ' + e.error; } catch { /* keep generic */ }
-      const err = new Error(msg);
-      err.status = res.status;
-      err.retryable = res.status >= 500;
-      err.transport = res.status >= 500;
-      throw err;
-    }
-    const data = await res.json();
-    this._recordTokens(entry.id, (data.prompt_eval_count || 0) + (data.eval_count || 0));
-    const text = data.message && data.message.content;
-    if (!text || !text.trim()) {
-      const err = new Error('Empty response — retrying…');
-      err.retryable = true;
-      err.transport = true;
-      throw err;
-    }
-    return { text };
-  },
-
-  /* Structured-output capability ladder per base URL:
-     2 = response_format json_schema, 1 = json_object, 0 = prompt-instructed
-     JSON only. Downgraded automatically when the endpoint rejects a level. */
+  // Per-base-URL adaptations learned from an endpoint's first rejection:
+  // which structured-output rung it accepts, and what it calls max_tokens.
   _oaiFormat: {},
-  /* Per base URL: which token-cap parameter this endpoint accepts. */
   _maxTokensParam: {},
 
   async _openaiRequest(entry, messages, format) {
@@ -2429,8 +2334,7 @@ const ClaudeAPI = {
 
     // Heal ids already saved with Gemini's "models/" prefix — those 404 on
     // every send, and the user has no way to see why.
-    const modelId = String(entry.model || '').replace(/^models\//, '');
-    const isGemini = entry.preset === 'gemini' || /generativelanguage\.googleapis\.com/.test(base);
+    const modelId = String(entry.model || '').trim();
 
     while (true) {
       const level = format === 'json' ? this._oaiFormat[base] : 0;
@@ -2446,9 +2350,13 @@ const ClaudeAPI = {
       if (!this._noPresenceParam[base]) body.presence_penalty = 0.3;
       // Newer OpenAI-compatible endpoints renamed max_tokens; which one an
       // endpoint accepts is learned from its first rejection, per base URL.
-      if (this._maxTokensParam[base] === 'max_completion_tokens') body.max_completion_tokens = 4096;
-      else body.max_tokens = 4096;
-      if (isGemini && !this._noReasoningParam[base]) body.reasoning_effort = 'low';
+      // 16384, not 4096: reasoning models spend from max_tokens BEFORE the
+      // visible reply, so a low ceiling shows up as her getting curt and
+      // shallow — the reasoning ate the budget and the text got the crumbs.
+      // Only tokens actually generated are billed, so a high ceiling on a
+      // three-word text costs nothing; a low one costs the whole reply.
+      if (this._maxTokensParam[base] === 'max_completion_tokens') body.max_completion_tokens = 16384;
+      else body.max_tokens = 16384;
       if (level === 2) body.response_format = { type: 'json_schema', json_schema: { name: 'reply', schema: this.REPLY_SCHEMA } };
       else if (level === 1) body.response_format = { type: 'json_object' };
 
@@ -2969,10 +2877,6 @@ const ClaudeAPI = {
     for (const entry of this.activeEntries(settings)) {
       if (!this.entryAvailable(entry)) continue;
       try {
-        if (entry.kind === 'ollama') {
-          const r = await this._ollamaRequest(entry, [{ role: 'system', content: system }, { role: 'user', content: user }], 'text');
-          return r.text || null;
-        }
         if (entry.kind === 'openai') {
           const r = await this._openaiRequest(entry, [{ role: 'system', content: system }, { role: 'user', content: user }], 'text');
           if (r.refusal) return null;
@@ -3017,12 +2921,7 @@ const ClaudeAPI = {
      404s on every message with nothing pointing at the cause. A provider may
      only ever fall back to its own models. */
   PRESET_FALLBACK_MODELS: {
-    gemini: ['gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-2.5-flash'],
-    groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'],
-    cerebras: ['gpt-oss-120b', 'glm-4.7'],
-    llm7: ['gpt-oss:20b', 'minimax-m2.7'],
-    pollinations: ['openai-fast'],
-    zen: ['big-pickle']
+    grok: ['grok-4-fast-reasoning', 'grok-4', 'grok-3']
   },
 
   /* Empty for an unknown/custom endpoint — better to admit we don't know and
@@ -3078,19 +2977,10 @@ const ClaudeAPI = {
   pickDefaultModel(models, preset) {
     const skip = /guard|whisper|tts|embed|moderation|rerank|distil|image|imagen|veo|audio/i;
     const presetPrefs = {
-      // non-lite flash first: flash-lite's extra 750 requests/day are not
-      // worth how much dumber it is at holding a persona
-      gemini: [/gemini-3\.6-flash$/i, /gemini-3\.5-flash$/i, /flash(?!-lite)/i, /flash-lite/i],
-      openrouter: [/llama.*70b.*:free/i, /:free$/i],
-      groq: [/llama[-.]?3\.3.*70b/i, /gpt-oss-120b/i],
-      cerebras: [/gpt-oss-120b/i, /glm/i],
-      llm7: [/^gpt-oss/i, /minimax/i],
-      pollinations: [/^openai-fast$/i, /^openai/i],
-      zen: [/big-pickle/i]
+      // reasoning first: it is the one that holds subtext across a long thread
+      grok: [/grok-4-fast-reasoning/i, /grok-4/i, /grok-3(?!-mini)/i, /^grok/i]
     };
-    const prefs = ((preset && presetPrefs[preset]) || []).concat([
-      /llama[-.]?3\.3.*70b/i, /gpt-oss-120b/i, /versatile/i, /70b|72b|120b/i, /gpt-oss/i, /llama|qwen|deepseek|mixtral|gemma/i
-    ]);
+    const prefs = ((preset && presetPrefs[preset]) || []).concat([/^grok/i]);
     for (const re of prefs) {
       const hit = models.find(m => re.test(m.id) && !skip.test(m.id));
       if (hit) return hit.id;
@@ -3138,21 +3028,6 @@ const ClaudeAPI = {
   /* One cheap round trip that reports plainly: key valid, model reachable,
      context window detected. Returns { message, context }. */
   async testConnection(entry, settings) {
-    if (entry.kind === 'ollama') {
-      const base = (entry.baseUrl || 'http://localhost:11434').replace(/\/+$/, '');
-      let res;
-      try { res = await fetch(base + '/api/tags'); }
-      catch { throw new Error(`Can't reach Ollama at ${base} — is it running? (try: ollama serve)`); }
-      if (!res.ok) throw new Error('Ollama answered with HTTP ' + res.status);
-      const data = await res.json();
-      const names = (data.models || []).map(m => m.name);
-      const want = (entry.model || '').trim();
-      if (!want) return { message: 'Ollama running ✓ — pulled models: ' + (names.slice(0, 6).join(', ') || 'none yet'), context: null };
-      const found = names.some(n => n === want || n.split(':')[0] === want);
-      if (!found) throw new Error(`Ollama is running, but "${want}" isn't pulled. Try: ollama pull ${want}`);
-      return { message: `Ollama running ✓ · ${want} available ✓`, context: null };
-    }
-
     if (entry.kind === 'bedrock') {
       if (!entry.apiKey) throw new Error('Paste your Bedrock API key first.');
       if (!entry.model) throw new Error('Pick a model first.');
