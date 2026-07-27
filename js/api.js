@@ -101,7 +101,7 @@ const ClaudeAPI = {
       kind: 'openai', label: 'Grok (xAI)',
       baseUrl: 'https://api.x.ai/v1',
       keyUrl: 'console.x.ai', keyHint: 'Key at console.x.ai — the model list is fetched live once the key is in.',
-      models: ['grok-4-fast-reasoning', 'grok-4', 'grok-3'],
+      models: ['grok-4.3', 'grok-4-fast-reasoning', 'grok-4'],
       contextTokens: 1000000, rpd: null, tpm: null
     },
     bedrock: {
@@ -111,7 +111,7 @@ const ClaudeAPI = {
       keyHint: 'New AWS accounts get $200 in credits, and they work here. Bedrock console \u2192 API keys \u2192 generate a long-term key.',
       // Bedrock model ids are region-gated and change; these are suggestions
       // in a datalist, not a whitelist. Anything you paste is sent as typed.
-      models: ['xai.grok-4-fast-reasoning-v1:0', 'xai.grok-4-fast-non-reasoning-v1:0', 'xai.grok-code-fast-1-v1:0'],
+      models: ['xai.grok-4.3', 'xai.grok-4-fast-reasoning-v1:0', 'xai.grok-4-fast-non-reasoning-v1:0'],
       contextTokens: 1000000, rpd: null, tpm: null
     }
   },
@@ -2921,7 +2921,7 @@ const ClaudeAPI = {
      404s on every message with nothing pointing at the cause. A provider may
      only ever fall back to its own models. */
   PRESET_FALLBACK_MODELS: {
-    grok: ['grok-4-fast-reasoning', 'grok-4', 'grok-3']
+    grok: ['grok-4.3', 'grok-4-fast-reasoning', 'grok-4']
   },
 
   /* Empty for an unknown/custom endpoint — better to admit we don't know and
@@ -2977,8 +2977,8 @@ const ClaudeAPI = {
   pickDefaultModel(models, preset) {
     const skip = /guard|whisper|tts|embed|moderation|rerank|distil|image|imagen|veo|audio/i;
     const presetPrefs = {
-      // reasoning first: it is the one that holds subtext across a long thread
-      grok: [/grok-4-fast-reasoning/i, /grok-4/i, /grok-3(?!-mini)/i, /^grok/i]
+      // newest flagship first, then fast-reasoning
+      grok: [/grok-4\.3/i, /grok-4-fast-reasoning/i, /grok-4/i, /^grok/i]
     };
     const prefs = ((preset && presetPrefs[preset]) || []).concat([/^grok/i]);
     for (const re of prefs) {

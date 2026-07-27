@@ -139,8 +139,8 @@ const DEFAULT_SETTINGS = {
   // fresh install genuinely cannot talk until a key is in. The entries exist
   // so Settings shows two labelled slots to paste into rather than a blank.
   pool: [
-    { id: 'grok', kind: 'openai', preset: 'grok', label: 'Grok (xAI)', baseUrl: 'https://api.x.ai/v1', apiKey: '', model: 'grok-4-fast-reasoning', contextTokens: 1000000, enabled: true },
-    { id: 'bedrock', kind: 'bedrock', preset: 'bedrock', label: 'Grok (AWS Bedrock)', apiKey: '', model: 'xai.grok-4-fast-reasoning-v1:0', region: 'us-east-1', contextTokens: 1000000, enabled: true }
+    { id: 'grok', kind: 'openai', preset: 'grok', label: 'Grok (xAI)', baseUrl: 'https://api.x.ai/v1', apiKey: '', model: 'grok-4.3', contextTokens: 1000000, enabled: true },
+    { id: 'bedrock', kind: 'bedrock', preset: 'bedrock', label: 'Grok (AWS Bedrock)', apiKey: '', model: 'xai.grok-4.3', region: 'us-east-1', contextTokens: 1000000, enabled: true }
   ]
 };
 
