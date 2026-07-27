@@ -769,7 +769,9 @@ async function deliverBubble(friend, b, atTs) {
   $('#chat-status').textContent = 'sending a photo…';
   scrollChat();
   try {
-    const dataUrl = await ClaudeAPI.generateImage(entry, desc);
+    // stable per-friend seed: her photos lean toward the same body and the
+    // same rooms instead of rerolling a stranger every time
+    const dataUrl = await ClaudeAPI.generateImage(entry, desc, { seed: ClaudeAPI._hash32(String(friend.id) + '|photolook') % 1e9 });
     $('#typing').classList.add('hidden');
     const msg = { friendId: friend.id, role: 'assistant', text: '', photo: dataUrl, photoDesc: desc, ts: ClaudeAPI._now() };
     const el = bubbleEl('assistant', '', msg);

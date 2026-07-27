@@ -390,7 +390,7 @@ const ClaudeAPI = {
       deep: 'inner circle — few walls left, the person she actually tells things to'
     },
     attraction: {
-      low: 'no active interest yet — a light flirt aimed at her gets a short unbothered reply that ignores the angle: no performance, no wall (big swings always get a real reaction, even a shutdown). Unbothered is about the ANGLE, never the person — his ideas, jokes, and invitations still get real engagement. A genuinely good line can win a real laugh on the merits, and a built frame is playable as wit; neither means interest. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality. The right registers sustained over real time is how interest STARTS',
+      low: 'no active interest yet — a flirt aimed at her earns no reciprocation, but the deflection is still HERS: she answers in her own voice — the joke, the hook, the sideways dodge, the second reading pointedly walked past — never a flat literal answer that pretends the subtext isn\'t there. She always hears it; low interest changes what she DOES with it, not whether she catches it. No performance, no wall (big swings always get a real reaction, even a shutdown). Unbothered is about the ANGLE, never the person — his ideas, jokes, and invitations still get real engagement. A genuinely good line can win a real laugh on the merits, and a built frame is playable as wit; neither means interest. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality — and so is going quiet-and-literal every time he plays. The right registers sustained over real time is how interest STARTS',
       building: 'noticing them — a flirt now gets engagement: indirect, deniable, volleying back without accepting, letting it run a beat longer than she should. She does not lead it, and she cools it when he jumps ahead of where she is',
       high: 'genuinely into them — flirts back freely, sometimes first',
       deep: 'fully drawn in — warm, forward, initiates'
@@ -744,19 +744,8 @@ const ClaudeAPI = {
     const t = now === undefined ? this._now() : now;
     const lastMsg = msgs && msgs.length ? msgs[msgs.length - 1] : null;
     if (!friend || !lastMsg || !lastMsg.ts) return false;
-    // quiet hours: she has a life, and it includes sleeping. But 10pm-2am is
-    // you-up territory — open to someone genuinely drawn to him, at reduced
-    // odds, because the late text that admits what hour it is IS the genre.
     const hour = new Date(t).getHours();
-    if (hour >= 2 && hour < 8) return false;
     const lateNight = hour >= 22 || hour < 2;
-    // The 1am text is a CLOSENESS behavior as much as an attraction one —
-    // gating it on attraction alone made the drunk-best-friend persona, whose
-    // whole signature is the 1am voice memo, mechanically incapable of one.
-    if (lateNight) {
-      const b = this.bandsFor(friend);
-      if (this._bandRank(b.attraction) < 1 && this._bandRank(b.closeness) < 3) return false;
-    }
     // Bubbles of one reply are stored as separate assistant messages seconds
     // apart, so "unanswered messages" must be counted as TURNS: a >10-minute
     // gap between assistant messages means a separate attempt. One unanswered
@@ -798,16 +787,37 @@ const ClaudeAPI = {
       return !isNaN(dk) && dk <= todayK && dk >= todayK - 1;
     });
     if (hasDue) return true;
-    const pct = lateNight ? 25 : this.OPENER.ROLL_PCT;
     // Roll every day of the silence, not just today. The die is per-day-key,
     // but only "now" was ever rolled — so four days away collapsed to one
     // 45% chance on arrival, and a skipped-ahead week could land in total
     // silence. Real absence works the other way: the longer he's gone, the
     // more certain something is waiting. Capped at a week of catch-up so an
     // ancient thread doesn't auto-fire.
+    //
+    // The hour-of-day gates apply ONLY to today's roll. A full day that
+    // passed inside the gap contained her entire waking day, and the opener
+    // gets backdated into it (plausiblePastTs) — asking "would she text at
+    // this exact minute" about a day where the minute never mattered made
+    // night sessions permanently silent: skip-a-day from 11pm lands at 11pm
+    // (late-night gate), skip-6h lands at 5am (sleep gate), so a
+    // low-attraction friend had NO path to an opener at all.
     const todayRollK = this._dayKey(t);
     const startK = Math.max(this._dayKey(lastMsg.ts), todayRollK - 6);
     for (let dk = startK; dk <= todayRollK; dk++) {
+      let pct = this.OPENER.ROLL_PCT;
+      if (dk === todayRollK) {
+        // quiet hours: she has a life, and it includes sleeping. 10pm-2am is
+        // you-up territory — open to someone genuinely drawn to him, at
+        // reduced odds, because the late text that admits what hour it is IS
+        // the genre. The 1am text is a CLOSENESS behavior as much as an
+        // attraction one (the drunk-best-friend persona's signature).
+        if (hour >= 2 && hour < 8) continue;
+        if (lateNight) {
+          const b = this.bandsFor(friend);
+          if (this._bandRank(b.attraction) < 1 && this._bandRank(b.closeness) < 3) continue;
+          pct = 25;
+        }
+      }
       if (this._hash32(String(friend.id) + '|opener|' + dk) % 100 < pct) return true;
     }
     return false;
@@ -1404,7 +1414,7 @@ const ClaudeAPI = {
   _BAND_GLOSS: {
     comfort: { low: 'guarded — the edited version only', building: 'warming — shares selectively', high: 'at ease — candid', deep: 'completely at home' },
     closeness: { low: 'acquaintances — friendly, not invested', building: 'becoming real friends', high: 'genuinely close', deep: 'inner circle' },
-    attraction: { low: 'no active interest yet — banter is banter, flirts get quiet non-engagement, but a clever deniable frame can still be stepped into and a great line can win a real laugh', building: 'noticing him — engages flirtation without leading it, cools jumps ahead', high: 'genuinely into him — flirts back freely, sometimes first', deep: 'fully drawn in — warm, forward, initiates' }
+    attraction: { low: 'no active interest yet — flirts earn no reciprocation, but she deflects in her OWN voice (the joke, the hook, the sideways dodge), never flat or literal; a deniable frame is still playable and a great line can win a real laugh', building: 'noticing him — engages flirtation without leading it, cools jumps ahead', high: 'genuinely into him — flirts back freely, sometimes first', deep: 'fully drawn in — warm, forward, initiates' }
   },
   _plist(friend) {
     const p = friend.profile;
@@ -1703,7 +1713,7 @@ const ClaudeAPI = {
         const windingDown = (lastUser && this._classifyUserTurn(lastUser.text) === 'signoff')
           || this._isWithdrawing(history);
         if (res && res.bubbles && attempt < 2 && !windingDown
-            && (this._isFillerReply(res.bubbles) || this._isParrotReply(res.bubbles, history))) {
+            && (this._isFillerReply(res.bubbles) || this._isParrotReply(res.bubbles, history) || this._isRerunReply(res.bubbles, history))) {
           this._strictNext = true;
           strictRegen = true;
           continue;
@@ -1780,9 +1790,14 @@ const ClaudeAPI = {
   // Pollinations) — same intent as _IMAGE_NEGATIVE, phrased as prose.
   _IMAGE_AVOID: ' Not an illustration or 3d render; no text, watermarks, or logos.',
 
+  /* Face-out-of-frame is the consistency mechanism: these models roll a new
+     person every generation, so the one identity anchor we can actually hold
+     is to never show the one thing that varies most. It is also exactly how
+     a careful married woman takes these. */
   _imagePrompt(desc) {
-    return 'Candid amateur smartphone photo: ' + desc +
-      '. Realistic, natural lighting, slight grain, ordinary lived-in home detail, shot casually on a phone.';
+    return 'Candid amateur smartphone photo, taken by herself: ' + desc +
+      '. Her face stays completely out of frame — cropped at the chin, shot from behind, over the shoulder, or the phone hiding it in a mirror.' +
+      ' Realistic skin and fabric texture, natural imperfect lighting, slight grain, slightly careless framing, a lived-in room in the background — a real phone photo, never a photoshoot.';
   },
 
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
@@ -1800,7 +1815,7 @@ const ClaudeAPI = {
     const width = o.width || 768, height = o.height || 1280;
     const prompt = (o.raw ? description : this._imagePrompt(description)).slice(0, 1000);
 
-    if (this._isFreeImageModel(model)) return this._pollinationsImage(prompt, width, height);
+    if (this._isFreeImageModel(model)) return this._pollinationsImage(prompt, width, height, o.seed);
     if (this._isXaiEntry(entry)) return this._xaiImage(entry, model, prompt, width, height);
 
     const attempts = [
@@ -1905,10 +1920,14 @@ const ClaudeAPI = {
      the random seed keeps repeat photo requests from returning the same
      frame. Response is raw image bytes → dataURL, same contract as the
      other routes. */
-  async _pollinationsImage(prompt, width, height) {
+  async _pollinationsImage(prompt, width, height, seed) {
+    // A caller-supplied stable seed (per friend) nudges the generator toward
+    // a consistent body/space across her photos; without one, roll fresh so
+    // repeat requests don't return the same frame.
+    const s = seed === undefined ? Math.floor(Math.random() * 1e9) : seed;
     const url = 'https://image.pollinations.ai/prompt/'
       + encodeURIComponent((prompt + this._IMAGE_AVOID).slice(0, 800))
-      + `?width=${width}&height=${height}&nologo=true&seed=${Math.floor(Math.random() * 1e9)}`;
+      + `?width=${width}&height=${height}&nologo=true&seed=${s}`;
     let res;
     try {
       res = await fetch(url, { headers: { accept: 'image/*' } });
@@ -1940,7 +1959,7 @@ const ClaudeAPI = {
     if (!this.imageEntry(settings)) return null;
     return [
       '## Sending photos',
-      'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now — the room, the light, what of you is in frame. Keep it consistent with your day, your body, and anything you\'ve already told him. Choose what the photo shows the way YOU would, given who you are and what this thread is — candid phone-camera framing, not a photoshoot. Photos are RARE: most conversations have none, you never announce or offer one unprompted twice, and you never send one just because he pushed — same rules as everything else about what you will and won\'t give.'
+      'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now — the room, the light, what of you is in frame. Keep it consistent with your day, your body, and anything you\'ve already told him. Choose what the photo shows the way YOU would, given who you are and what this thread is — candid phone-camera framing, not a photoshoot. Two hard rules about the picture itself: your face is never in frame — chin-down, from behind, mirror with the phone in the way; that is simply how you take these, and you never explain it. And when the thread is charged, the photo teases by ATMOSPHERE and implication — the light, the crop, what sits just out of frame does the work; suggestion always, never explicit, the same screenshot test as your words. Photos are RARE: most conversations have none, you never announce or offer one unprompted twice, and you never send one just because he pushed — same rules as everything else about what you will and won\'t give.'
     ];
   },
 
@@ -2003,7 +2022,7 @@ const ClaudeAPI = {
     const wrap = (t) => midOk ? t : '<system-reminder>\n' + t + '\n</system-reminder>';
     let msgs = trimmed.map(m => ({ role: m.role, content: m.text }));
     msgs = this._injectDepth(msgs, wrap(this._plist(friend)), injRole);
-    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._motifs(history))) });
+    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._ruts(history))) });
 
     const body = {
       model,
@@ -2196,7 +2215,7 @@ const ClaudeAPI = {
       const r2 = await call([
         {
           role: 'system',
-          content: `You maintain ${p.name}'s PRIVATE internal state in their texting relationship with ${userName}. Output ONLY JSON in this exact shape: {"state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause of what she is thinking but not saying right now", "new_memories": []}}. Deltas are -3..+3 movements caused by this exchange — report real movement when it happened (a landed line, a real laugh, a genuine share is ±1 or more), 0 only for genuinely neutral exchanges, negative when it stung or turned her off. "new_memories": 0-3 objects {"text","keywords","importance"} with standalone pronoun-free facts worth keeping — about ${userName}, about the two of them, or about ${p.name}'s OWN life as established in this exchange (her commitments, stories, opinions — so she never contradicts her own canon). [] if nothing new.`
+          content: `You maintain ${p.name}'s PRIVATE internal state in their texting relationship with ${userName}. Output ONLY JSON in this exact shape: {"state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause of what she is thinking but not saying right now", "new_memories": []}}. Deltas are -3..+3 movements caused by this exchange — report real movement when it happened (a landed line, a real laugh, a genuine share is ±1 or more), 0 only for genuinely neutral exchanges, negative when it stung or turned her off. "new_memories": 0-3 objects {"text","keywords","importance"} with standalone pronoun-free facts worth keeping — about ${userName}, about the two of them, or about ${p.name}'s OWN life as established in this exchange (her commitments, stories, opinions — so she never contradicts her own canon). The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance. [] only when genuinely nothing new.`
         },
         {
           role: 'user',
@@ -2265,7 +2284,7 @@ const ClaudeAPI = {
 
     const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
     const plist = this._plist(friend);
-    const phi = this._phi(friend, jsonMode, history.length, this._motifs(history));
+    const phi = this._phi(friend, jsonMode, history.length, this._ruts(history));
     // 6144 reserve: the dynamic block grew (room read, thermostat, tonight,
     // due notes) and the old 4096 left history packing flush against the cap
     // edge — variance in wildcard/omitted-note length must never breach it
@@ -2561,7 +2580,7 @@ const ClaudeAPI = {
       '## Reply format (mandatory)',
       'Reply with ONLY a single JSON object — no prose before or after it, no markdown fences:',
       '{"messages": ["first bubble", "optional second"], "state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause: what you are thinking but not saying right now", "new_memories": []}}',
-      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life as established this exchange (your commitments, stories, opinions — never contradict your own canon later); [] if nothing new.'
+      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life as established this exchange (your commitments, stories, opinions — never contradict your own canon later). The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance; a relationship that forgets its own origin reads as fake. [] only when genuinely nothing new.'
     ].join('\n');
   },
 
@@ -3224,7 +3243,9 @@ const ClaudeAPI = {
     // TWO laugh-openers in the window, not one: a tic is a pattern. Stripping
     // after a single recent laugh rewrote her energy — "lmaooo no" became
     // "no", which is a different message entirely (audit, phase 1).
-    const laughCount = (history || []).filter(m => m.role === 'assistant').slice(-6)
+    // window of 8, not 6: the archive's Tay thread ran "haha yeah" openers
+    // exactly far enough apart that a 6-window never saw two at once
+    const laughCount = (history || []).filter(m => m.role === 'assistant').slice(-8)
       .filter(m => this._LAUGH_OPEN.test(m.text || '')).length;
     if (laughCount < 2) return bubbles;
     const out = [];
@@ -3276,6 +3297,61 @@ const ClaudeAPI = {
     }
     return [...counts.entries()].filter(([, c]) => c >= 3)
       .sort((a, b) => b[1] - a[1]).slice(0, 3).map(([g]) => g);
+  },
+
+  /* Single content-word ruts. The phrase detector strips stopwords, so a bit
+     built around ONE meaningful word riding in stopword scaffolding ("our
+     secret now" / "its just ours" → 'secret') is invisible to it — the
+     archive's Samantha thread proved it: the same bit four times in five
+     messages, zero flags. A content word she alone keeps reaching for, in
+     3+ of her last 8 messages, is the same rut in a smaller coat. */
+  _wordRuts(history) {
+    const mine = (history || []).filter(m => m.role === 'assistant').slice(-8);
+    if (mine.length < 5) return [];
+    const his = new Set();
+    for (const m of (history || []).filter(m => m.role === 'user').slice(-12)) {
+      for (const w of this._normBubble(m.text || '').split(' ')) his.add(w);
+    }
+    const counts = new Map();
+    for (const m of mine) {
+      const seen = new Set();
+      for (const w of this._normBubble(m.text || '').split(' ')) {
+        if (w.length < 4 || this._MOTIF_STOP.has(w) || his.has(w) || seen.has(w)) continue;
+        seen.add(w); // once per message: a rut is ACROSS messages
+        counts.set(w, (counts.get(w) || 0) + 1);
+      }
+    }
+    return [...counts.entries()].filter(([, c]) => c >= 3)
+      .sort((a, b) => b[1] - a[1]).slice(0, 2).map(([w]) => w);
+  },
+
+  /* Phrase ruts + word ruts, one list for the phi callout. A word already
+     covered by a flagged phrase isn't repeated. */
+  _ruts(history) {
+    const phrases = this._motifs(history);
+    const words = this._wordRuts(history).filter(w => !phrases.some(p => p.includes(w)));
+    return phrases.concat(words).slice(0, 3);
+  },
+
+  /* Dead-air rerun: a reply of real length whose every content word already
+     sits in the immediate context — she re-announced the standing bit and
+     added nothing (the "yeah our secret now lol" closer). One strict
+     regenerate, same lane as the filler/parrot guards.
+     Nearest good case (counter-rule check): the deliberate verbatim callback
+     of her own short line — that stays allowed, same carve-out the echo
+     guard uses. */
+  _isRerunReply(bubbles, history) {
+    const text = (bubbles || []).join(' ').trim();
+    if (!text || text.split(/\s+/).length < 4) return false; // short is texting, not a rerun
+    const norm = this._normBubble(text);
+    const mineRecent = (history || []).filter(m => m.role === 'assistant').slice(-4);
+    if (mineRecent.some(m => this._normBubble(m.text || '') === norm)) return false; // verbatim callback
+    const words = norm.split(' ').filter(w => w && !this._MOTIF_STOP.has(w));
+    if (!words.length) return false; // pure-stopword replies are the filler guard's turf
+    const seen = new Set();
+    const recent = mineRecent.slice(-3).concat((history || []).filter(m => m.role === 'user').slice(-2));
+    for (const m of recent) for (const w of this._normBubble(m.text || '').split(' ')) seen.add(w);
+    return words.every(w => seen.has(w));
   },
 
   /* Curiosity is the dial that decides whether she ever asks the question
