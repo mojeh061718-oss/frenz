@@ -903,8 +903,11 @@ async function sendMessage() {
   }, 5000);
 
   try {
-    const result = await ClaudeAPI.chat(friend, history, settings, lastTs, (attempt) => {
-      $('#chat-status').textContent = `reconnecting… (${attempt})`;
+    const result = await ClaudeAPI.chat(friend, history, settings, lastTs, (attempt, retryErr) => {
+      // Say WHY when we know: a rate-limit wait reads as dead air unless named
+      $('#chat-status').textContent = retryErr && retryErr.quota
+        ? `rate-limited — retrying (${attempt})`
+        : `reconnecting… (${attempt})`;
     });
     providerUp();   // something came back, so whatever was wrong isn't any more
 
@@ -1011,6 +1014,21 @@ async function sendMessage() {
   } catch (err) {
     $('#typing').classList.add('hidden');
     providerDown(err);
+    // The corner badge is easy to miss mid-conversation — say it in the
+    // thread too, transiently, in plain words. And log it: failed sends are
+    // exactly the story the analysis archive needs to tell.
+    const note = document.createElement('div');
+    note.className = 'msg sys transient-note';
+    note.textContent = (err && err.quota)
+      ? "Didn't go through — Grok is rate-limiting this key right now. Give it a minute; it recovers on its own."
+      : "Didn't go through — " + ((err && err.message) || 'connection problem') + ' Your message is still here; try again.';
+    $('#chat-messages').appendChild(note);
+    scrollChat();
+    DB.addEvent({
+      friendId: friend.id, ts: ClaudeAPI._now(), kind: 'senderr',
+      status: (err && err.status) || 0,
+      message: String((err && err.message) || '').slice(0, 140)
+    }).catch(() => {});
   } finally {
     clearInterval(slowTick);
     sending = false;

@@ -1712,7 +1712,7 @@ const ClaudeAPI = {
         const lastUser = [...history].reverse().find(m => m.role === 'user');
         const windingDown = (lastUser && this._classifyUserTurn(lastUser.text) === 'signoff')
           || this._isWithdrawing(history);
-        if (res && res.bubbles && attempt < 2 && !windingDown
+        if (res && res.bubbles && attempt < 2 && !windingDown && !this._underPressure()
             && (this._isFillerReply(res.bubbles) || this._isParrotReply(res.bubbles, history) || this._isRerunReply(res.bubbles, history))) {
           this._strictNext = true;
           strictRegen = true;
@@ -1726,13 +1726,32 @@ const ClaudeAPI = {
       } catch (err) {
         lastErr = err;
         if (!err.retryable || attempt === MAX_ATTEMPTS) break;
-        if (onRetry) onRetry(attempt);
-        await new Promise(r => setTimeout(r, err.retryAfterMs || [1200, 3000, 7000][attempt - 1]));
+        if (onRetry) onRetry(attempt, err);
+        await new Promise(r => setTimeout(r, this._retryDelay(err, attempt)));
       }
     }
     if (lastErr && (lastErr.quota || lastErr.transport)) lastErr.failover = true;
     throw lastErr;
   },
+
+  /* Rate limits are minute-scale, and the old flat backoff (1.2s/3s/7s)
+     burned all four attempts inside ~11 seconds — guaranteed to fail
+     against a per-minute throttle, which then read as "the app stopped
+     responding". Browsers can't read Bedrock's retry-after header (not
+     CORS-exposed), so quota errors get patience by default: ~50s across
+     the retries, enough to outlive a minute window. */
+  _retryDelay(err, attempt) {
+    if (err && err.retryAfterMs) return err.retryAfterMs;
+    if (err && err.quota) return [5000, 15000, 30000][attempt - 1] || 30000;
+    return [1200, 3000, 7000][attempt - 1] || 7000;
+  },
+
+  /* True for a while after any 429: burst texting on Bedrock trips
+     per-minute quotas, and every optional extra call makes it worse. Under
+     pressure the app sheds them — the split-mode state call and the
+     quality regenerate — trading a little polish for staying alive. */
+  _last429: 0,
+  _underPressure() { return this._now() - (this._last429 || 0) < 90000; },
 
   /* Bedrock's Mantle endpoint hosts two dialects behind one host: Anthropic's
      Messages API for Claude, and an OpenAI-compatible route for everyone else
@@ -2078,7 +2097,7 @@ const ClaudeAPI = {
         if (err.error && err.error.message) msg = err.error.message;
       } catch { /* keep generic message */ }
       if (res.status === 401) msg = 'Invalid API key — check Settings.';
-      if (res.status === 429) msg = 'Rate limited — waiting a moment…';
+      if (res.status === 429) { msg = 'Rate limited — waiting a moment…'; this._last429 = this._now(); }
       if (res.status === 529) msg = 'Claude is busy right now — retrying…';
       const apiErr = new Error(msg);
       apiErr.status = res.status;
@@ -2213,6 +2232,12 @@ const ClaudeAPI = {
     let state = ex.state ? this._normStateRaw(ex.state) : null;
     if (state) {
       return { bubbles, state, omitted: req.omitted, meta };
+    }
+    // Under rate-limit pressure the best-effort state call is the first
+    // thing overboard: it doubles the request count for a nicety, and the
+    // previous state carrying forward one turn is invisible.
+    if (this._underPressure()) {
+      return { bubbles, state: null, omitted: req.omitted, meta };
     }
     try {
       const p = friend.profile;
@@ -2810,6 +2835,7 @@ const ClaudeAPI = {
   _archEventLine(ev) {
     if (!ev) return '';
     if (ev.kind === 'send') return this._archSendLine(ev);
+    if (ev.kind === 'senderr') return `  » SEND FAILED${ev.status ? ' (' + ev.status + ')' : ''}: ${ev.message || 'unknown error'}`;
     if (ev.applied || ev.deltas || typeof ev.tension === 'number') {
       // the synthetic absence event is a state event with a telltale reason
       if (/absence/i.test(ev.reason || '')) return `  » absence drift: ${ev.reason}`;
@@ -2982,6 +3008,7 @@ const ClaudeAPI = {
           throw err;
         }
         if (res.status === 429) {
+          this._last429 = this._now(); // sheds optional calls for a while
           // Free tiers enforce per-minute and per-day caps. Short waits retry
           // in place; a long reset means the quota is genuinely gone — block
           // this entry and fail over to the next one.
