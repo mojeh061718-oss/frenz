@@ -775,7 +775,18 @@ const ClaudeAPI = {
     });
     if (hasDue) return true;
     const pct = lateNight ? 25 : this.OPENER.ROLL_PCT;
-    return this._hash32(String(friend.id) + '|opener|' + this._dayKey(t)) % 100 < pct;
+    // Roll every day of the silence, not just today. The die is per-day-key,
+    // but only "now" was ever rolled — so four days away collapsed to one
+    // 45% chance on arrival, and a skipped-ahead week could land in total
+    // silence. Real absence works the other way: the longer he's gone, the
+    // more certain something is waiting. Capped at a week of catch-up so an
+    // ancient thread doesn't auto-fire.
+    const todayRollK = this._dayKey(t);
+    const startK = Math.max(this._dayKey(lastMsg.ts), todayRollK - 6);
+    for (let dk = startK; dk <= todayRollK; dk++) {
+      if (this._hash32(String(friend.id) + '|opener|' + dk) % 100 < pct) return true;
+    }
+    return false;
   },
 
   unresolvedNote(friend) {

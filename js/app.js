@@ -1374,15 +1374,20 @@ function init() {
   });
   $('#btn-settings').addEventListener('click', openSettings);
   $('#provider-down').addEventListener('click', () => { providerUp(); openSettings(); });
+  // Skipping time without sweeping made the skip pointless: every clock
+  // moved, but nobody was ever ASKED if they'd text during the jump — four
+  // skipped days landed in total silence until the next app relaunch.
   $('#btn-skip-6h').addEventListener('click', () => {
     ClaudeAPI.addTimeOffset(6 * 3600000);
     renderTimeStatus(); updateChatClock();
     toast('Skipped ahead 6 hours — it\'s now ' + fmtClock() + ' for everyone.');
+    setTimeout(() => { if (!sending) sweepOpeners(); }, 600);
   });
   $('#btn-skip-1d').addEventListener('click', () => {
     ClaudeAPI.addTimeOffset(24 * 3600000);
     renderTimeStatus(); updateChatClock();
     toast('Skipped ahead a day.');
+    setTimeout(() => { if (!sending) sweepOpeners(); }, 600);
   });
   $('#btn-time-reset').addEventListener('click', () => {
     ClaudeAPI.resetTimeOffset();
