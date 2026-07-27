@@ -1141,14 +1141,23 @@ function openEntryEditor(id) {
   // Bedrock is addressed by region rather than a base URL, and its model list
   // is fixed rather than fetched.
   const isBedrock = e.kind === 'bedrock';
+  // Photos: Bedrock (Nova Canvas) or xAI direct (grok-imagine). The region
+  // row only means anything on Bedrock.
+  const isXai = ClaudeAPI._isXaiEntry(e);
+  const hasImages = isBedrock || isXai;
   $('#e-region-label').classList.toggle('hidden', !isBedrock);
   $('#e-url').parentElement.classList.toggle('hidden', isBedrock);
-  $('#e-image-wrap').classList.toggle('hidden', !isBedrock);
-  $('#btn-test-image').classList.toggle('hidden', !isBedrock);
+  $('#e-image-wrap').classList.toggle('hidden', !hasImages);
+  $('#btn-test-image').classList.toggle('hidden', !hasImages);
+  $('#e-img-region').parentElement.classList.toggle('hidden', !isBedrock);
   $('#e-img-preview').classList.add('hidden');
-  if (isBedrock) {
+  if (hasImages) {
     $('#e-img-model').value = e.imageModel || '';
     $('#e-img-region').value = e.imageRegion || '';
+    $('#e-img-model').placeholder = isXai ? 'grok-imagine-image' : 'amazon.nova-canvas-v1:0';
+    $('#e-imghint').textContent = isXai
+      ? 'grok-imagine-image (≈2¢/photo) or grok-imagine-image-quality (≈5¢). Same key as chat. Clear the field to turn photos off.'
+      : 'A Bedrock image model ID, e.g. amazon.nova-canvas-v1:0. Clear the field to turn photos off.';
   }
   $('#e-modelhint').textContent = isBedrock
     ? 'Claude models are listed. For anything else on Bedrock — Grok, GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'
@@ -1473,9 +1482,9 @@ function init() {
     const e = draftEntry(selectedEntryId);
     if (!e) return;
     const out = $('#e-test-result');
-    if (!e.apiKey) { out.textContent = '✗ Paste your Bedrock API key first.'; return; }
+    if (!e.apiKey) { out.textContent = '✗ Paste your API key first.'; return; }
     if (!e.imageModel) {
-      e.imageModel = 'amazon.nova-canvas-v1:0';
+      e.imageModel = ClaudeAPI._isXaiEntry(e) ? 'grok-imagine-image' : 'amazon.nova-canvas-v1:0';
       $('#e-img-model').value = e.imageModel;
     }
     out.textContent = 'Generating a test image (can take ~15s)…';

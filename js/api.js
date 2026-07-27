@@ -1740,19 +1740,30 @@ const ClaudeAPI = {
     });
   },
 
-  /* ---------------- photos (Bedrock image models — Nova Canvas) ----------
-     Separate model family from the chat models: text-to-image via the same
-     Bedrock API key. Two candidate routes, tried in order, because browser
-     reachability differs by account/region and only a live call settles it:
-       1. native bedrock-runtime InvokeModel (Bearer API key, Nova body)
-       2. the Mantle host's OpenAI-compatible images route
+  /* ---------------- photos (Bedrock Nova Canvas OR xAI grok-imagine) ----
+     Separate model family from the chat models, same API key as the entry.
+     Two providers:
+       - xAI direct (grok-imagine-image / -quality): OpenAI-compatible
+         /images/generations on api.x.ai — CORS-open, b64_json out.
+         grok-imagine is NOT on Bedrock, so this is the only photo path
+         for a plain xAI key.
+       - Bedrock (Nova Canvas): two candidate routes, tried in order,
+         because browser reachability differs by account/region and only a
+         live call settles it: native InvokeModel, then Mantle's OpenAI-
+         compatible images route.
      Fidelity note: these models generate a NEW person every time, so photo
      prompts steer toward partial/candid shots — which is also exactly what
      a careful married woman would send. */
 
+  _isXaiEntry(entry) {
+    if (!entry || entry.kind !== 'openai') return false;
+    try { return /(^|\.)api\.x\.ai$/i.test(new URL(entry.baseUrl || '').hostname); } catch { return false; }
+  },
+
   imageEntry(settings) {
     return ((settings && settings.pool) || []).find(e =>
-      e && e.enabled && e.kind === 'bedrock' && e.apiKey && e.imageModel) || null;
+      e && e.enabled && e.apiKey && e.imageModel
+      && (e.kind === 'bedrock' || this._isXaiEntry(e))) || null;
   },
 
   _IMAGE_NEGATIVE: 'professional studio photography, posed fashion model, perfect makeup, watermark, text, caption, logo, cartoon, illustration, 3d render, oversaturated, hdr, extra fingers, deformed hands',
@@ -1762,12 +1773,22 @@ const ClaudeAPI = {
       '. Realistic, natural lighting, slight grain, ordinary lived-in home detail, shot casually on a phone.';
   },
 
+  /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
+     map whatever width/height the caller wanted onto the nearest ratio. */
+  _ASPECTS: [['1:1', 1], ['3:4', 3 / 4], ['4:3', 4 / 3], ['2:3', 2 / 3], ['3:2', 3 / 2], ['9:16', 9 / 16], ['16:9', 16 / 9], ['1:2', 1 / 2], ['2:1', 2]],
+  _nearestAspect(w, h) {
+    const r = (w || 1) / (h || 1);
+    return this._ASPECTS.reduce((best, a) => Math.abs(a[1] - r) < Math.abs(best[1] - r) ? a : best)[0];
+  },
+
   async generateImage(entry, description, opts) {
     const o = opts || {};
     const model = entry.imageModel;
     const region = entry.imageRegion || entry.region || 'us-east-1';
     const width = o.width || 768, height = o.height || 1280;
     const prompt = (o.raw ? description : this._imagePrompt(description)).slice(0, 1000);
+
+    if (this._isXaiEntry(entry)) return this._xaiImage(entry, model, prompt, width, height);
 
     const attempts = [
       {
@@ -1817,6 +1838,53 @@ const ClaudeAPI = {
       throw new Error(`Couldn't reach Bedrock's image endpoints in ${region} from the browser (likely CORS). The chat models are unaffected. Check the region, and if it persists this route may need a proxy.`);
     }
     throw lastErr || new Error('Image generation failed.');
+  },
+
+  /* xAI's images route. No size/quality/style params (quality is the model
+     slug, dimensions are aspect_ratio) and no negative-prompt field — the
+     exclusions ride inline in the prompt instead. b64_json, not url: the
+     returned URLs are temporary and a second cross-origin fetch is a second
+     failure mode. */
+  async _xaiImage(entry, model, prompt, width, height) {
+    const base = (entry.baseUrl || '').replace(/\/+$/, '');
+    let res;
+    try {
+      res = await fetch(base + '/images/generations', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + entry.apiKey },
+        body: JSON.stringify({
+          model,
+          prompt: prompt + ' Not an illustration or 3d render; no text, watermarks, or logos.',
+          n: 1,
+          response_format: 'b64_json',
+          aspect_ratio: this._nearestAspect(width, height),
+          resolution: '1k'
+        })
+      });
+    } catch {
+      throw new Error("Couldn't reach xAI's image endpoint — check your internet. The chat models are unaffected.");
+    }
+    if (!res.ok) {
+      let msg = '';
+      try {
+        const e = JSON.parse(await res.text());
+        msg = (e.error && e.error.message) || e.message || '';
+      } catch { /* fall through to status-based message */ }
+      if (res.status === 404) throw new Error(`xAI has no image model called "${model}" — set it to grok-imagine-image in Settings.`);
+      if (res.status === 401 || res.status === 403) throw new Error('Invalid API key for image generation — check Settings.');
+      throw new Error(msg || `Image generation failed (${res.status}).`);
+    }
+    let data = null;
+    try { data = await res.json(); } catch { /* handled below */ }
+    const item = data && data.data && data.data[0];
+    // moderation can decline without an HTTP error — either flagged or empty
+    if (item && item.respect_moderation === false) {
+      throw new Error('the provider declined this photo — she stays text-only this time.');
+    }
+    if (item && item.b64_json) {
+      return 'data:' + (item.mime_type || 'image/png') + ';base64,' + item.b64_json;
+    }
+    throw new Error('xAI answered but returned no image' + (data && data.error ? ' — ' + String(data.error.message || data.error).slice(0, 180) : '.'));
   },
 
   /* Cheap 512px probe for the settings screen: proves key + model access +
