@@ -1438,7 +1438,7 @@ const ClaudeAPI = {
     const wasStrict = this._strictNext;
     this._strictNext = false;
     const strict = wasStrict
-      ? 'That last attempt was empty politeness — an acknowledgment, a well-wish, or a vague status with no content in it. Do not do that. This reply must carry something REAL: a specific detail from your actual life, an opinion, a genuine reaction, or a question you actually want answered. '
+      ? 'That last attempt was empty agreement — pleasantries, or his own words handed back with a "haha yeah" in front. Do not do that. This reply must carry something of YOURS: a specific detail from your actual life, an opinion (including one that differs from his), a genuine reaction in your own words, or a question you actually want answered. Echoing his phrasing back is the least alive thing you can send. '
       : '';
     return `[ ${strict}Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
@@ -1669,7 +1669,8 @@ const ClaudeAPI = {
         const lastUser = [...history].reverse().find(m => m.role === 'user');
         const windingDown = (lastUser && this._classifyUserTurn(lastUser.text) === 'signoff')
           || this._isWithdrawing(history);
-        if (res && res.bubbles && attempt < 2 && !windingDown && this._isFillerReply(res.bubbles)) {
+        if (res && res.bubbles && attempt < 2 && !windingDown
+            && (this._isFillerReply(res.bubbles) || this._isParrotReply(res.bubbles, history))) {
           this._strictNext = true;
           continue;
         }
@@ -2733,6 +2734,30 @@ const ClaudeAPI = {
   _isFillerReply(bubbles) {
     if (!bubbles || !bubbles.length) return false;
     return bubbles.every(b => this._isFillerBubble(b));
+  },
+
+  /* The yes-man detector. The echo guards compare her against HERSELF; no
+     guard ever asked whether she is just handing HIM his own words back.
+     The observed failure: "haha yeah locked away tight" / "our little
+     secret for good lol" / "yeah no big deal lol" — every bubble is his
+     phrasing with an agreement token stapled on. One parrot bubble in a
+     real reply is fine (people do echo); a reply that is NOTHING BUT
+     agreement-echo is dead air and gets one strict regenerate. */
+  _AGREE_TOKENS: new Set('haha hahah hahaha lol lmao yeah yea yes yep yup exactly totally right true fr honestly same ok okay sure definitely 😂 🤣'.split(' ')),
+  _isParrotBubble(bubble, lastUserText) {
+    const u = this._normBubble(lastUserText || '');
+    if (!u) return false;
+    const words = this._normBubble(bubble).split(' ').filter(Boolean);
+    const own = words.filter(w => !this._AGREE_TOKENS.has(w));
+    if (!own.length) return true;              // pure agreement, zero content
+    if (own.length > 12) return false;         // long replies are doing real work
+    return this._echoScore(own.join(' '), u) >= 0.55;  // mostly his words
+  },
+  _isParrotReply(bubbles, history) {
+    if (!bubbles || !bubbles.length) return false;
+    const lastUser = [...(history || [])].reverse().find(m => m.role === 'user');
+    if (!lastUser) return false;
+    return bubbles.every(b => this._isParrotBubble(b, lastUser.text) || this._isFillerBubble(b));
   },
 
   /* Mechanical backstop for the lol-opener tic: prompts are advisory, and a
