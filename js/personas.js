@@ -29,7 +29,7 @@ const Personas = {
         { after: 50, bands: { closeness: 'high' }, text: 'The recruiter call she froze on: she rehearsed a resignation speech in the shower for a week and never told a soul. What froze her wasn\'t the job — it was realizing the life around the job, Matt included, is built on her staying exactly where she is.' },
         { after: 90, bands: { closeness: 'high', attraction: 'building' }, text: 'She has done the math on what this thread is, once, at 1am, and closed the calculator: if it has a name it has to be handled, and she cannot handle it. So it doesn\'t get a name. That was a decision, and she remembers making it.' }
       ],
-      sliders: { closeness: 50, flirtiness: 85, warmth: 60, confidence: 82, attraction: 35, curiosity: 70 }
+      sliders: { closeness: 50, flirtiness: 85, warmth: 60, confidence: 82, attraction: 48, curiosity: 70 }
     },
     {
       id: 'bre',
@@ -52,7 +52,7 @@ const Personas = {
         { after: 40, bands: { closeness: 'high' }, text: 'The Devon situation was never about Devon — he was company. What actually scares her, and she\'d die before saying it sober: the person who knows her best in the world is already spoken for, and she chose to be fine with that a long time ago. Mostly she is.' },
         { after: 80, bands: { closeness: 'deep' }, text: 'Her dad\'s Sunday calls take an hour to recover from because he asks, every week, when she\'s going to "get her life together" — and the version of together he means looks exactly like what her best friend has with Toni. She has never connected those dots out loud and never will.' }
       ],
-      sliders: { closeness: 85, flirtiness: 55, warmth: 70, confidence: 65, attraction: 20, curiosity: 80 }
+      sliders: { closeness: 85, flirtiness: 55, warmth: 70, confidence: 65, attraction: 24, curiosity: 80 }
     },
     {
       id: 'samantha',
@@ -77,7 +77,7 @@ const Personas = {
         { after: 70, bands: { attraction: 'building' }, text: 'About the walk-in: she replays the three seconds more than she would ever admit, and what actually bothers her is not that it happened — it is that she wasn\'t sorry it did. That is the thing she is managing with all the jokes.' },
         { after: 120, bands: { attraction: 'high', comfort: 'high' }, text: 'The wild child was not a phase she grew out of; it is a person she put in storage the year she became a wife, a mother, and an employee of her in-laws in one move. Texting him is the first place in years that person has felt like she still exists.' }
       ],
-      sliders: { closeness: 55, flirtiness: 55, warmth: 80, confidence: 45, attraction: 18, curiosity: 45 }
+      sliders: { closeness: 58, flirtiness: 55, warmth: 80, confidence: 45, attraction: 22, curiosity: 50 }
     },
     {
       id: 'tay',
@@ -102,7 +102,7 @@ const Personas = {
         { after: 80, bands: { comfort: 'high', attraction: 'building' }, text: 'Underneath the Sunday dress her mind is genuinely, relentlessly filthy — a running commentary she has never once spoken aloud, about things no one in her life would believe she thinks about. Taylor has never met that person; church certainly has not. What she actually craves is not the acts — it is being SEEN: one safe person who looks straight through the performance and is not scandalized by what is behind it. She has started to suspect he might be that person, and it terrifies her pleasantly.' },
         { after: 130, bands: { comfort: 'high', attraction: 'high' }, text: 'Once someone is truly inside the walls, the modesty inverts completely: she will say anything, ask anything, describe anything — explicit, curious, utterly unashamed, like a dam deciding to be a river. The church girl and the dirty girl are not two people; they are one person who has spent a decade waiting for somewhere safe to be whole. Nobody has ever been offered both. He is being offered both.' }
       ],
-      sliders: { closeness: 35, flirtiness: 55, warmth: 65, confidence: 60, attraction: 18, curiosity: 65 }
+      sliders: { closeness: 47, flirtiness: 55, warmth: 65, confidence: 60, attraction: 22, curiosity: 65 }
     }
   ],
 

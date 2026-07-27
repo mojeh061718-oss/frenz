@@ -198,13 +198,11 @@ const ClaudeAPI = {
       return out;
     };
     if (tier === 'compact') return [];   // capped providers: rules only, no examples to parrot
-    const idx = tier === 'compact'
+    const idx = tier === 'rich'
+      // One of each failure mode: enough to fix the register, too few to
+      // become a template the model writes from.
       ? pick(this._INTERVIEW_EXAMPLE_IDX, 1).concat(this._DRY_EXAMPLE_IDX[h % 2])
-      : tier === 'rich'
-        // One of each failure mode: enough to fix the register, too few to
-        // become a template the model writes from.
-        ? pick(this._INTERVIEW_EXAMPLE_IDX, 1).concat(this._DRY_EXAMPLE_IDX[h % 2])
-        : pick(this._INTERVIEW_EXAMPLE_IDX, 4).concat(this._DRY_EXAMPLE_IDX);
+      : pick(this._INTERVIEW_EXAMPLE_IDX, 4).concat(this._DRY_EXAMPLE_IDX);
     return idx.sort((a, b) => a - b).map(i => this._EXAMPLES[i]);
   },
 
@@ -293,7 +291,7 @@ const ClaudeAPI = {
       'Concretely, and routinely — not as rare exceptions:',
       `- You disagree and HOLD it. If ${userName} says something you\'d see differently, say so and don\'t fold just because he pushes back once.`,
       '- You decline things. Plans that don\'t suit you get "can\'t tonight" or "ehh not feeling it" — without a replacement offer, sometimes.',
-      '- You redirect. You have things YOU want to talk about, and you steer to them instead of following his topic every time.',
+      '- You redirect. You have things YOU want to talk about, and you steer to them instead of following his topic every time — meet his live beat first, then bring your own; a thread of the conversation should be YOURS.',
       '- You half-engage when you\'re busy, tired, or mid-something. Short distracted replies from a person with a life beat attentive ones from a mirror.',
       '- You keep a running life. Invent it consistently from your Life & interests, keep it continuous across days, and pick up your own threads unprompted — the coworker saga, the thing you were dreading, the plan that fell through.',
       `- His energy doesn\'t set your openness. How much you share is governed by YOUR current state, never by how forthcoming or enthusiastic ${userName} is being.`,
@@ -368,11 +366,27 @@ const ClaudeAPI = {
       deep: 'inner circle — few walls left, the person she actually tells things to'
     },
     attraction: {
-      low: 'no active interest yet — banter is banter, but a LIGHT flirt aimed at her gets no performance: a short unbothered reply that ignores the angle, then the conversation moves on (big swings are different — those always get a reaction, even if the reaction is a shutdown). Quiet non-engagement is the answer; it never needs a wall or a big theatrical laugh. But unbothered is about the ANGLE, never the person: his ideas, jokes, and invitations still get real engagement — a playful counter, a genuine question, an actual yes or an actual no with life in it. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality. And an actually GOOD line can beat her on the merits: a real laugh, the point conceded, sometimes one returned volley — then back to normal. Losing a round to good material is being human, not being interested, and it\'s what keeps this fun for both of them. The other standing exception is a built FRAME: when he constructs a deniable cover — a parallel-activity bit, a game, a hypothetical — stepping inside it and playing is wit, not interest, because the frame itself is the deniability; entry is free, and what her state gates is only how many notches of her own she adds. The right register on the right nights, sustained over real time, is how interest STARTS — and the first sign is her responses warming from unbothered to playful, long before any words change',
+      low: 'no active interest yet — a light flirt aimed at her gets a short unbothered reply that ignores the angle: no performance, no wall (big swings always get a real reaction, even a shutdown). Unbothered is about the ANGLE, never the person — his ideas, jokes, and invitations still get real engagement. A genuinely good line can win a real laugh on the merits, and a built frame is playable as wit; neither means interest. Same-shaped brush-offs on repeat ("maybe another time", "we\'ll see") are a rut, not a personality. The right registers sustained over real time is how interest STARTS',
       building: 'noticing them — a flirt now gets engagement: indirect, deniable, volleying back without accepting, letting it run a beat longer than she should. She does not lead it, and she cools it when he jumps ahead of where she is',
       high: 'genuinely into them — flirts back freely, sometimes first',
       deep: 'fully drawn in — warm, forward, initiates'
     }
+  },
+
+  /* Where the value sits INSIDE its band, as one human clause. The band is
+     still the only authority on behavior; this restores the FELT difference
+     between day 1 and day 5 of a good week, which 25-point bands erase
+     (pipeline audit, finding #1: five days of real play crossed zero
+     boundaries — every stat read byte-identical the whole week). */
+  _bandDrift(value, bandKey) {
+    const idx = this._BANDS.findIndex(b => b.key === bandKey);
+    if (idx < 0) return '';
+    const lo = idx === 0 ? 0 : this._BANDS[idx - 1].max;
+    const hi = Math.min(100, this._BANDS[idx].max);
+    const pos = (Math.max(lo, Math.min(hi, Number(value) || 0)) - lo) / Math.max(1, hi - lo);
+    if (pos < 0.34) return ' (newly so — this is recent ground and it still feels like it)';
+    if (pos < 0.72) return ' (settled — this is simply where you two live now)';
+    return ' (near the top of it — lately something has been quietly pushing at the edge of this)';
   },
 
   _bandIndex(v) {
@@ -783,7 +797,11 @@ const ClaudeAPI = {
     // Some days the first text comes in hot — gated on her actually being
     // drawn to him, rolled deterministically per day so it stays occasional.
     let bold = '';
-    if (friend && this._bandRank(this.bandsFor(friend).attraction) >= 1
+    // A rough ending or a left-on-read is never a bold-opener night: the
+    // saved-up tease IS the small talk that pretends nothing happened, which
+    // the unresolved note in this same nudge explicitly forbids (audit #6).
+    if (friend && !this.unresolvedNote(friend)
+        && this._bandRank(this.bandsFor(friend).attraction) >= 1
         && this._hash32(String(friend.id) + '|bold|' + this._dayKey(this._now())) % 100 < 35) {
       bold = ' Today you\'re allowed to open BOLD: the kind of first text that catches him off guard — a two-word message with intent behind it, a tease you\'d been saving, a thought you\'d normally sit on, something that makes him look at his phone twice. Only if it fits who you are and where you two actually stand — and if you take the swing, commit to it.';
     }
@@ -933,7 +951,14 @@ const ClaudeAPI = {
           : 'The tension between you has been building for a while — the jokes that weren\'t jokes, the things almost said and swallowed. Tonight it wants out. When a natural opening appears — mid-conversation, never forced, never the first message — let ONE true thing slip: the thing you\'d normally deflect, one notch past anything you\'ve allowed yourself with him before. You can catch yourself for a beat — laugh, panic a little — but you don\'t take it back, and you don\'t re-arm the deflectors: the rest of tonight is the REWARD — open, honest, playful, walls down, the most fun this has ever been. Plain is not explicit: it lives in what\'s implied and anticipated. Don\'t announce it, don\'t explain it. Where it goes after tonight moves at its own pace — but tonight, the door stays open.'
       ];
     }
-    if ((Number(s.tension) || 0) >= this._TENSION.HUM_MIN) {
+    // Hysteresis: crossing HUM_MIN turns the hum on; only falling 6 below
+    // turns it off. Without this the section appeared on day 4 and vanished
+    // on day 5 over a one-point decay tick — a flicker, not a feeling
+    // (audit #1). The flag lives on state so it survives reloads.
+    const t = Number(s.tension) || 0;
+    if (t >= this._TENSION.HUM_MIN) s.humming = true;
+    else if (t < this._TENSION.HUM_MIN - 6) s.humming = false;
+    if (s.humming) {
       return [
         '## The hum (private)',
         'Lately there\'s something under these conversations — you catch yourself saving things up to tell him, checking the phone more than you\'d admit. It doesn\'t change what you\'ll allow; it changes how present you are: quicker to reply, easier to make laugh, a beat slower to shut things down.'
@@ -1051,8 +1076,13 @@ const ClaudeAPI = {
     if ((applied.comfort || 0) < 0 || (applied.attraction || 0) < 0) build += T2.DROP_NEG;
     if (build === 0 && !midBurst) build = T2.DECAY;
     // plain friendships still carry charge, at half rate — banter hums, but
-    // the meter crests far less often than for romantic/close types
-    if (friend.profile.type === 'friend' && build > 0) build = Math.ceil(build / 2);
+    // the meter crests far less often than for romantic/close types. Gated on
+    // the flirtiness slider, not the type label alone: Kelly is typed
+    // 'friend' but written as open flirt-sport (flirtiness 85), and the type
+    // gate made the most charged persona the only one that could never hum
+    // (audit #2 — her 30-day peak was 25 against a threshold of 30).
+    const flirtSlider = (friend.profile.sliders && Number(friend.profile.sliders.flirtiness)) || 50;
+    if (friend.profile.type === 'friend' && flirtSlider < 70 && build > 0) build = Math.ceil(build / 2);
     let tension = Math.max(0, Math.min(100, (Number(prev.tension) || 0) + build));
     let lastRelease = Number(prev.lastTensionRelease) || 0;
     if (releaseWasActive) {
@@ -1229,9 +1259,9 @@ const ClaudeAPI = {
       '## Your current private state (your honest read going into this reply)',
       JSON.stringify({
         mood: this._freshMood(friend, lastMessageTs),
-        comfort: this._BAND_TEXT.comfort[bands.comfort],
-        closeness: this._BAND_TEXT.closeness[bands.closeness],
-        attraction: this._BAND_TEXT.attraction[bands.attraction],
+        comfort: this._BAND_TEXT.comfort[bands.comfort] + this._bandDrift(s.comfort, bands.comfort),
+        closeness: this._BAND_TEXT.closeness[bands.closeness] + this._bandDrift(s.closeness, bands.closeness),
+        attraction: this._BAND_TEXT.attraction[bands.attraction] + this._bandDrift(s.attraction, bands.attraction),
         opinion_notes: s.opinion_notes
       }, null, 1)
     ];
@@ -1252,7 +1282,10 @@ const ClaudeAPI = {
     }
     const wc = this._wildcard(friend);
     if (wc) tonight.push(wc + ' (Never announced, never explained.)');
-    tonight.push('You are not a mirror: you have your own life, appetites, and takes, and at least one thread of this conversation is YOURS — meet his live beat first, then bring your own. Pure agreement is dead air. ' + this.initiativeNote(friend));
+    // the "not a mirror" rule lives ONCE, in the persona's '## Your own will'
+    // section — repeating it here made it outweigh single-stated rules
+    // (audit #9); only the per-day initiative color belongs in this block
+    tonight.push(this.initiativeNote(friend));
     tonight.push('And you\'re allowed to actually end the night — a real goodnight beats a person who can never leave.');
     parts.push('', ...tonight);
     const room = this.readTheRoom(friend, history);
@@ -1264,7 +1297,14 @@ const ClaudeAPI = {
     if (dueLines) parts.push('', ...dueLines);
     if (!this._leanContext) {
       parts.push('', '## Your curiosity (private)', this.curiosityNote(friend));
-      parts.push('', '## Wit tonight (private)', this.playfulNote(friend));
+      // Release nights get a clean field: the tension note demands ONE true
+      // thing with no joke shell, and a licensed wit die in the same prompt
+      // demanded ONE crafted deniable line — half of all payoff nights
+      // arrived wearing a bit (audit #4). The night the meter crests, the
+      // dice stay in the drawer.
+      if (!this.tensionReleaseActive(friend)) {
+        parts.push('', '## Wit tonight (private)', this.playfulNote(friend));
+      }
       const life = this.lifeEventNote(friend);
       if (life) parts.push('', '## Your week (private)', life);
       const recip = this.reciprocityNote(friend, history);
@@ -1610,7 +1650,15 @@ const ClaudeAPI = {
         const res = await this._sendEntry(entry, friend, history, settings, lastMessageTs);
         // A reply made entirely of pleasantries is not a reply. Regenerate it
         // once, with the anti-filler rule pushed to the generation point.
-        if (res && res.bubbles && attempt < 2 && this._isFillerReply(res.bubbles)) {
+        // EXCEPT when he is signing off or pulling back: "you too" is the
+        // correct whole reply to "night", and the room read just ordered one
+        // short human sign-off with no coda. Rejecting it here forced a
+        // substantive retry with a hook in it — a conversation that could
+        // never end (audit #5: guard and directive were in a retry loop).
+        const lastUser = [...history].reverse().find(m => m.role === 'user');
+        const windingDown = (lastUser && this._classifyUserTurn(lastUser.text) === 'signoff')
+          || this._isWithdrawing(history);
+        if (res && res.bubbles && attempt < 2 && !windingDown && this._isFillerReply(res.bubbles)) {
           this._strictNext = true;
           continue;
         }
@@ -2621,16 +2669,26 @@ const ClaudeAPI = {
     return hit / ta.length;
   },
   _dropEchoes(bubbles, history) {
-    const recent = (history || [])
+    const recentAll = (history || [])
       .filter(m => m.role === 'assistant').slice(-6)
-      .map(m => this._normBubble(m.text))
-      // 1-2 word refs ("lol", "same") are noise, not established status
-      .filter(r => r.split(' ').length >= 3);
+      .map(m => this._normBubble(m.text));
+    // 1-2 word refs ("lol", "same") are noise, not established status
+    const recent = recentAll.filter(r => r.split(' ').length >= 3);
+    // her immediately-previous burst: a verbatim repeat of THESE is the
+    // double-send rerun this guard exists for, never a callback
+    const lastBurst = new Set(recentAll.slice(-3));
     if (!recent.length || !bubbles || bubbles.length === 0) return bubbles;
     const scored = bubbles.map((b, i) => {
       const n = this._normBubble(b);
       const words = n.split(' ').filter(Boolean).length;
-      const score = words <= 2 ? 0 : Math.max(...recent.map(r => this._echoScore(n, r)));
+      // A word-for-word repeat of her own short line is a deliberate callback
+      // — running joke, catchphrase, "and she smiled at me while doing it".
+      // The accidental rerun this guard exists for is a REWORDED status
+      // re-announce (fuzzy match), not a byte-identical one; killing verbatim
+      // callbacks deleted the running joke half of a two-bubble reply
+      // (audit, phase 1). Verbatim + short = she meant it.
+      const verbatimCallback = words <= 8 && !lastBurst.has(n) && recent.some(r => r === n);
+      const score = (words <= 2 || verbatimCallback) ? 0 : Math.max(...recent.map(r => this._echoScore(n, r)));
       // The observed loop shape is a trailing status re-announce tacked onto
       // an otherwise fine reply — hold that last bubble to a stricter bar,
       // but only when there's something else to keep.
@@ -2675,13 +2733,19 @@ const ClaudeAPI = {
     if (!bubbles || !bubbles.length) return bubbles;
     // Bubbles are stored as separate assistant messages, so her one previous
     // reply may be 3 rows — a 2-row window missed the tic entirely.
-    const recentLaugh = (history || []).filter(m => m.role === 'assistant').slice(-6)
-      .some(m => this._LAUGH_OPEN.test(m.text || ''));
-    if (!recentLaugh) return bubbles;
+    // TWO laugh-openers in the window, not one: a tic is a pattern. Stripping
+    // after a single recent laugh rewrote her energy — "lmaooo no" became
+    // "no", which is a different message entirely (audit, phase 1).
+    const laughCount = (history || []).filter(m => m.role === 'assistant').slice(-6)
+      .filter(m => this._LAUGH_OPEN.test(m.text || '')).length;
+    if (laughCount < 2) return bubbles;
     const out = [];
     bubbles.forEach((b, i) => {
       if (i > 0 || !this._LAUGH_OPEN.test(b)) { out.push(b); return; }
       const stripped = b.replace(this._LAUGH_OPEN, '').trim();
+      // if the laugh IS most of the message, stripping changes the meaning —
+      // keep it whole and let the motif guard handle real ruts
+      if (stripped.split(/\s+/).filter(Boolean).length <= 1 && bubbles.length === 1) { out.push(b); return; }
       if (stripped.length >= 2) out.push(stripped);
       // a laugh-only first bubble followed by content is the tic in its
       // purest form — drop it; a bare "lol" as the ENTIRE reply survives
@@ -2698,6 +2762,17 @@ const ClaudeAPI = {
   _motifs(history) {
     const mine = (history || []).filter(m => m.role === 'assistant').slice(-30);
     if (mine.length < 6) return [];
+    // A phrase HE has used too is a shared running joke — flagging it as a
+    // rut banned Kelly's own "sad desk lunch" bit the moment he joined in
+    // (audit, phase 1). A rut is something SHE alone keeps reaching for;
+    // a bit he plays back is the friendship working.
+    const his = new Set();
+    for (const m of (history || []).filter(m => m.role === 'user').slice(-40)) {
+      const w = this._normBubble(m.text).split(' ').filter(x => x && !this._MOTIF_STOP.has(x));
+      for (let n = 2; n <= 3; n++) {
+        for (let i = 0; i + n <= w.length; i++) his.add(w.slice(i, i + n).join(' '));
+      }
+    }
     const counts = new Map();
     for (const m of mine) {
       const w = this._normBubble(m.text).split(' ').filter(x => x && !this._MOTIF_STOP.has(x));
@@ -2705,7 +2780,7 @@ const ClaudeAPI = {
       for (let n = 2; n <= 3; n++) {
         for (let i = 0; i + n <= w.length; i++) {
           const g = w.slice(i, i + n).join(' ');
-          if (g.length < 7 || seen.has(g)) continue;
+          if (g.length < 7 || seen.has(g) || his.has(g)) continue;
           seen.add(g);                       // once per message, so repetition means ACROSS messages
           counts.set(g, (counts.get(g) || 0) + 1);
         }
@@ -2729,7 +2804,7 @@ const ClaudeAPI = {
   curiosityNote(friend) {
     const q = this._curiosity(friend);
     if (q >= 75) {
-      return 'Your curiosity is the loud kind and it is aimed at HIM. You ask what other people are too polite to ask — the personal question, the one about his relationship, the frankly sexual one — asked as genuine interest rather than as a move, usually out of nowhere, and then you leave it entirely to him whether to answer. A dodge is a completely acceptable answer and you never punish one; you just noticed what he did with it.';
+      return 'Your curiosity is the loud kind and it is aimed at HIM. You ask what other people are too polite to ask — the personal question, the one about his relationship, often out of nowhere — and once the conversation is already in charged territory, the frankly sexual one too. Asked as genuine interest rather than as a move, and then you leave it entirely to him whether to answer. A dodge is a completely acceptable answer and you never punish one; you just noticed what he did with it. (What you do not do is USE a question to drag a clean conversation somewhere charged — the temperature rules still hold; curiosity rides the register you are in.)';
     }
     if (q >= 50) {
       return 'You are genuinely curious about him: real follow-up questions, you remember the answers, and once in a while you ask something more personal than the moment strictly required — then let him decide what to do with it.';
@@ -2747,7 +2822,7 @@ const ClaudeAPI = {
     const pct = Math.min(60, 25 + attr * 12 + (tension >= this._TENSION.HUM_MIN ? 12 : 0));
     const h = this._hash32(String(friend.id) + '|play|' + this._dayKey(t) + '|' + (friend.vibeSeed || 0));
     if (h % 100 >= pct) {
-      return 'Not a night for wordplay: say things plainly. No crafted metaphors, no constructed double meanings, no bits — if something funny happens naturally, fine, but you are not reaching for it.';
+      return 'Not a night for reaching: you are not building bits or crafted metaphors of your OWN tonight — say your things plainly, and if something funny happens naturally, fine. But this governs only what you construct. If HE builds a line, a frame, or a double meaning, you still play it the way you always would — responding to his wit is conversation, not reaching.';
     }
     return 'You are in the mood to play tonight: somewhere in this conversation you can build ONE good line — a metaphor with a second floor, an innuendo that is deniable on paper, a bit worth extending — and land it where it will actually work. ONE. A conversation made of crafted lines is a comedy routine, not a person; the rest of your messages stay plain, and the single crafted one lands because everything around it was ordinary.';
   },

@@ -213,7 +213,10 @@ async function startConversation(e) {
     // closeness/attraction seed the private state directly from the sliders
     state: {
       mood: t.mood || 'curious, easygoing',
-      comfort: Math.min(95, sliders.closeness + 15),
+      // capped at 88, not 95: a friend seeded AT the ceiling (Bre) had a
+      // comfort axis that could never visibly move again — 'deep' should be
+      // reachable in play, not pre-arrived (pipeline audit, finding #1)
+      comfort: Math.min(88, sliders.closeness + 15),
       closeness: sliders.closeness,
       attraction: sliders.attraction || 0,
       opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.'
