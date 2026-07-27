@@ -66,11 +66,22 @@ before (`_motifs` flagging a lazy test fixture); trust the run, then decide.
 - Input budget and output ceiling are separate. Persona/history spend input;
   reasoning + visible reply spend output (`max_tokens`). Starving output is
   what makes replies short and shallow.
-- The budget is a ceiling, not a target: Grok's window is 1M, so nothing
-  should ever be trimmed in practice. If `_buildPlainRequest` reports
-  `omitted > 0` at the default budget, something is wrong — find it, don't
-  raise a reserve constant.
+- The raw history window is bounded BY DESIGN (`HISTORY_WINDOW`), not by the
+  context budget. A 1M window is not free: focused context beats
+  full-history stuffing on real chat benchmarks (Chroma context-rot /
+  LongMemEval: 20-30 point drops), old turns are distractors, and a long run
+  of her own replies teaches the model to imitate itself — stale, rutted,
+  mirroring. So `omitted > 0` is the NORMAL state of a long relationship;
+  scenes + memories + the recap carry everything older than the window.
+- The budget (`contextTokens`) stays a safety ceiling only. If the char-room
+  packing loop — not the window — is what's trimming at the default budget,
+  something is wrong; find it, don't raise a reserve constant.
 - Any trim must be disclosed in-prompt ("aren't shown"), never silent.
+- Cache invariant: the system message is byte-stable per (friend, tier) —
+  all volatile content (dynamic block, recap, plist, phi) rides as injected
+  messages after the history, and the window's left edge moves only in
+  `HISTORY_STEP` chunks. Breaking either busts the provider's prefix cache
+  on every send.
 
 ## Ship checklist (every deploy)
 

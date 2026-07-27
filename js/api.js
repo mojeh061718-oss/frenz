@@ -11,12 +11,15 @@
 
    Prompt assembly (per roleplay-community practice: the lowest position in
    context dominates generation):
-     1. system block — identity, life, rules, few-shot examples (cached,
-        byte-identical per tier)
-     2. chat history
+     1. system block — identity, life, rules, few-shot examples (genuinely
+        byte-identical per tier, so the provider's prefix cache holds)
+     2. chat history — a bounded sticky window (HISTORY_WINDOW), never the
+        whole transcript; older turns live on as scenes + memories
      3. depth-4 injection — a compact bracketed PList with mutable state as
         behavioral BANDS (never raw numbers), rebuilt every turn
-     4. post-history instructions (PHI) — 2-3 terse sentences of law, last
+     4. post-history dynamic block — tonight's color, memories, scenes,
+        recap of the non-negotiables; volatile, so it rides after history
+     5. post-history instructions (PHI) — 2-3 terse sentences of law, last
 
    State is delta-based: the model reports -3..+3 movements with a reason and
    confidence; the APP owns the invariants (clamping, positivity-bias
@@ -30,6 +33,21 @@ const ClaudeAPI = {
      memory layer (scored memories + immutable scene records) beats raw
      history. The window stays generous but bounded. */
   MAX_HISTORY: 240,
+
+  /* The RAW recent window is deliberately much smaller than the context
+     budget. A giant window is not free: focused context beats full-history
+     stuffing on real chat benchmarks (LongMemEval via Chroma's context-rot
+     study — 20-30 point drops from stuffing), old turns act as distractors,
+     and a long run of her own past replies teaches the model to imitate
+     itself — the exact stale/rut/mirror failure this app exists to avoid.
+     Everything older than the window is still lived: scenes, memories, and
+     the relationship recap carry it, and the trim is disclosed in-prompt.
+     HISTORY_STEP makes the window's left edge advance in chunks instead of
+     sliding every turn, so the provider's automatic prefix cache stays warm
+     for ~STEP turns between advances (the window breathes between
+     HISTORY_WINDOW and HISTORY_WINDOW+STEP-1 messages). */
+  HISTORY_WINDOW: 72,
+  HISTORY_STEP: 24,
 
   /* App-owned state invariants. */
   STATE_TUNING: {
@@ -101,7 +119,13 @@ const ClaudeAPI = {
       kind: 'openai', label: 'Grok (xAI)',
       baseUrl: 'https://api.x.ai/v1',
       keyUrl: 'console.x.ai', keyHint: 'Key at console.x.ai — the model list is fetched live once the key is in.',
-      models: ['grok-4.3', 'grok-4-fast-reasoning', 'grok-4'],
+      // grok-4.3 is the one to use for persona chat. The old grok-4 /
+      // grok-4-fast slugs were retired May 2026 and silently redirect to
+      // grok-4.3 anyway (billed at 4.3 rates) — listing them only misleads.
+      // grok-4.5 exists but the roleplay community rates it a persona
+      // regression (assistant voice reasserts), so it isn't suggested here;
+      // the live /models fetch still offers it to anyone who wants it.
+      models: ['grok-4.3'],
       contextTokens: 1000000, rpd: null, tpm: null
     },
     bedrock: {
@@ -111,7 +135,7 @@ const ClaudeAPI = {
       keyHint: 'New AWS accounts get $200 in credits, and they work here. Bedrock console \u2192 API keys \u2192 generate a long-term key.',
       // Bedrock model ids are region-gated and change; these are suggestions
       // in a datalist, not a whitelist. Anything you paste is sent as typed.
-      models: ['xai.grok-4.3', 'xai.grok-4-fast-reasoning-v1:0', 'xai.grok-4-fast-non-reasoning-v1:0'],
+      models: ['xai.grok-4.3'],
       contextTokens: 1000000, rpd: null, tpm: null
     }
   },
@@ -1321,11 +1345,11 @@ const ClaudeAPI = {
       const recip = this.reciprocityNote(friend, history);
       if (recip) parts.push('', '## Something you have noticed (private)', recip);
     }
-    const motifs = this._motifs(history);
-    if (motifs.length) {
-      parts.push('', '## Phrasing you have worn out (private)',
-        'You have leaned on ' + motifs.map(m => '"' + m + '"').join(', ') + ' repeatedly. That is a rut and he can feel it. Retire ' + (motifs.length > 1 ? 'them' : 'it') + ' — do not use ' + (motifs.length > 1 ? 'those phrasings' : 'that phrasing') + ' again, and do not swap in a synonym for the same bit. Find something else to talk about entirely.');
-    }
+    // The worn-out-phrasing (motif) callout moved to _phi: sampling-level
+    // anti-repetition is unavailable on Grok (reasoning models reject the
+    // penalty params), so the rut warning is the only pressure left and it
+    // belongs at the generation point, not up here. Lives in exactly one
+    // place — invariant #2.
     const tensionLines = this.tensionNote(friend);
     if (tensionLines) parts.push('', ...tensionLines);
     const reveals = this.unlockedReveals(friend, exchangedCount);
@@ -1428,19 +1452,27 @@ const ClaudeAPI = {
     '',
     ''
   ],
-  _phi(friend, jsonMode, turn) {
+  _phi(friend, jsonMode, turn, motifs) {
     const p = friend.profile;
     const userName = p.userName || 'them';
     const h = this._hash32(String(friend.id) + '|phi|' + (turn || 0));
     const emphasis = this._PHI_EMPHASIS[h % this._PHI_EMPHASIS.length];
     const shape = this._PHI_SHAPE[(h >>> 3) % this._PHI_SHAPE.length];
+    // The rut callout rides HERE, at the generation point, because it is the
+    // only anti-repetition pressure the model gets: Grok's reasoning models
+    // reject presence/frequency penalties, and a warning 20k tokens up in a
+    // context block loses to the repeated phrasing sitting right there in
+    // the visible history.
+    const rut = (motifs && motifs.length)
+      ? `You have worn out ${motifs.map(m => '"' + m + '"').join(', ')} — he can feel the rerun. Retired as of now: never that phrasing again, no synonym wearing the same bit, and the next reply leans somewhere else entirely. `
+      : '';
     // consume-once: the flag must not leak into later turns (or later tests)
     const wasStrict = this._strictNext;
     this._strictNext = false;
     const strict = wasStrict
       ? 'That last attempt was empty agreement — pleasantries, or his own words handed back with a "haha yeah" in front. Do not do that. This reply must carry something of YOURS: a specific detail from your actual life, an opinion (including one that differs from his), a genuine reaction in your own words, or a question you actually want answered. Echoing his phrasing back is the least alive thing you can send. '
       : '';
-    return `[ ${strict}Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
+    return `[ ${strict}Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}${rut}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
@@ -1801,11 +1833,11 @@ const ClaudeAPI = {
   _sendEntry(entry, friend, history, settings, lastMessageTs) {
     if (entry.kind === 'bedrock' && !this._bedrockIsClaude(entry.model)) {
       const oai = this._bedrockOaiEntry(entry);
-      const call = (messages, format) => this._openaiRequest(oai, messages, format);
+      const call = (messages, format) => this._openaiRequest(oai, messages, format, friend.id);
       return this._plainProviderChat(oai, call, friend, history, lastMessageTs);
     }
     if (entry.kind === 'openai') {
-      const call = (messages, format) => this._openaiRequest(entry, messages, format);
+      const call = (messages, format) => this._openaiRequest(entry, messages, format, friend.id);
       return this._plainProviderChat(entry, call, friend, history, lastMessageTs);
     }
     return this._sendAnthropic(entry, friend, history, settings, lastMessageTs);
@@ -1835,7 +1867,14 @@ const ClaudeAPI = {
       'anthropic-dangerous-direct-browser-access': 'true'
     };
 
-    const trimmed = history.slice(-this.MAX_HISTORY);
+    // Same sticky bounded window as _buildPlainRequest — the raw transcript
+    // is capped by design (self-imitation/context-rot), and the left edge
+    // advances in chunks so the cached prefix survives between turns.
+    const winStart = Math.max(
+      history.length - this.MAX_HISTORY,
+      Math.max(0, Math.floor((history.length - this.HISTORY_WINDOW) / this.HISTORY_STEP) * this.HISTORY_STEP)
+    );
+    const trimmed = history.slice(Math.max(0, winStart));
     while (trimmed.length > 1 && trimmed[0].role !== 'user') trimmed.shift();
     const omitted = history.length - trimmed.length;
 
@@ -1850,7 +1889,7 @@ const ClaudeAPI = {
     const wrap = (t) => midOk ? t : '<system-reminder>\n' + t + '\n</system-reminder>';
     let msgs = trimmed.map(m => ({ role: m.role, content: m.text }));
     msgs = this._injectDepth(msgs, wrap(this._plist(friend)), injRole);
-    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length)) });
+    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._motifs(history))) });
 
     const body = {
       model,
@@ -2057,8 +2096,15 @@ const ClaudeAPI = {
   /* Build the system prompt + trimmed window + injections for a pool entry,
      to a strict token budget with a strict priority order: (1) full persona
      incl. pacing/anti-interview rules, (2) current private state, (3) the
-     most relevant memories + scenes, (4) as much recent history as fits.
-     The persona is never trimmed to make room for old chat. */
+     most relevant memories + scenes, (4) a bounded window of recent history
+     (HISTORY_WINDOW — bounded by design, not by the budget; see the constant).
+     The persona is never trimmed to make room for old chat.
+
+     Cache layout: the system message holds ONLY byte-stable content (persona
+     + reply-format instruction). Everything that changes per turn — the
+     dynamic block, recap, plist, phi — rides as injected messages AFTER the
+     history, so the provider's automatic prefix cache (system + stable
+     history head) survives across turns instead of busting at byte 0. */
   _buildPlainRequest(entry, friend, history, lastMessageTs, instr, jsonMode) {
     const budgetTokens = this._effectiveBudget(entry);
     const budgetChars = budgetTokens * 4; // rough chars-per-token heuristic
@@ -2066,7 +2112,7 @@ const ClaudeAPI = {
     // tight budget still needs the trimmed prompt, so compact wins.
     // 'compact' is a survival mode for a context too small to hold the whole
     // character — it drops examples and the enhancement blocks, which visibly
-    // flattens her. Grok's window is 200k, so this should never trigger; it
+    // flattens her. Grok's budget is 1M, so this should never trigger; it
     // stays only so a hand-lowered budget degrades instead of overflowing.
     const tier = budgetTokens <= 10000 ? 'compact'
       : (this._isCapableModel(entry, null) ? 'rich' : 'full');
@@ -2076,7 +2122,7 @@ const ClaudeAPI = {
     const recap = this._recapBlock(friend);
 
     // Shares of the window, but bounded at both ends. The floor stops a tiny
-    // context from dropping recall entirely; the ceiling stops a 200k window
+    // context from dropping recall entirely; the ceiling stops a huge budget
     // from meaning 90k chars of remembered trivia crowding out the actual
     // conversation. More recall is not linearly better — past a point it just
     // dilutes what matters.
@@ -2086,14 +2132,23 @@ const ClaudeAPI = {
 
     const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
     const plist = this._plist(friend);
-    const phi = this._phi(friend, jsonMode, history.length);
+    const phi = this._phi(friend, jsonMode, history.length, this._motifs(history));
     // 6144 reserve: the dynamic block grew (room read, thermostat, tonight,
     // due notes) and the old 4096 left history packing flush against the cap
     // edge — variance in wildcard/omitted-note length must never breach it
     const overhead = persona.length + probe.length + recap.length + instr.length + plist.length + phi.length + 7424;
     const room = Math.max(1000, budgetChars - overhead);
 
-    const capped = history.slice(-this.MAX_HISTORY);
+    // Sticky bounded window: the left edge advances only every HISTORY_STEP
+    // messages, so the request prefix is byte-identical for ~STEP turns at a
+    // stretch (prefix-cache friendly) and the raw window never exceeds
+    // HISTORY_WINDOW + STEP - 1 messages regardless of the token budget.
+    // MAX_HISTORY stays as the absolute ceiling.
+    const windowStart = Math.max(
+      history.length - this.MAX_HISTORY,
+      Math.max(0, Math.floor((history.length - this.HISTORY_WINDOW) / this.HISTORY_STEP) * this.HISTORY_STEP)
+    );
+    const capped = history.slice(Math.max(0, windowStart));
     const kept = [];
     let used = 0;
     for (let i = capped.length - 1; i >= 0; i--) {
@@ -2109,7 +2164,15 @@ const ClaudeAPI = {
 
     const injRole = this._injectionRole(entry);
     let msgs = kept.map(m => ({ role: m.role, content: m.text }));
+    const newestMsg = msgs[msgs.length - 1]; // his live message — never trimmed
     msgs = this._injectDepth(msgs, plist, injRole);
+    // The volatile blocks live AFTER the history: post-history is the
+    // highest-attention zone (where state actually holds against drift), and
+    // keeping them out of the system message is what lets the prefix cache
+    // hit. Order: state/dynamic first, recap of the non-negotiables, then phi
+    // stays the very last thing before generation.
+    const dynMsg = { role: injRole, content: dynamic + '\n\n' + recap };
+    msgs.push(dynMsg);
     msgs.push({ role: injRole, content: phi });
 
     // Final safety trim. The reserve above is an estimate, and the dynamic
@@ -2117,11 +2180,11 @@ const ClaudeAPI = {
     // chase a magic constant every time a rule is added, measure the finished
     // request and drop the oldest history until it genuinely fits.
     this._leanContext = false;
-    const system = persona + '\n\n' + dynamic + '\n\n' + recap + '\n\n' + instr;
+    const system = persona + '\n\n' + instr;
     let total = system.length + msgs.reduce((s, m) => s + m.content.length, 0);
     let trimmed = omitted;
     while (total > budgetChars && msgs.length > 2) {
-      const drop = msgs.findIndex(m => !m.content.startsWith('[') && !m.content.startsWith('<system-reminder'));
+      const drop = msgs.findIndex(m => m !== dynMsg && m !== newestMsg && !m.content.startsWith('[') && !m.content.startsWith('<system-reminder'));
       if (drop < 0 || drop >= msgs.length - 1) break;
       total -= msgs[drop].content.length;
       msgs.splice(drop, 1);
@@ -2344,9 +2407,9 @@ const ClaudeAPI = {
     return lines;
   },
 
-  /* Weaker models drift out of character more, and instructions near the end
-     of the system block carry the most weight — the non-negotiables get
-     restated right before the output format. */
+  /* Weaker models drift out of character more, and instructions near the
+     generation point carry the most weight — the non-negotiables get
+     restated in the post-history block, right before phi. */
   _recapBlock(friend) {
     const p = friend.profile;
     return [
@@ -2385,16 +2448,33 @@ const ClaudeAPI = {
   _oaiFormat: {},
   _maxTokensParam: {},
 
-  async _openaiRequest(entry, messages, format) {
+  /* Grok 4.x models on the xAI API are reasoning models, and reasoning
+     models reject presence_penalty/frequency_penalty/stop with a 400 rather
+     than ignoring them. Detecting by model id (not just the learned 400)
+     saves the wasted first round-trip AND keeps intent honest: on these
+     models there is NO sampling-level anti-repetition — the prompt-side rut
+     machinery (_motifs → _phi) is the only pressure, by design. */
+  _PENALTY_FREE_MODEL: /^(xai\.)?grok-[4-9]/i,
+
+  async _openaiRequest(entry, messages, format, convId) {
     const base = (entry.baseUrl || '').replace(/\/+$/, '');
     const url = base + '/chat/completions';
     const headers = { 'content-type': 'application/json' };
     if (entry.apiKey) headers.authorization = 'Bearer ' + entry.apiKey;
+    // xAI-documented cache-affinity header: a stable id per conversation
+    // routes repeat requests to the same server, maximizing automatic
+    // prefix-cache hits (faster first token, cached-input pricing). Only for
+    // api.x.ai — an unexpected custom header can fail CORS preflight on
+    // other OpenAI-compatible hosts.
+    let host = '';
+    try { host = new URL(base).hostname; } catch { /* relative/bad base: no header */ }
+    if (convId && /(^|\.)api\.x\.ai$/i.test(host)) headers['x-grok-conv-id'] = String(convId);
     if (!(base in this._oaiFormat)) this._oaiFormat[base] = 2;
 
     // Heal ids already saved with Gemini's "models/" prefix — those 404 on
     // every send, and the user has no way to see why.
     const modelId = String(entry.model || '').trim();
+    const penaltyFree = this._PENALTY_FREE_MODEL.test(modelId);
 
     while (true) {
       const level = format === 'json' ? this._oaiFormat[base] : 0;
@@ -2407,7 +2487,13 @@ const ClaudeAPI = {
       const body = { model: modelId, messages };
       if (!this._noTempParam[base]) body.temperature = 1.0;
       // gentle week-scale anti-rut pressure; dropped per base URL on rejection
-      if (!this._noPresenceParam[base]) body.presence_penalty = 0.3;
+      if (!penaltyFree && !this._noPresenceParam[base]) body.presence_penalty = 0.3;
+      // Pin reasoning effort instead of inheriting a default that shifts per
+      // model (and per retired-slug redirect): 'low' keeps time-to-first-
+      // token chat-shaped — 'high' can sit near 30s, which reads as her
+      // ignoring him. Endpoints that don't know the param drop it via the
+      // 400-learning below.
+      if (penaltyFree && !this._noReasoningParam[base]) body.reasoning_effort = 'low';
       // Newer OpenAI-compatible endpoints renamed max_tokens; which one an
       // endpoint accepts is learned from its first rejection, per base URL.
       // 16384, not 4096: reasoning models spend from max_tokens BEFORE the
@@ -3032,7 +3118,7 @@ const ClaudeAPI = {
      404s on every message with nothing pointing at the cause. A provider may
      only ever fall back to its own models. */
   PRESET_FALLBACK_MODELS: {
-    grok: ['grok-4.3', 'grok-4-fast-reasoning', 'grok-4']
+    grok: ['grok-4.3']
   },
 
   /* Empty for an unknown/custom endpoint — better to admit we don't know and
