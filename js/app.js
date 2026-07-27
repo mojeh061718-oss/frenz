@@ -958,6 +958,21 @@ async function sendMessage() {
         ClaudeAPI.mergeMemories(friend, result.state.new_memories);
       }
     }
+    // pipeline record for the analysis archive: what actually happened on
+    // this send (model served, latency, tokens, trims, hidden retries).
+    // Same fire-and-forget ledger as the state events; the relationship
+    // chart ignores it (no applied/after/tension fields).
+    if (result.meta) {
+      DB.addEvent({
+        friendId: friend.id, ts: ClaudeAPI._now(), kind: 'send',
+        model: result.meta.servedModel, latencyMs: result.meta.latencyMs,
+        inTok: result.meta.inTok, outTok: result.meta.outTok, cachedTok: result.meta.cachedTok,
+        omitted: result.omitted || 0, attempts: result.meta.attempts || 1,
+        strictRegen: !!result.meta.strictRegen, parseSalvage: !!result.meta.parseSalvage,
+        skippedCount: (result.skipped || []).length
+      }).catch(() => {});
+    }
+
     friend.lastActivity = ClaudeAPI._now();
     refreshTails();
     friend.lastPreview = previews.length ? previews[previews.length - 1] : text;
@@ -1208,6 +1223,27 @@ async function exportBackup() {
   a.download = `frenz-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+/* The analysis archive: everything the JSON backup holds, but as one
+   readable Markdown document — numbered transcripts, the private-state
+   ledger inline, and auto-diagnostics. Built for handing to an analyst
+   ("here's what feels off"), not for restoring. Zero API calls. */
+async function exportArchive() {
+  const friends = await DB.listFriends();
+  const messagesByFriend = {}, eventsByFriend = {};
+  for (const f of friends) {
+    messagesByFriend[f.id] = await DB.getMessages(f.id);
+    eventsByFriend[f.id] = await DB.getEvents(f.id);
+  }
+  const md = ClaudeAPI.buildArchive(friends, messagesByFriend, eventsByFriend);
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `frenz-archive-${new Date().toISOString().slice(0, 10)}.md`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('Archive downloaded — share the file when reporting what feels off.');
 }
 
 /* ---------------- wiring ---------------- */
@@ -1480,6 +1516,7 @@ function init() {
     renderPool();
   });
   $('#btn-export').addEventListener('click', exportBackup);
+  $('#btn-archive').addEventListener('click', () => exportArchive().catch(err => toast('Archive failed: ' + err.message)));
   $('#btn-import').addEventListener('click', () => $('#import-file').click());
   $('#import-file').addEventListener('change', async (e) => {
     const file = e.target.files[0];

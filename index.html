@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">7.3</span></h1>
+        <h1 class="logo">frenz <span class="app-version">7.4</span></h1>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
       <div id="friends-list" class="friends-list"></div>
@@ -271,6 +271,10 @@
           <button class="btn-secondary" id="btn-export">Export backup</button>
           <button class="btn-secondary" id="btn-import">Import backup</button>
         </div>
+        <div class="row">
+          <button class="btn-secondary" id="btn-archive">Download analysis archive</button>
+        </div>
+        <p class="muted">The archive is one readable document: full transcripts with reference numbers, each friend's private state changes inline, and automatic quality checks. When a conversation feels off, download this and share it when asking for help — no API usage.</p>
         <input type="file" id="import-file" accept="application/json" class="hidden">
         <button class="btn-danger" id="btn-wipe">Erase all data</button>
         <p class="muted small">frenz is a private, local-first app. Nothing is uploaded anywhere except your messages to the Claude API using your own key.</p>

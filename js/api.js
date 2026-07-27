@@ -1688,6 +1688,7 @@ const ClaudeAPI = {
   async _chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry) {
     const MAX_ATTEMPTS = 4;
     let lastErr;
+    let strictRegen = false; // a filler/parrot reply forced a silent redo
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         const res = await this._sendEntry(entry, friend, history, settings, lastMessageTs);
@@ -1704,9 +1705,13 @@ const ClaudeAPI = {
         if (res && res.bubbles && attempt < 2 && !windingDown
             && (this._isFillerReply(res.bubbles) || this._isParrotReply(res.bubbles, history))) {
           this._strictNext = true;
+          strictRegen = true;
           continue;
         }
         this._strictNext = false;
+        // attempts and the invisible quality-regenerate are part of the
+        // send's story — stamp them on the meta for the analysis archive
+        if (res && res.meta) { res.meta.attempts = attempt; res.meta.strictRegen = strictRegen; }
         return res;
       } catch (err) {
         lastErr = err;
@@ -1916,6 +1921,7 @@ const ClaudeAPI = {
     }
 
     let res;
+    const t0 = this._now();
     try {
       res = await fetch(url, {
         method: 'POST',
@@ -1950,9 +1956,18 @@ const ClaudeAPI = {
 
     const data = await res.json();
     if (data.usage) this._recordTokens(entry ? entry.id : 'anthropic', (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0));
+    const au = data.usage || {};
+    const meta = {
+      servedModel: data.model || model,
+      inTok: au.input_tokens || 0,
+      outTok: au.output_tokens || 0,
+      cachedTok: au.cache_read_input_tokens || 0,
+      latencyMs: this._now() - t0,
+      parseSalvage: false
+    };
 
     if (data.stop_reason === 'refusal') {
-      return { refusal: true, bubbles: [], state: null, omitted };
+      return { refusal: true, bubbles: [], state: null, omitted, meta };
     }
 
     const textBlock = (data.content || []).find(b => b.type === 'text');
@@ -1964,7 +1979,8 @@ const ClaudeAPI = {
     }
 
     const reply = this._finishReply(textBlock.text);
-    return { bubbles: reply.bubbles, state: reply.state, omitted };
+    meta.parseSalvage = !reply.parsedOk;
+    return { bubbles: reply.bubbles, state: reply.state, omitted, meta };
   },
 
   /* ---------------- plain providers (pool entries) ---------------- */
@@ -2027,7 +2043,7 @@ const ClaudeAPI = {
     if (mode === 'single') {
       const { req, r } = await this._plainCall(entry, call,
         () => this._buildPlainRequest(entry, friend, history, lastMessageTs, this._jsonInstruction(), true), 'json');
-      if (r.refusal) return { refusal: true, bubbles: [], state: null, omitted: req.omitted };
+      if (r.refusal) return { refusal: true, bubbles: [], state: null, omitted: req.omitted, meta: r.meta };
       const reply = this._finishReply(r.text);
       const ok = reply.parsedOk && !!reply.state;
       if (probing) {
@@ -2036,13 +2052,15 @@ const ClaudeAPI = {
       } else {
         this._recordParse(modeKey, ok);
       }
-      return { bubbles: reply.bubbles, state: reply.state, omitted: req.omitted };
+      const meta = Object.assign({ parseSalvage: !reply.parsedOk }, r.meta);
+      return { bubbles: reply.bubbles, state: reply.state, omitted: req.omitted, meta };
     }
 
     // split mode — visible reply first, then a best-effort state update
     const { req, r: r1 } = await this._plainCall(entry, call,
       () => this._buildPlainRequest(entry, friend, history, lastMessageTs, this._plainInstruction(), false), 'text');
-    if (r1.refusal) return { refusal: true, bubbles: [], state: null, omitted: req.omitted };
+    if (r1.refusal) return { refusal: true, bubbles: [], state: null, omitted: req.omitted, meta: r1.meta };
+    const meta = Object.assign({ parseSalvage: false, splitState: true }, r1.meta);
     // strip any state blob the model wrote into the visible reply — it must
     // never render, but it can still serve as the state update
     const ex = this._extractStateBlob(r1.text);
@@ -2060,7 +2078,7 @@ const ClaudeAPI = {
 
     let state = ex.state ? this._normStateRaw(ex.state) : null;
     if (state) {
-      return { bubbles, state, omitted: req.omitted };
+      return { bubbles, state, omitted: req.omitted, meta };
     }
     try {
       const p = friend.profile;
@@ -2081,9 +2099,15 @@ const ClaudeAPI = {
       if (raw && (raw.mood !== undefined || raw.comfort_delta !== undefined || raw.comfort !== undefined)) {
         state = this._normStateRaw(raw);
       }
+      // the state call is part of this send's real cost — fold it in
+      if (r2.meta) {
+        meta.inTok = (meta.inTok || 0) + (r2.meta.inTok || 0);
+        meta.outTok = (meta.outTok || 0) + (r2.meta.outTok || 0);
+        meta.cachedTok = (meta.cachedTok || 0) + (r2.meta.cachedTok || 0);
+      }
     } catch { /* best-effort — the previous state simply carries forward */ }
 
-    return { bubbles, state, omitted: req.omitted };
+    return { bubbles, state, omitted: req.omitted, meta };
   },
 
   _effectiveBudget(entry) {
@@ -2441,6 +2465,225 @@ const ClaudeAPI = {
     ].join('\n');
   },
 
+  /* ---------------- analysis archive ----------------
+     Everything below runs LOCALLY at export time — zero API calls. The
+     output is a single readable Markdown document built for expert review:
+     numbered messages (stable references), the private-state ledger woven
+     inline where each change happened, and an auto-diagnostics appendix
+     that cites message numbers. The JSON backup (DB.exportAll) remains the
+     restore path; this is the "hand it to an analyst" path. */
+
+  _archRef(i) { return '#' + String(i + 1).padStart(4, '0'); },
+
+  _archDay(ts) {
+    return new Date(ts || 0).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  },
+
+  _archTime(ts) {
+    return new Date(ts || 0).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  },
+
+  _archStateLine(ev) {
+    const ap = ev.applied || {};
+    const moves = ['comfort', 'closeness', 'attraction']
+      .filter(k => ap[k]) .map(k => `${k} ${ap[k] > 0 ? '+' : ''}${ap[k]}`);
+    const bits = [];
+    if (moves.length) bits.push(moves.join(', '));
+    else bits.push('no movement');
+    if (typeof ev.tension === 'number') bits.push(`tension ${ev.tension}`);
+    if (typeof ev.confidence === 'number') bits.push(`conf ${ev.confidence}`);
+    let line = `  » state: ${bits.join(' · ')}`;
+    if (ev.reason) line += ` — "${String(ev.reason).replace(/\n/g, ' ')}"`;
+    return line;
+  },
+
+  _archSendLine(ev) {
+    const bits = [String(ev.model || 'unknown model')];
+    if (ev.latencyMs) bits.push((ev.latencyMs / 1000).toFixed(1) + 's');
+    if (ev.inTok) {
+      const cache = ev.cachedTok ? ` (cache ${Math.round(100 * ev.cachedTok / ev.inTok)}%)` : '';
+      bits.push(`in ${ev.inTok}${cache} · out ${ev.outTok || 0}`);
+    }
+    if (ev.omitted) bits.push(`${ev.omitted} older msgs summarized`);
+    if (ev.attempts > 1) bits.push(`${ev.attempts} attempts`);
+    if (ev.strictRegen) bits.push('filler/parrot regenerated');
+    if (ev.parseSalvage) bits.push('parse salvaged');
+    if (ev.skippedCount) bits.push(`${ev.skippedCount} provider(s) skipped`);
+    return `  » sent via ${bits.join(' · ')}`;
+  },
+
+  /* Detector sweep over a friend's FULL history, citing message numbers.
+     The live detectors only ever see the recent window; here they run in
+     rolling windows across everything, so old ruts are found too. */
+  _archDiagnostics(msgs) {
+    const out = [];
+    const assistant = msgs.map((m, i) => ({ m, i })).filter(x => x.m.role === 'assistant' && x.m.text);
+
+    // worn phrases: rolling windows so historical ruts surface with WHERE
+    const ruts = new Map(); // motif -> {firstRef, lastRef, windows}
+    for (let start = 0; start < msgs.length; start += 40) {
+      const slice = msgs.slice(start, start + 80);
+      for (const motif of this._motifs(slice)) {
+        const hits = slice.map((m, j) => ({ m, j }))
+          .filter(x => x.m.role === 'assistant' && this._normBubble(x.m.text || '').includes(motif));
+        if (!hits.length) continue;
+        const rec = ruts.get(motif) || { firstRef: this._archRef(start + hits[0].j), lastRef: '', windows: 0, count: 0 };
+        rec.lastRef = this._archRef(start + hits[hits.length - 1].j);
+        rec.windows++;
+        rec.count = Math.max(rec.count, hits.length);
+        ruts.set(motif, rec);
+      }
+    }
+    if (ruts.size) {
+      for (const [motif, r] of ruts) {
+        out.push(`- **Worn phrase**: "${motif}" — ${r.count}+ uses between ${r.firstRef} and ${r.lastRef}${r.windows > 1 ? ` (persisted across ${r.windows} windows)` : ''}`);
+      }
+    } else {
+      out.push('- **Worn phrases**: none detected — no phrase she alone leaned on 3+ times in any window');
+    }
+
+    // mirroring: her reply vs the user message right before it
+    let echoSum = 0, echoN = 0;
+    const spikes = [];
+    for (const { m, i } of assistant) {
+      let j = i - 1;
+      while (j >= 0 && msgs[j].role !== 'user') j--;
+      if (j < 0 || !msgs[j].text) continue;
+      const e = this._echoScore(m.text, msgs[j].text);
+      echoSum += e; echoN++;
+      if (e >= 0.55) spikes.push(this._archRef(i));
+    }
+    const echoAvg = echoN ? echoSum / echoN : 0;
+    out.push(`- **Mirroring** (her words vs his preceding message): average ${echoAvg.toFixed(2)}${echoAvg >= 0.35 ? ' — ELEVATED, she is echoing him' : ' — healthy'}${spikes.length ? `; heavy-echo replies at ${spikes.slice(0, 12).join(', ')}${spikes.length > 12 ? ` (+${spikes.length - 12} more)` : ''}` : ''}`);
+
+    // interview tell
+    const q = assistant.filter(x => /\?\s*$/.test(x.m.text)).length;
+    const qRate = assistant.length ? q / assistant.length : 0;
+    out.push(`- **Question endings**: ${Math.round(qRate * 100)}% of her messages${qRate > 0.35 ? ' — ELEVATED, interviewing instead of talking' : ' — healthy'}`);
+
+    // cadence: flat reply length is the bot rhythm
+    const lens = assistant.map(x => x.m.text.length).sort((a, b) => a - b);
+    if (lens.length >= 8) {
+      const med = lens[Math.floor(lens.length / 2)];
+      const iqr = lens[Math.floor(lens.length * 0.75)] - lens[Math.floor(lens.length * 0.25)];
+      out.push(`- **Reply length**: median ${med} chars, middle-spread ${iqr}${iqr < Math.max(8, med * 0.3) ? ' — FLAT, replies are all the same size' : ' — varied'}`);
+    }
+
+    // filler receipts
+    const filler = assistant.filter(x => this._isFillerBubble(x.m.text)).map(x => this._archRef(x.i));
+    if (filler.length) out.push(`- **Filler replies** (courtesy with nobody home): ${filler.slice(0, 12).join(', ')}${filler.length > 12 ? ` (+${filler.length - 12} more)` : ''}`);
+    else out.push('- **Filler replies**: none detected');
+
+    return { lines: out, flags: [
+      ...(ruts.size ? [`${ruts.size} worn phrase${ruts.size > 1 ? 's' : ''}`] : []),
+      ...(echoAvg >= 0.35 ? ['mirroring elevated'] : []),
+      ...(qRate > 0.35 ? ['interview tell'] : []),
+      ...(filler.length ? [`${filler.length} filler`] : [])
+    ] };
+  },
+
+  /* The whole archive: index + one section per friend. Pure function of the
+     stored data — callable headless. messagesByFriend / eventsByFriend are
+     maps keyed by friend id, exactly as read from DB. */
+  buildArchive(friends, messagesByFriend, eventsByFriend) {
+    const lines = [];
+    const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    const sections = [];
+    const index = [];
+
+    for (const f of (friends || [])) {
+      const msgs = (messagesByFriend && messagesByFriend[f.id]) || [];
+      const events = ((eventsByFriend && eventsByFriend[f.id]) || []).slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      const p = f.profile || {};
+      const s = f.state || {};
+      const name = p.name || 'unnamed';
+      const diag = this._archDiagnostics(msgs);
+      const first = msgs.find(m => m.ts), last = [...msgs].reverse().find(m => m.ts);
+      const span = first && last
+        ? `${new Date(first.ts).toLocaleDateString()} – ${new Date(last.ts).toLocaleDateString()}`
+        : 'no dated messages';
+      index.push(`- **${name}** — ${msgs.length} messages · ${span}${diag.flags.length ? ` · flags: ${diag.flags.join(', ')}` : ' · no red flags'}`);
+
+      const sec = [];
+      sec.push(`\n\n---\n\n# ${name}`);
+      sec.push('');
+      sec.push(`Type: ${p.type || 'friend'}${p.established ? ' (long-established)' : ''} · created ${f.createdAt ? new Date(f.createdAt).toLocaleDateString() : 'unknown'}`);
+      if (p.personality) sec.push(`Personality: ${p.personality}`);
+      if (p.style) sec.push(`Texting style: ${p.style}`);
+      if (p.interests) sec.push(`Her life: ${p.interests}`);
+      const bands = this.bandsFor(f);
+      sec.push(`Current state: comfort ${s.comfort ?? '?'} (${bands.comfort}) · closeness ${s.closeness ?? '?'} (${bands.closeness}) · attraction ${s.attraction ?? '?'} (${bands.attraction})${typeof s.tension === 'number' ? ` · tension ${s.tension}` : ''}`);
+      if (s.mood) sec.push(`Mood: ${s.mood}`);
+      if (s.opinion_notes) sec.push(`Her private read on him: ${s.opinion_notes}`);
+      if (s.unsaid) sec.push(`Unsaid: ${s.unsaid}`);
+
+      const mems = (f.memories || []).map(m => this._normMemory(m));
+      sec.push('', '## What she remembers');
+      if (mems.length) mems.forEach(m => sec.push(`- (imp ${m.importance}${m.pinned ? ', pinned' : ''}) ${m.text}`));
+      else sec.push('- nothing recorded yet');
+      const scenes = f.scenes || [];
+      if (scenes.length) {
+        sec.push('', '### Scenes (her summaries of older conversation)');
+        scenes.forEach(sc => sec.push(`- ${(sc && sc.text) || sc}`));
+      }
+
+      sec.push('', '## Transcript');
+      sec.push('(References like #0042 are stable message numbers. » lines are her PRIVATE state ledger and pipeline records — invisible to both sides of the chat.)');
+      let evIdx = 0;
+      let lastDay = '';
+      let prevTs = 0;
+      // events that predate the first message (rare: absence drift on day 1)
+      const firstTs = (msgs[0] && msgs[0].ts) || Infinity;
+      while (evIdx < events.length && (events[evIdx].ts || 0) < firstTs) {
+        sec.push(this._archEventLine(events[evIdx])); evIdx++;
+      }
+      msgs.forEach((m, i) => {
+        const ts = m.ts || 0;
+        const day = ts ? this._archDay(ts) : '';
+        if (day && day !== lastDay) {
+          sec.push('', `— ${day} —`);
+          lastDay = day;
+        } else if (prevTs && ts - prevTs > 36 * 3600 * 1000) {
+          sec.push(`(${Math.round((ts - prevTs) / 86400000)} days silent)`);
+        }
+        const who = m.role === 'user' ? (p.userName || 'Him') : name;
+        const text = m.photo ? `[photo: ${m.photoDesc || 'no description'}]` : String(m.text || '').replace(/\n+/g, ' / ');
+        sec.push(`${this._archRef(i)} · ${ts ? this._archTime(ts) : '??'} · ${who}: ${text}`);
+        // events up to the next message's ts ride under this message
+        const nextTs = (msgs[i + 1] && msgs[i + 1].ts) || Infinity;
+        while (evIdx < events.length && (events[evIdx].ts || 0) <= nextTs) {
+          const line = this._archEventLine(events[evIdx]);
+          if (line) sec.push(line);
+          evIdx++;
+        }
+        if (ts) prevTs = ts;
+      });
+
+      sec.push('', '## Auto-diagnostics (computed locally at export — cite these numbers back when reporting what feels off)');
+      sec.push(...diag.lines);
+      sections.push(sec.join('\n'));
+    }
+
+    lines.push(`# frenz analysis archive — ${today}`);
+    lines.push('');
+    lines.push('Generated locally by the app; contains full transcripts, the private-state ledger, and auto-diagnostics. Message numbers (#0042) are stable references for discussing specific moments.');
+    lines.push('', '## Index');
+    lines.push(...(index.length ? index : ['- no friends yet']));
+    lines.push(...sections);
+    return lines.join('\n') + '\n';
+  },
+
+  _archEventLine(ev) {
+    if (!ev) return '';
+    if (ev.kind === 'send') return this._archSendLine(ev);
+    if (ev.applied || ev.deltas || typeof ev.tension === 'number') {
+      // the synthetic absence event is a state event with a telltale reason
+      if (/absence/i.test(ev.reason || '')) return `  » absence drift: ${ev.reason}`;
+      return this._archStateLine(ev);
+    }
+    return '';
+  },
+
   /* ---------------- transports ---------------- */
 
   // Per-base-URL adaptations learned from an endpoint's first rejection:
@@ -2507,6 +2750,7 @@ const ClaudeAPI = {
       else if (level === 1) body.response_format = { type: 'json_object' };
 
       let res;
+      const t0 = this._now();
       try {
         res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
       } catch {
@@ -2604,10 +2848,23 @@ const ClaudeAPI = {
 
       const data = await res.json();
       if (data.usage && data.usage.total_tokens) this._recordTokens(entry.id, data.usage.total_tokens);
+      // Everything below used to be discarded here — kept now as `meta` so
+      // the analysis archive can show what actually happened per send:
+      // which model the provider really served (redirected slugs differ from
+      // the requested id), token spend with the cached split, latency.
+      const u = data.usage || {};
+      const meta = {
+        servedModel: data.model || modelId,
+        inTok: u.prompt_tokens || 0,
+        outTok: u.completion_tokens || 0,
+        cachedTok: (u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens)
+          || (u.input_tokens_details && u.input_tokens_details.cached_tokens) || 0,
+        latencyMs: this._now() - t0
+      };
       const choice = data.choices && data.choices[0];
       // The provider's own safety layer declined — same handling as an
       // Anthropic refusal: transient, never persisted, never routed around.
-      if (choice && choice.finish_reason === 'content_filter') return { refusal: true };
+      if (choice && choice.finish_reason === 'content_filter') return { refusal: true, meta };
       const text = choice && choice.message && choice.message.content;
       if (!text || !text.trim()) {
         const err = new Error('Empty response — retrying…');
@@ -2615,7 +2872,7 @@ const ClaudeAPI = {
         err.transport = true;
         throw err;
       }
-      return { text };
+      return { text, meta };
     }
   },
 
