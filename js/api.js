@@ -1906,8 +1906,8 @@ const ClaudeAPI = {
 
   _IMAGE_NEGATIVE: 'professional studio photography, posed fashion model, perfect makeup, watermark, text, caption, logo, cartoon, illustration, 3d render, oversaturated, hdr, extra fingers, deformed hands',
 
-  // Inline avoid-clause for routes with no negativeText parameter (xAI,
-  // Pollinations) — same intent as _IMAGE_NEGATIVE, phrased as prose.
+  // Inline avoid-clause for routes with no negativeText parameter (xAI) —
+  // same intent as _IMAGE_NEGATIVE, phrased as prose.
   _IMAGE_AVOID: ' Not an illustration or 3d render; no text, watermarks, or logos.',
 
   /* Face-out-of-frame is the consistency mechanism: these models roll a new
@@ -1943,11 +1943,31 @@ const ClaudeAPI = {
   _SHOTS: [
     'First-person POV photo looking down at her own lap and legs',
     'First-person POV looking straight down her own body from chest height, everything above the collarbone out of frame past the top edge',
-    'Bathroom mirror photo with the phone held up flat and completely covering her face, only her body and the arm holding it visible',
+    'Full-length mirror photo of her outfit, the phone held up in front of her head and completely hiding her face in the reflection, her whole outfit visible from shoes to shoulders',
     'First-person POV looking down at her own hands and what she is holding, nothing above the wrists in frame',
     'First-person POV of the room in front of her, her own legs stretched out along the bottom edge of the frame',
     'First-person POV looking down at herself sitting, thighs and knees filling the lower half of the frame'
   ],
+  _SHOT_MIRROR: 2,
+
+  /* The shot has to follow what she is actually showing him, not a hash.
+     "here's my outfit" taken as a POV-down-at-her-lap frame cannot show an
+     outfit at all — the only framing that answers that request is the
+     full-length mirror, where the phone is what hides her face. Content
+     wins; the hash only breaks ties for generic scenes so those still
+     rotate. */
+  _SHOT_HINTS: [
+    [/\b(outfit|wearing|dress|dressed up|new (top|dress|jeans|skirt)|fit check|ootd|getting ready|going out|heels|before i (go|leave))\b/i, 2],
+    [/\b(holding|hands?|nails|mug|cup|coffee|wine glass|book|keys|phone case)\b/i, 3],
+    [/\b(view|window|out(side)?|room|kitchen|tv|screen|sunset|street|balcony)\b/i, 4],
+    [/\b(legs|lap|blanket|couch|bed|thighs|knees|curled up|under the covers)\b/i, 0]
+  ],
+  _shotFor(desc) {
+    const s = String(desc || '');
+    for (const [re, idx] of this._SHOT_HINTS) if (re.test(s)) return idx;
+    return this._hash32(s);
+  },
+
   _imagePrompt(desc, shotIdx) {
     const shot = this._SHOTS[((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length];
     // Composition first (it steers the whole frame), then her scene, then the
@@ -1958,8 +1978,13 @@ const ClaudeAPI = {
     // "in the kitchen at night, just got home, heels off". The app's own rule
     // for these is suggestion over explicitness; the prompt now says so
     // instead of assuming it.
+    // The face rule is carried by the composition, but it is also stated
+    // plainly as a backstop — the mirror shot is the one framing where a
+    // reflection could still put a face in frame, and a capable model that
+    // reads the instruction should have it available to follow.
     return shot + '. ' + desc +
-      '. She is dressed, in ordinary everyday clothes.' +
+      '. Her face is not visible anywhere in the frame or in any reflection.' +
+      ' She is dressed, in ordinary everyday clothes.' +
       ' Unedited snapshot straight off a phone sensor, the kind sent on Snapchat and forgotten:' +
       ' harsh direct on-camera flash with hard falloff into darkness, blown-out highlights on nearest skin and fabric,' +
       ' crushed muddy shadows, auto white balance slightly wrong with a colour cast, visible high-ISO luminance noise and JPEG artefacts,' +
@@ -1982,7 +2007,7 @@ const ClaudeAPI = {
     const width = o.width || 768, height = o.height || 1280;
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
-    const shotIdx = o.shot !== undefined ? o.shot : this._hash32(String(description || ''));
+    const shotIdx = o.shot !== undefined ? o.shot : this._shotFor(description);
     const prompt = (o.raw ? description : this._imagePrompt(description, shotIdx)).slice(0, 1000);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
