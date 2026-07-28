@@ -2120,6 +2120,13 @@ const ClaudeAPI = {
     throw new Error('xAI answered but returned no image' + (data && data.error ? ' — ' + String(data.error.message || data.error).slice(0, 180) : '.'));
   },
 
+  /* Cheap square probe for the settings screen: proves key + model access +
+     browser reachability in one shot, and shows the actual picture. Raw
+     prompt, because this is testing the pipe, not her photo style. */
+  testImage(entry) {
+    return this.generateImage(entry, 'a coffee mug on a kitchen counter, morning light', { width: 512, height: 512, raw: true });
+  },
+
   /* Prompt section injected ONLY when an image model is configured — she
      gains the ability the moment it exists, and never hears about it before. */
   photoNote(settings) {

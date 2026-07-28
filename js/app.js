@@ -1520,7 +1520,21 @@ function init() {
   });
   $('#e-photos-only').addEventListener('change', () => {
     const e = draftEntry(selectedEntryId);
-    if (e) e.photosOnly = $('#e-photos-only').checked;
+    if (!e) return;
+    const want = $('#e-photos-only').checked;
+    // Ticking this on the entry that actually serves chat silently leaves the
+    // app with no chat provider at all — the failure looks like "she stopped
+    // replying", miles from the checkbox that caused it. Refuse it instead.
+    if (want) {
+      const others = poolDraft.filter(o => o !== e && o.enabled && !o.photosOnly && entryHasKey(o));
+      if (!others.length) {
+        $('#e-photos-only').checked = false;
+        e.photosOnly = false;
+        toast('That is the provider running your chats — turn it on only for a second key added just for photos.', 5200);
+        return;
+      }
+    }
+    e.photosOnly = want;
     renderPool();
   });
   $('#btn-test-image').addEventListener('click', async () => {
