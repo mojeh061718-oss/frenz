@@ -1374,6 +1374,8 @@ const ClaudeAPI = {
   },
 
   buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines, history) {
+    // recomputed per request; _phi reads it after this returns
+    this._witLicensed = false;
     const s = friend.state;
     const bands = this.bandsFor(friend);
     const parts = [
@@ -1425,6 +1427,7 @@ const ClaudeAPI = {
       // dice stay in the drawer.
       if (!this.tensionReleaseActive(friend)) {
         parts.push('', '## Wit tonight (private)', this.playfulNote(friend));
+        this._witLicensed = true;   // read by _phi, so the joke ask stands down
       }
       const life = this.lifeEventNote(friend);
       if (life) parts.push('', '## Your week (private)', life);
@@ -1524,6 +1527,15 @@ const ClaudeAPI = {
      target rotate deterministically per (friend, turn): each reply gets the
      same rules, one rotating spotlight, and a varying shape ask — which is
      also how real texting varies. */
+  /* One of these rides the final instruction each turn. Three of the five
+     are deliberately PLAIN asks, because the failure this rotation exists to
+     prevent is her sounding written. The joke-playing option is the odd one
+     out and is now paired against the wit licence in _phi: when tonight's
+     dynamic block has already handed her a crafted-line budget, telling her
+     ALSO to play the joke stacks two "be funny" orders on one reply, and the
+     measured result was consecutive punchlines — "we're just gonna laugh it
+     off like the pros we are", then "knocking is for amateurs" — which is
+     the sitcom voice her persona explicitly forbids. */
   _PHI_EMPHASIS: [
     'This one: react to the specific thing he just said before anything else.',
     'This one: mostly give your own — something from your day or the thing you were already thinking.',
@@ -1531,6 +1543,9 @@ const ClaudeAPI = {
     'This one: if there is a joke or an implication in his message, play it rather than answering it straight.',
     ''
   ],
+  _PHI_JOKE_IDX: 3,
+  // Substituted for the joke ask when wit is already licensed tonight.
+  _PHI_PLAIN: 'This one: plain and ordinary — no crafted line, no punchline, just talk.',
   _PHI_SHAPE: [
     'Keep it to one short bubble this time.',
     'Two bubbles feels right here — the reaction, then the substance.',
@@ -1542,7 +1557,13 @@ const ClaudeAPI = {
     const p = friend.profile;
     const userName = p.userName || 'them';
     const h = this._hash32(String(friend.id) + '|phi|' + (turn || 0));
-    const emphasis = this._PHI_EMPHASIS[h % this._PHI_EMPHASIS.length];
+    let emphasis = this._PHI_EMPHASIS[h % this._PHI_EMPHASIS.length];
+    // Never stack two be-funny orders on one reply (invariant #3: blocks that
+    // co-occur must not pull the same way). If tonight already licensed a
+    // crafted line, the joke ask becomes its opposite.
+    if (h % this._PHI_EMPHASIS.length === this._PHI_JOKE_IDX && this._witLicensed) {
+      emphasis = this._PHI_PLAIN;
+    }
     const shape = this._PHI_SHAPE[(h >>> 3) % this._PHI_SHAPE.length];
     // The rut callout rides HERE, at the generation point, because it is the
     // only anti-repetition pressure the model gets: Grok's reasoning models
@@ -1562,16 +1583,37 @@ const ClaudeAPI = {
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
-     positioned after a user message and before an assistant message so
-     Anthropic's mid-conversation system rules are satisfied. Short chats skip
-     it — the persona block is still fresh at position zero. */
+     positioned after a user message so mid-conversation system rules are
+     satisfied.
+
+     This used to search only BACKWARD from depth-4 for a user→assistant
+     boundary, and gave up entirely if it hit the start without finding one.
+     Every conversation in this app opens with HER greeting — [assistant,
+     assistant, user, …] — so at the start there is no such boundary at or
+     before depth-4, and the injection silently never happened. Her binding
+     traits were therefore absent from the high-attention slot for the whole
+     opening of every thread, which is precisely the window where the voice
+     gets set. Measured on a real transcript: missing at 3 messages AND at 6.
+     Now it searches forward as well, falls back to sitting right after the
+     most recent user message, and runs from the very first reply — a short
+     chat is when the character most needs anchoring, not least. */
   _injectDepth(msgs, content, role) {
     const out = msgs.slice();
-    if (out.length >= 5) {
-      let idx = out.length - 4;
-      while (idx > 0 && !(out[idx - 1].role === 'user' && out[idx].role === 'assistant')) idx--;
-      if (idx > 0) out.splice(idx, 0, { role, content });
+    if (!out.length) return out;
+    const isBoundary = (i) => i > 0 && out[i - 1].role === 'user';
+    let idx = -1;
+    // preferred depth, then outward in both directions
+    const want = Math.max(1, out.length - 4);
+    for (let d = 0; d < out.length; d++) {
+      if (isBoundary(want - d)) { idx = want - d; break; }
+      if (isBoundary(want + d)) { idx = want + d; break; }
     }
+    // last resort: immediately after the newest user message
+    if (idx < 0) {
+      for (let i = out.length - 1; i > 0; i--) if (out[i - 1].role === 'user') { idx = i; break; }
+    }
+    if (idx < 0) idx = out.length; // all-assistant history (her greeting only)
+    out.splice(idx, 0, { role, content });
     return out;
   },
 
@@ -3513,9 +3555,12 @@ const ClaudeAPI = {
     // "no", which is a different message entirely (audit, phase 1).
     // window of 8, not 6: the archive's Tay thread ran "haha yeah" openers
     // exactly far enough apart that a 6-window never saw two at once
-    const laughCount = (history || []).filter(m => m.role === 'assistant').slice(-8)
-      .filter(m => this._LAUGH_OPEN.test(m.text || '')).length;
-    if (laughCount < 2) return bubbles;
+    const recentMine = (history || []).filter(m => m.role === 'assistant').slice(-6);
+    const laughCount = recentMine.filter(m => this._LAUGH_OPEN.test(m.text || '')).length;
+    // ONE recent laugh-opener is already enough: her own style says most of
+    // her messages carry no laugh token at all, and a 2-in-8 threshold let a
+    // run of "lol …" / "lol …" / "lol …" through before it ever fired.
+    if (laughCount < 1) return bubbles;
     const out = [];
     bubbles.forEach((b, i) => {
       if (i > 0 || !this._LAUGH_OPEN.test(b)) { out.push(b); return; }
