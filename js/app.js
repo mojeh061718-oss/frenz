@@ -808,6 +808,16 @@ async function deliverBubble(friend, b, atTs) {
     return '📷 Photo';
   } catch (e) {
     $('#typing').classList.add('hidden');
+    // Record image failures the way send failures are recorded, so the
+    // analysis archive can show WHY a photo never arrived — a content
+    // decision and a bad parameter need opposite fixes and look identical
+    // from the outside.
+    DB.addEvent({
+      friendId: friend.id, ts: ClaudeAPI._now(), kind: 'imgerr',
+      declined: !!e.declined, status: e.status || 0,
+      message: String(e.providerMessage || e.message || '').slice(0, 200),
+      desc: String(desc || '').slice(0, 160)
+    }).catch(() => {});
     toast('Her photo didn\'t send — ' + e.message, 6000);
     return null;
   } finally {

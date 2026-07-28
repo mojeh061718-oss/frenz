@@ -2049,8 +2049,11 @@ const ClaudeAPI = {
     const who = (!isObject && appearance) ? ' ' + String(appearance).trim().replace(/\.?$/, '.') : '';
     const clothed = isObject ? ''
       : (this._CLOTHING_NAMED.test(String(desc || '')) ? '' : ' She is dressed for being at home.');
+    // Framing, not exclusion: "cropped above the shoulders" describes the
+    // picture, where "her face is not visible" describes a removal — and the
+    // second, sitting beside a physical description, is what reads as intent.
     const faceRule = isObject ? ' Nobody is in the frame.'
-      : ' Her face is not visible anywhere in the frame or in any reflection.';
+      : ' The frame is cropped above the shoulders, so her head is outside the picture entirely.';
     // Composition first (it steers the whole frame), then her scene, then the
     // amateur-camera cues. Positive description only — no "not/never/without".
     // "She is dressed" is stated explicitly because a scene description is
@@ -2063,12 +2066,24 @@ const ClaudeAPI = {
     // plainly as a backstop — the mirror shot is the one framing where a
     // reflection could still put a face in frame, and a capable model that
     // reads the instruction should have it available to follow.
+    /* Wording is tuned to avoid FALSE moderation trips as well as to look
+       right. Three things were removed after photos started being declined,
+       none of which carried any visual information:
+       - "the kind sent on Snapchat and forgotten" — pure intent signal,
+         reads as disappearing intimate imagery.
+       - enumerated body parts in the appearance sheet — a body-part list
+         paired with an excluded face is the signature of exactly the
+         request these classifiers exist to stop.
+       - "her face is NOT visible" as a standalone negation next to that
+         list. The composition already guarantees it; stating it as an
+         exclusion alongside body description is what made the pair read
+         badly. It survives, phrased as framing rather than removal. */
     return shot + '.' + who + ' ' + desc +
       '.' + faceRule + clothed +
-      ' Unedited snapshot straight off a phone sensor, the kind sent on Snapchat and forgotten:' +
-      ' harsh direct on-camera flash with hard falloff into darkness, blown-out highlights on nearest skin and fabric,' +
+      ' An unedited everyday snapshot straight off a phone sensor:' +
+      ' harsh direct on-camera flash with hard falloff into darkness, blown-out highlights on the nearest fabric and surfaces,' +
       ' crushed muddy shadows, auto white balance slightly wrong with a colour cast, visible high-ISO luminance noise and JPEG artefacts,' +
-      ' handheld motion blur and soft focus missing its mark, tilted crooked framing, real pores and stray hair and everyday clutter,' +
+      ' handheld motion blur and soft focus missing its mark, tilted crooked framing, ordinary clutter in the background,' +
       ' flat ungraded phone-camera colour, no filter, no retouching, no beauty smoothing, no captions or app overlay.';
   },
 
@@ -2178,21 +2193,32 @@ const ClaudeAPI = {
       throw new Error("Couldn't reach xAI's image endpoint — check your internet. The chat models are unaffected.");
     }
     if (!res.ok) {
-      let msg = '';
+      let raw = '', msg = '';
       try {
-        const e = JSON.parse(await res.text());
+        raw = await res.text();
+        const e = JSON.parse(raw);
         msg = (e.error && e.error.message) || e.message || '';
       } catch { /* fall through to status-based message */ }
       if (res.status === 404) throw new Error(`xAI has no image model called "${model}" — set it to grok-imagine-image in Settings.`);
       if (res.status === 401 || res.status === 403) throw new Error('Invalid API key for image generation — check Settings.');
-      throw new Error(msg || `Image generation failed (${res.status}).`);
+      // Keep the provider's OWN words. A refusal reported as a generic
+      // failure is undiagnosable — it is impossible to tell a content
+      // decision from a bad parameter, and the fix for those is opposite.
+      const err = new Error(msg || raw.slice(0, 180) || `Image generation failed (${res.status}).`);
+      err.status = res.status;
+      err.providerMessage = msg || raw.slice(0, 300);
+      err.declined = res.status === 400 || res.status === 422;
+      throw err;
     }
     let data = null;
     try { data = await res.json(); } catch { /* handled below */ }
     const item = data && data.data && data.data[0];
     // moderation can decline without an HTTP error — either flagged or empty
     if (item && item.respect_moderation === false) {
-      throw new Error('the provider declined this photo — she stays text-only this time.');
+      const err = new Error('xAI declined this image on content grounds' + (item.moderation_reason ? ' — ' + item.moderation_reason : '') + '.');
+      err.declined = true;
+      err.providerMessage = item.moderation_reason || 'respect_moderation=false';
+      throw err;
     }
     if (item && item.b64_json) {
       return 'data:' + (item.mime_type || 'image/png') + ';base64,' + item.b64_json;
@@ -3100,6 +3126,7 @@ const ClaudeAPI = {
     if (!ev) return '';
     if (ev.kind === 'send') return this._archSendLine(ev);
     if (ev.kind === 'senderr') return `  » SEND FAILED${ev.status ? ' (' + ev.status + ')' : ''}: ${ev.message || 'unknown error'}`;
+    if (ev.kind === 'imgerr') return `  » PHOTO FAILED${ev.status ? ' (' + ev.status + ')' : ''}${ev.declined ? ' [declined on content]' : ''}: ${ev.message || 'unknown'}${ev.desc ? ' — she had asked for: "' + ev.desc + '"' : ''}`;
     if (ev.applied || ev.deltas || typeof ev.tension === 'number') {
       // the synthetic absence event is a state event with a telltale reason
       if (/absence/i.test(ev.reason || '')) return `  » absence drift: ${ev.reason}`;
