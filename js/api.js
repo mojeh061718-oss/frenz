@@ -1587,8 +1587,16 @@ const ClaudeAPI = {
     return !!(entry.baseUrl && entry.model && entry.apiKey && String(entry.apiKey).trim());
   },
 
+  /* `photosOnly` entries are deliberately invisible to chat. The case this
+     exists for: chat runs on a Bedrock key, and a small prepaid xAI key is
+     added purely to serve photos. Without this flag the xAI entry sits first
+     in the pool and quietly becomes the CHAT provider, spending an image
+     budget on conversation and bypassing the working setup — an expensive
+     surprise nobody asked for. Photos read the pool separately (imageEntry),
+     so the flag costs that path nothing. */
   activeEntries(settings) {
-    return (settings.pool || []).filter(e => e && e.enabled && this.entryConfigured(e, settings));
+    return (settings.pool || []).filter(e =>
+      e && e.enabled && !e.photosOnly && this.entryConfigured(e, settings));
   },
 
   _presetOf(entry) {
@@ -1888,11 +1896,42 @@ const ClaudeAPI = {
   /* Face-out-of-frame is the consistency mechanism: these models roll a new
      person every generation, so the one identity anchor we can actually hold
      is to never show the one thing that varies most. It is also exactly how
-     a careful married woman takes these. */
-  _imagePrompt(desc) {
-    return 'Candid amateur smartphone photo, taken by herself: ' + desc +
-      '. Her face stays completely out of frame — cropped at the chin, shot from behind, over the shoulder, or the phone hiding it in a mirror.' +
-      ' Realistic skin and fabric texture, natural imperfect lighting, slight grain, slightly careless framing, a lived-in room in the background — a real phone photo, never a photoshoot.';
+     a careful married woman takes these.
+
+     HOW that is achieved matters more than saying it. Tested against the
+     live free model: "her face stays completely out of frame — cropped at
+     the chin…" was ignored outright, and every generation came back a
+     head-and-shoulders portrait. Image models are weak at exclusion and
+     strong at composition, so the rule is now enforced by describing a
+     CAMERA POSITION that cannot physically contain a face. Same test, POV
+     framing: no face possible, and the result finally reads like a real
+     phone snapshot instead of a moody stock portrait.
+     The set rotates so her photos don't all look like the same shot, and is
+     seeded per photo (see generateImage) rather than random, so a retry of
+     the same moment is stable. */
+  _SHOTS: [
+    'First-person POV, phone held at chest height looking down at her own lap and legs',
+    'Photographed from behind her, over her shoulder, her back and the room in front of her',
+    'Bathroom mirror selfie with the phone held up completely covering her face, only her body and arm visible',
+    'Tight close crop on her hands and what she is holding, everything above the collarbone out of frame',
+    'Low angle from her lap looking along her body toward the room, her head out of frame past the top edge',
+    'Over-the-shoulder shot of what she is looking at, the back of her head soft and out of focus at the edge'
+  ],
+  _imagePrompt(desc, shotIdx) {
+    const shot = this._SHOTS[((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length];
+    // Composition first (it steers the whole frame), then her scene, then the
+    // amateur-camera cues. Positive description only — no "not/never/without".
+    // "She is dressed" is stated explicitly because a scene description is
+    // about a room and a mood, not an outfit, and a weak model will happily
+    // fill that gap with nothing — the free model returned a nude frame from
+    // "in the kitchen at night, just got home, heels off". The app's own rule
+    // for these is suggestion over explicitness; the prompt now says so
+    // instead of assuming it.
+    return shot + '. ' + desc +
+      '. She is dressed, in ordinary everyday clothes.' +
+      ' Casual amateur smartphone snapshot, shot one-handed without thinking about it,' +
+      ' slightly crooked framing, real skin texture and stray hair, ordinary clutter in the background,' +
+      ' available indoor light with a phone-camera flash falloff, faint sensor grain, softly imperfect focus.';
   },
 
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
@@ -1908,7 +1947,10 @@ const ClaudeAPI = {
     const model = entry.imageModel;
     const region = entry.imageRegion || entry.region || 'us-east-1';
     const width = o.width || 768, height = o.height || 1280;
-    const prompt = (o.raw ? description : this._imagePrompt(description)).slice(0, 1000);
+    // Shot choice is derived from the description itself, so the same moment
+    // regenerates identically while successive photos vary.
+    const shotIdx = o.shot !== undefined ? o.shot : this._hash32(String(description || ''));
+    const prompt = (o.raw ? description : this._imagePrompt(description, shotIdx)).slice(0, 1000);
 
     if (this._isFreeImageModel(model)) return this._pollinationsImage(prompt, width, height, o.seed);
     if (this._isXaiEntry(entry)) return this._xaiImage(entry, model, prompt, width, height);
@@ -2059,7 +2101,7 @@ const ClaudeAPI = {
     if (!this.imageEntry(settings)) return null;
     return [
       '## Sending photos',
-      'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now — the room, the light, what of you is in frame. Keep it consistent with your day, your body, and anything you\'ve already told him. Choose what the photo shows the way YOU would, given who you are and what this thread is — candid phone-camera framing, not a photoshoot. Two hard rules about the picture itself: your face is never in frame — chin-down, from behind, mirror with the phone in the way; that is simply how you take these, and you never explain it. And when the thread is charged, the photo teases by ATMOSPHERE and implication — the light, the crop, what sits just out of frame does the work; suggestion always, never explicit, the same screenshot test as your words. Photos are RARE: most conversations have none, you never announce or offer one unprompted twice, and you never send one just because he pushed — same rules as everything else about what you will and won\'t give.'
+      'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now — the room, the light, what of you is in frame. Keep it consistent with your day, your body, and anything you\'ve already told him. Choose what the photo shows the way YOU would, given who you are and what this thread is — candid phone-camera framing, not a photoshoot. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen. The camera angle is not yours to pick and your face is never in these; that is simply how you take them and you never explain it. And when the thread is charged, the photo teases by ATMOSPHERE and implication — the light, what you are wearing, what sits just out of frame does the work; suggestion always, never explicit, the same screenshot test as your words. Photos are RARE: most conversations have none, you never announce or offer one unprompted twice, and you never send one just because he pushed — same rules as everything else about what you will and won\'t give.'
     ];
   },
 

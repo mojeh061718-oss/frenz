@@ -1101,7 +1101,7 @@ function renderPool() {
     row.className = 'pool-row' + (e.id === selectedEntryId ? ' selected' : '');
     const info = ClaudeAPI.usageInfo(e);
     const preset = e.preset ? ClaudeAPI.POOL_PRESETS[e.preset] : null;
-    let sub = e.model || 'not configured yet';
+    let sub = e.photosOnly ? (e.imageModel || 'photos') + ' · photos only' : (e.model || 'not configured yet');
     if (!entryHasKey(e)) sub += ' · needs a key';
     if (info.rpdHint) sub += ` · ${info.requestsToday}/${info.rpdHint} today`;
     else if (info.requestsToday) sub += ` · ${info.requestsToday} today`;
@@ -1188,6 +1188,7 @@ function openEntryEditor(id) {
   if (hasImages) {
     $('#e-img-model').value = e.imageModel || '';
     $('#e-img-region').value = e.imageRegion || '';
+    $('#e-photos-only').checked = !!e.photosOnly;
     $('#e-img-model').placeholder = isXai ? 'grok-imagine-image' : 'amazon.nova-canvas-v1:0';
     $('#e-imghint').textContent = isXai
       ? 'grok-imagine-image (≈2¢/photo) or grok-imagine-image-quality (≈5¢), same key as chat. Or type pollinations for free photos via a keyless community service (photo descriptions go there, chats never do). Clear the field to turn photos off.'
@@ -1511,6 +1512,11 @@ function init() {
   $('#e-img-region').addEventListener('input', () => {
     const e = draftEntry(selectedEntryId);
     if (e) e.imageRegion = $('#e-img-region').value.trim();
+  });
+  $('#e-photos-only').addEventListener('change', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) e.photosOnly = $('#e-photos-only').checked;
+    renderPool();
   });
   $('#btn-test-image').addEventListener('click', async () => {
     const e = draftEntry(selectedEntryId);
