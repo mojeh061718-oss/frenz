@@ -1873,18 +1873,35 @@ const ClaudeAPI = {
     try { return /(^|\.)api\.x\.ai$/i.test(new URL(entry.baseUrl || '').hostname); } catch { return false; }
   },
 
-  /* 'pollinations' (or 'free') in the image-model field routes photos to the
-     keyless community image service — the escape hatch for keys that can't
-     reach any paid image model (e.g. a Bedrock account that won't grant
-     Nova Canvas access). Opt-in by typing it: photo descriptions leave for
-     a third-party service, so it is never defaulted on. */
-  _isFreeImageModel(m) { return /^(pollinations|free)$/i.test(String(m || '').trim()); },
+  /* Photos are routed by the MODEL NAME, not by which provider the entry
+     chats through — because the two genuinely differ. grok-imagine lives
+     only on api.x.ai (Bedrock hosts xAI's text models and returns text only),
+     so a setup whose chat runs on Bedrock still has to reach xAI directly for
+     a picture. Deciding by model lets ONE entry do both: Bedrock for the
+     conversation, xAI for the photo, configured in the same place instead of
+     as two disconnected providers that look like they should talk and don't. */
+  _isGrokImageModel(m) { return /^(xai\.)?grok-imagine/i.test(String(m || '').trim()); },
+
+  /* The key that pays for pictures. An explicit `imageKey` always wins.
+     Falling back to the entry's chat key is only safe when the photo provider
+     IS the chat provider: an AWS Bedrock key posted to api.x.ai would not
+     merely fail, it would hand a credential to a service it was never issued
+     for. So a Bedrock (or any non-xAI) entry using grok-imagine must carry
+     its own xAI key, and gets no photos until it does. */
+  _imageKeyFor(entry) {
+    if (!entry) return '';
+    const explicit = String(entry.imageKey || '').trim();
+    if (explicit) return explicit;
+    const samePlace = this._isGrokImageModel(entry.imageModel)
+      ? this._isXaiEntry(entry)
+      : entry.kind === 'bedrock';
+    return samePlace ? String(entry.apiKey || '').trim() : '';
+  },
 
   imageEntry(settings) {
     return ((settings && settings.pool) || []).find(e =>
-      e && e.enabled && e.imageModel
-      && (this._isFreeImageModel(e.imageModel)
-        || (e.apiKey && (e.kind === 'bedrock' || this._isXaiEntry(e))))) || null;
+      e && e.enabled && e.imageModel && this._imageKeyFor(e)
+      && (this._isGrokImageModel(e.imageModel) || e.kind === 'bedrock')) || null;
   },
 
   _IMAGE_NEGATIVE: 'professional studio photography, posed fashion model, perfect makeup, watermark, text, caption, logo, cartoon, illustration, 3d render, oversaturated, hdr, extra fingers, deformed hands',
@@ -1968,8 +1985,9 @@ const ClaudeAPI = {
     const shotIdx = o.shot !== undefined ? o.shot : this._hash32(String(description || ''));
     const prompt = (o.raw ? description : this._imagePrompt(description, shotIdx)).slice(0, 1000);
 
-    if (this._isFreeImageModel(model)) return this._pollinationsImage(prompt, width, height, o.seed);
-    if (this._isXaiEntry(entry)) return this._xaiImage(entry, model, prompt, width, height);
+    // Model decides the route, so a Bedrock-chat entry can still take photos
+    // through xAI using its own image key.
+    if (this._isGrokImageModel(model)) return this._xaiImage(entry, model, prompt, width, height);
 
     const attempts = [
       {
@@ -2027,14 +2045,22 @@ const ClaudeAPI = {
      returned URLs are temporary and a second cross-origin fetch is a second
      failure mode. */
   async _xaiImage(entry, model, prompt, width, height) {
-    const base = (entry.baseUrl || '').replace(/\/+$/, '');
+    // A Bedrock entry has no xAI base URL, and grok-imagine only exists at
+    // one address — so the host is fixed here rather than read off the entry,
+    // and only an actual xAI chat entry overrides it.
+    const base = this._isXaiEntry(entry)
+      ? (entry.baseUrl || '').replace(/\/+$/, '')
+      : 'https://api.x.ai/v1';
+    // Bedrock slugs carry an "xai." prefix that api.x.ai does not accept.
+    const modelId = String(model || '').replace(/^xai\./i, '');
+    const key = this._imageKeyFor(entry);
     let res;
     try {
       res = await this._timedFetch(base + '/images/generations', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + entry.apiKey },
+        headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + key },
         body: JSON.stringify({
-          model,
+          model: modelId,
           prompt: prompt + this._IMAGE_AVOID,
           n: 1,
           response_format: 'b64_json',
@@ -2067,48 +2093,6 @@ const ClaudeAPI = {
       return 'data:' + (item.mime_type || 'image/png') + ';base64,' + item.b64_json;
     }
     throw new Error('xAI answered but returned no image' + (data && data.error ? ' — ' + String(data.error.message || data.error).slice(0, 180) : '.'));
-  },
-
-  /* Keyless route: image.pollinations.ai serves FLUX-family generations over
-     a plain GET (CORS *, verified live). No auth, no params beyond the URL;
-     the random seed keeps repeat photo requests from returning the same
-     frame. Response is raw image bytes → dataURL, same contract as the
-     other routes. */
-  async _pollinationsImage(prompt, width, height, seed) {
-    // A caller-supplied stable seed (per friend) nudges the generator toward
-    // a consistent body/space across her photos; without one, roll fresh so
-    // repeat requests don't return the same frame.
-    const s = seed === undefined ? Math.floor(Math.random() * 1e9) : seed;
-    const url = 'https://image.pollinations.ai/prompt/'
-      + encodeURIComponent((prompt + this._IMAGE_AVOID).slice(0, 800))
-      + `?width=${width}&height=${height}&nologo=true&seed=${s}`;
-    let res;
-    try {
-      res = await this._timedFetch(url, { headers: { accept: 'image/*' } }, this.TIMEOUTS.image, 'The free image service');
-    } catch (e) {
-      if (e && e.timeout) {
-        // the free host's overload mode is a hang, not an error — say so
-        throw new Error('The free image service is overloaded right now — her photo can wait. The chat is unaffected.');
-      }
-      throw new Error("Couldn't reach the free image service — check your internet. The chat models are unaffected.");
-    }
-    if (!res.ok) {
-      throw new Error(res.status === 429
-        ? 'The free image service is busy right now — her photo can wait a minute.'
-        : `The free image service failed (${res.status}) — try again, or set a paid image model in Settings.`);
-    }
-    const mime = ((res.headers && res.headers.get && res.headers.get('content-type')) || 'image/jpeg').split(';')[0];
-    const buf = new Uint8Array(await res.arrayBuffer());
-    if (!buf.length) throw new Error('The free image service returned an empty image — try again.');
-    let bin = '';
-    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
-    return 'data:' + mime + ';base64,' + btoa(bin);
-  },
-
-  /* Cheap 512px probe for the settings screen: proves key + model access +
-     browser reachability in one shot, and shows the actual picture. */
-  testImage(entry) {
-    return this.generateImage(entry, 'a coffee mug on a kitchen counter, morning light', { width: 512, height: 512 });
   },
 
   /* Prompt section injected ONLY when an image model is configured — she

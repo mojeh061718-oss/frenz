@@ -140,7 +140,7 @@ const DEFAULT_SETTINGS = {
   // so Settings shows two labelled slots to paste into rather than a blank.
   pool: [
     { id: 'grok', kind: 'openai', preset: 'grok', label: 'Grok (xAI)', baseUrl: 'https://api.x.ai/v1', apiKey: '', model: 'grok-4.3', imageModel: 'grok-imagine-image', contextTokens: 1000000, enabled: true },
-    { id: 'bedrock', kind: 'bedrock', preset: 'bedrock', label: 'Grok (AWS Bedrock)', apiKey: '', model: 'xai.grok-4.3', region: 'us-east-1', contextTokens: 1000000, enabled: true }
+    { id: 'bedrock', kind: 'bedrock', preset: 'bedrock', label: 'Grok (AWS Bedrock)', apiKey: '', model: 'xai.grok-4.3', imageModel: 'grok-imagine-image', region: 'us-east-1', contextTokens: 1000000, enabled: true }
   ]
 };
 
@@ -168,11 +168,16 @@ const Settings = {
     // makes sense against this model, so it is raised once on load.
     for (const e of s.pool) {
       if (!(parseInt(e.contextTokens, 10) > 0) || parseInt(e.contextTokens, 10) < 100000) e.contextTokens = 1000000;
-      // Photos on the xAI route arrived in v7.5: entries saved before then
-      // have no imageModel property at all, and photos should just work.
+      // Photos go through grok-imagine, which lives only on xAI — including
+      // for a Bedrock chat entry, which reaches it with its own image key.
       // `undefined` ONLY — a user who blanked the field ('') chose no
       // photos, and the heal must never override a choice.
-      if (e.preset === 'grok' && e.imageModel === undefined) e.imageModel = 'grok-imagine-image';
+      if ((e.preset === 'grok' || e.preset === 'bedrock') && e.imageModel === undefined) {
+        e.imageModel = 'grok-imagine-image';
+      }
+      // 'pollinations'/'free' was a keyless fallback that has been removed;
+      // point those at the real model rather than leaving a dead route.
+      if (/^(pollinations|free)$/i.test(String(e.imageModel || ''))) e.imageModel = 'grok-imagine-image';
     }
     return s;
   },

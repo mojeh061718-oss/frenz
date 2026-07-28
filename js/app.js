@@ -1190,9 +1190,10 @@ function openEntryEditor(id) {
     $('#e-img-region').value = e.imageRegion || '';
     $('#e-photos-only').checked = !!e.photosOnly;
     $('#e-img-model').placeholder = isXai ? 'grok-imagine-image' : 'amazon.nova-canvas-v1:0';
+    $('#e-img-key').value = e.imageKey || '';
     $('#e-imghint').textContent = isXai
-      ? 'grok-imagine-image (≈2¢/photo) or grok-imagine-image-quality (≈5¢), same key as chat. Or type pollinations for free photos via a keyless community service (photo descriptions go there, chats never do). Clear the field to turn photos off.'
-      : 'A Bedrock image model ID like amazon.nova-canvas-v1:0 (needs model access in the Bedrock console). No access? Type pollinations for free photos via a keyless community service (photo descriptions go there, chats never do). Clear the field to turn photos off.';
+      ? 'grok-imagine-image (≈2¢/photo) or grok-imagine-image-quality (≈5¢), paid from this entry\'s own key. Clear the field to turn photos off.'
+      : 'grok-imagine-image (≈2¢/photo) sends her pictures through xAI — paste an xAI key below and your chat keeps running on Bedrock. A Bedrock image model ID like amazon.nova-canvas-v1:0 also works if your account has access to it. Clear the field to turn photos off.';
   }
   $('#e-modelhint').textContent = isBedrock
     ? 'Claude models are listed. For anything else on Bedrock — Grok, GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'
@@ -1513,6 +1514,10 @@ function init() {
     const e = draftEntry(selectedEntryId);
     if (e) e.imageRegion = $('#e-img-region').value.trim();
   });
+  $('#e-img-key').addEventListener('input', () => {
+    const e = draftEntry(selectedEntryId);
+    if (e) e.imageKey = $('#e-img-key').value.trim();
+  });
   $('#e-photos-only').addEventListener('change', () => {
     const e = draftEntry(selectedEntryId);
     if (e) e.photosOnly = $('#e-photos-only').checked;
@@ -1522,10 +1527,15 @@ function init() {
     const e = draftEntry(selectedEntryId);
     if (!e) return;
     const out = $('#e-test-result');
-    if (!e.apiKey) { out.textContent = '✗ Paste your API key first.'; return; }
     if (!e.imageModel) {
-      e.imageModel = ClaudeAPI._isXaiEntry(e) ? 'grok-imagine-image' : 'amazon.nova-canvas-v1:0';
+      e.imageModel = 'grok-imagine-image';
       $('#e-img-model').value = e.imageModel;
+    }
+    if (!ClaudeAPI._imageKeyFor(e)) {
+      out.textContent = ClaudeAPI._isGrokImageModel(e.imageModel) && !ClaudeAPI._isXaiEntry(e)
+        ? '✗ grok-imagine needs an xAI key — paste one in "Image API key" above.'
+        : '✗ Paste your API key first.';
+      return;
     }
     out.textContent = 'Generating a test image (can take ~15s)…';
     $('#e-img-preview').classList.add('hidden');
