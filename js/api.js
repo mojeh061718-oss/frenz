@@ -1946,9 +1946,11 @@ const ClaudeAPI = {
     'Full-length mirror photo of her outfit, the phone held up in front of her head and completely hiding her face in the reflection, her whole outfit visible from shoes to shoulders',
     'First-person POV looking down at her own hands and what she is holding, nothing above the wrists in frame',
     'First-person POV of the room in front of her, her own legs stretched out along the bottom edge of the frame',
-    'First-person POV looking down at herself sitting, thighs and knees filling the lower half of the frame'
+    'First-person POV looking down at herself sitting, thighs and knees filling the lower half of the frame',
+    'Photo of the room or object in front of her, taken by her on her phone, nobody in the frame at all'
   ],
   _SHOT_MIRROR: 2,
+  _SHOT_OBJECT: 6,
 
   /* The shot has to follow what she is actually showing him, not a hash.
      "here's my outfit" taken as a POV-down-at-her-lap frame cannot show an
@@ -1957,19 +1959,49 @@ const ClaudeAPI = {
      wins; the hash only breaks ties for generic scenes so those still
      rotate. */
   _SHOT_HINTS: [
-    [/\b(outfit|wearing|dress|dressed up|new (top|dress|jeans|skirt)|fit check|ootd|getting ready|going out|heels|before i (go|leave))\b/i, 2],
+    // A fit check is a deliberate "look at what I have on" — that is the only
+    // clothing case that wants a full-length mirror. Being in a hoodie on the
+    // couch is not a fit check, so it must fall through to the casual POV
+    // below or every cosy evening turns into a fashion shoot.
+    [/\b(outfit|fit check|ootd|dressed up|(getting|got|all) ready|going out|new (top|dress|jeans|skirt)|heels on|before i (go|leave)|what i('m| am) wearing)\b/i, 2],
     [/\b(holding|hands?|nails|mug|cup|coffee|wine glass|book|keys|phone case)\b/i, 3],
-    [/\b(view|window|out(side)?|room|kitchen|tv|screen|sunset|street|balcony)\b/i, 4],
-    [/\b(legs|lap|blanket|couch|bed|thighs|knees|curled up|under the covers)\b/i, 0]
+    [/\b(view|window|out(side)?|sunset|street|balcony|backyard)\b/i, 4],
+    [/\b(legs|lap|blanket|thighs|knees|curled up|under the covers|hoodie|pyjamas|pajamas|pjs|sweats|socks|t-?shirt|tank)\b/i, 0]
   ],
+  /* Words that mean the picture is OF something, not of her. Archive case:
+     "send me a pic of your couch" matched the couch/lap hint and returned a
+     body shot — a request for a THING answered with a picture of HER, which
+     is why the exchange stopped making sense. If the scene is about a place
+     or an object and nothing in it refers to her body or clothes, the phone
+     points outward and she is not in the frame at all. */
+  _OBJECT_SUBJECT: /\b(couch|sofa|sectional|room|kitchen|bedroom|bathroom|house|apartment|view|tv|screen|dog|cat|car|garden|plant|desk|table|fridge|mess|bookshelf|bed(?!room))\b/i,
+  _BODY_SUBJECT: /\b(myself|sitting|sat|lying|laying|curled|standing|wearing|outfit|dressed|pyjamas|pajamas|hoodie|towel|heels|nails|thighs|knees|legs|lap|my (legs|lap|body|outfit|hands?|feet|hair|skin|chest|top|shirt|dress|socks|arms?|stomach|waist))\b/i,
   _shotFor(desc) {
     const s = String(desc || '');
+    if (this._OBJECT_SUBJECT.test(s) && !this._BODY_SUBJECT.test(s)) return this._SHOT_OBJECT;
     for (const [re, idx] of this._SHOT_HINTS) if (re.test(s)) return idx;
     return this._hash32(s);
   },
 
-  _imagePrompt(desc, shotIdx) {
+  // Does the scene already say what she has on? If so the prompt must not
+  // talk over it. v8.2 appended "ordinary everyday clothes" unconditionally
+  // and the archive caught the result: on a dark couch at 10:45pm he replied
+  // "I thought you were hot, you are wearing tons of clothes" — the picture
+  // was overdressed because the prompt insisted on it. The anti-nudity floor
+  // stays, but only when the scene is silent, and phrased for being at home.
+  _CLOTHING_NAMED: /\b(hoodie|sweater|jumper|shirt|tee|t-shirt|top|dress|skirt|jeans|leggings|shorts|pyjamas|pajamas|pjs|robe|towel|bikini|swimsuit|sweats|sweatshirt|tank|bra|socks|coat|jacket|uniform|outfit|wearing|dressed|heels|boots)\b/i,
+
+  _imagePrompt(desc, shotIdx, appearance) {
     const shot = this._SHOTS[((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length];
+    const isObject = (((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length) === this._SHOT_OBJECT;
+    // Who she is, right after the composition: subject description steers the
+    // frame and belongs early. Without it every photo is a different woman —
+    // the models roll a new person per generation and nothing anchored them.
+    const who = (!isObject && appearance) ? ' ' + String(appearance).trim().replace(/\.?$/, '.') : '';
+    const clothed = isObject ? ''
+      : (this._CLOTHING_NAMED.test(String(desc || '')) ? '' : ' She is dressed for being at home.');
+    const faceRule = isObject ? ' Nobody is in the frame.'
+      : ' Her face is not visible anywhere in the frame or in any reflection.';
     // Composition first (it steers the whole frame), then her scene, then the
     // amateur-camera cues. Positive description only — no "not/never/without".
     // "She is dressed" is stated explicitly because a scene description is
@@ -1982,9 +2014,8 @@ const ClaudeAPI = {
     // plainly as a backstop — the mirror shot is the one framing where a
     // reflection could still put a face in frame, and a capable model that
     // reads the instruction should have it available to follow.
-    return shot + '. ' + desc +
-      '. Her face is not visible anywhere in the frame or in any reflection.' +
-      ' She is dressed, in ordinary everyday clothes.' +
+    return shot + '.' + who + ' ' + desc +
+      '.' + faceRule + clothed +
       ' Unedited snapshot straight off a phone sensor, the kind sent on Snapchat and forgotten:' +
       ' harsh direct on-camera flash with hard falloff into darkness, blown-out highlights on nearest skin and fabric,' +
       ' crushed muddy shadows, auto white balance slightly wrong with a colour cast, visible high-ISO luminance noise and JPEG artefacts,' +
@@ -2008,7 +2039,7 @@ const ClaudeAPI = {
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
     const shotIdx = o.shot !== undefined ? o.shot : this._shotFor(description);
-    const prompt = (o.raw ? description : this._imagePrompt(description, shotIdx)).slice(0, 1000);
+    const prompt = (o.raw ? description : this._imagePrompt(description, shotIdx, o.appearance)).slice(0, 1000);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
@@ -2396,7 +2427,7 @@ const ClaudeAPI = {
       const r2 = await call([
         {
           role: 'system',
-          content: `You maintain ${p.name}'s PRIVATE internal state in their texting relationship with ${userName}. Output ONLY JSON in this exact shape: {"state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause of what she is thinking but not saying right now", "new_memories": []}}. Deltas are -3..+3 movements caused by this exchange — report real movement when it happened (a landed line, a real laugh, a genuine share is ±1 or more), 0 only for genuinely neutral exchanges, negative when it stung or turned her off. "new_memories": 0-3 objects {"text","keywords","importance"} with standalone pronoun-free facts worth keeping — about ${userName}, about the two of them, or about ${p.name}'s OWN life as established in this exchange (her commitments, stories, opinions — so she never contradicts her own canon). The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance. [] only when genuinely nothing new.`
+          content: `You maintain ${p.name}'s PRIVATE internal state in their texting relationship with ${userName}. Output ONLY JSON in this exact shape: {"state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause of what she is thinking but not saying right now", "new_memories": []}}. Deltas are -3..+3 movements caused by this exchange — report real movement when it happened (a landed line, a real laugh, a genuine share is ±1 or more), 0 only for genuinely neutral exchanges, negative when it stung or turned her off. "new_memories": 0-3 objects {"text","keywords","importance"} with standalone pronoun-free facts worth keeping — about ${userName}, about the two of them, or about ${p.name}'s OWN life established OR referenced in this exchange (her commitments, stories, opinions — so she never contradicts her own canon); a fact she already knew still deserves recording the first time it comes up between them. The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance. [] only when genuinely nothing new.`
         },
         {
           role: 'user',
@@ -2761,7 +2792,7 @@ const ClaudeAPI = {
       '## Reply format (mandatory)',
       'Reply with ONLY a single JSON object — no prose before or after it, no markdown fences:',
       '{"messages": ["first bubble", "optional second"], "state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause: what you are thinking but not saying right now", "new_memories": []}}',
-      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life as established this exchange (your commitments, stories, opinions — never contradict your own canon later). The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance; a relationship that forgets its own origin reads as fake. [] only when genuinely nothing new.'
+      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life established OR referenced this exchange (your commitments, stories, opinions — never contradict your own canon later); something you already knew still deserves recording the first time it comes up between you. The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance; a relationship that forgets its own origin reads as fake. [] only when genuinely nothing new.'
     ].join('\n');
   },
 

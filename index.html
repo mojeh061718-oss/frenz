@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">8.5</span></h1>
+        <h1 class="logo">frenz <span class="app-version">8.6</span></h1>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
       <div id="friends-list" class="friends-list"></div>
@@ -82,6 +82,10 @@
           <label>Life &amp; interests
             <textarea id="c-interests" rows="5"></textarea>
           </label>
+          <label>Appearance — used only for her photos
+            <textarea id="c-appearance" rows="3" placeholder="e.g. curvy redhead, fair freckled skin, tattoos down both legs"></textarea>
+            <small>How she looks in the pictures she sends. Her face is never shown either way — this keeps her body, hair and colouring the same person every time instead of a new one per photo.</small>
+          </label>
           <label>Texting style
             <textarea id="c-style" rows="4"></textarea>
           </label>
@@ -131,6 +135,10 @@
         </label>
         <label>Texting style
           <textarea id="f-style" rows="2" placeholder="lowercase, quick short texts, lots of 'lol', rarely uses emoji..."></textarea>
+        </label>
+        <label>Appearance — used only for her photos
+          <textarea id="f-appearance" rows="2" placeholder="curvy redhead, fair freckled skin, tattoos down both legs..."></textarea>
+          <small>How she looks in the pictures she sends. Her face is never shown either way; this keeps her the same person from photo to photo.</small>
         </label>
         <label>How you met / backstory
           <textarea id="f-backstory" rows="2" placeholder="Met at a mutual friend's party last month, hit it off talking about music..."></textarea>

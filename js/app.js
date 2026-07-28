@@ -167,6 +167,7 @@ function openCustomize(t) {
   $('#c-usergender').value = localStorage.getItem('frenz-user-gender') || 'male';
   $('#c-personality').value = t.personality;
   $('#c-interests').value = t.interests;
+  $('#c-appearance').value = t.appearance || '';
   $('#c-style').value = t.style;
   $('#c-backstory').value = t.backstory;
   renderSliders(t);
@@ -203,6 +204,7 @@ async function startConversation(e) {
     userName: $('#c-username').value.trim(),
     userGender: $('#c-usergender').value,
     plist: t.plist || '',
+    appearance: $('#c-appearance').value.trim() || t.appearance || '',
     reveals: t.reveals || [],
     established: !!t.established,
     sliders,
@@ -225,7 +227,13 @@ async function startConversation(e) {
       attraction: sliders.attraction || 0,
       opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.'
     },
-    memories: [],
+    // The relationship's origin lives in `backstory` prose, which the state
+    // model never records as a memory — it is asked for facts established in
+    // THIS exchange, and the walk-in/lake/desk-lunch all predate message one.
+    // The archive showed the cost: 20 messages in, "nothing recorded yet".
+    // Seeding them makes the founding facts durable from the start.
+    memories: (t.seedMemories || []).map(m => ClaudeAPI._normMemory(
+      Object.assign({ ts: ClaudeAPI._now(), lastAccessed: ClaudeAPI._now() }, m))),
     createdAt: ClaudeAPI._now(),
     lastActivity: ClaudeAPI._now(),
     lastPreview: ''
@@ -279,6 +287,7 @@ function openEditor(friend) {
   $('#f-plist').value = p.plist || '';
   $('#f-interests').value = p.interests || '';
   $('#f-style').value = p.style || '';
+  $('#f-appearance').value = p.appearance || '';
   $('#f-backstory').value = p.backstory || '';
   $('#f-username').value = p.userName || '';
   $('#f-usergender').value = p.userGender || 'male';
@@ -298,6 +307,7 @@ async function saveFriendFromForm(e) {
     plist: $('#f-plist').value.trim(),
     interests: $('#f-interests').value.trim(),
     style: $('#f-style').value.trim(),
+    appearance: $('#f-appearance').value.trim(),
     backstory: $('#f-backstory').value.trim(),
     userName: $('#f-username').value.trim(),
     userGender: $('#f-usergender').value,
@@ -775,7 +785,11 @@ async function deliverBubble(friend, b, atTs) {
   try {
     // stable per-friend seed: her photos lean toward the same body and the
     // same rooms instead of rerolling a stranger every time
-    const dataUrl = await ClaudeAPI.generateImage(entry, desc, { seed: ClaudeAPI._hash32(String(friend.id) + '|photolook') % 1e9 });
+    const dataUrl = await ClaudeAPI.generateImage(entry, desc, {
+      seed: ClaudeAPI._hash32(String(friend.id) + '|photolook') % 1e9,
+      // who she is, so every photo is the same woman instead of a new one
+      appearance: friend.profile.appearance || ''
+    });
     $('#typing').classList.add('hidden');
     const msg = { friendId: friend.id, role: 'assistant', text: '', photo: dataUrl, photoDesc: desc, ts: ClaudeAPI._now() };
     const el = bubbleEl('assistant', '', msg);
@@ -1360,6 +1374,19 @@ async function upgradeTemplateFriends() {
       }
     }
     if (tpl && tpl.established && !f.profile.established) { f.profile.established = true; changed = true; }
+    // Appearance arrived in v8.6 as a brand-new field, so the substring
+    // upgrade rules cannot reach it — they replace inside an existing string.
+    // Backfill from the template, and never overwrite one the user wrote.
+    if (tpl && tpl.appearance && !f.profile.appearance) { f.profile.appearance = tpl.appearance; changed = true; }
+    // Same for the founding facts: friends made before v8.6 started with an
+    // empty memory list and the state model would never record an event that
+    // predates message one. Only seeded when she has no memories at all, so a
+    // real relationship's recall is never overwritten.
+    if (tpl && tpl.seedMemories && !(f.memories || []).length) {
+      f.memories = tpl.seedMemories.map(m => ClaudeAPI._normMemory(
+        Object.assign({ ts: f.createdAt || ClaudeAPI._now(), lastAccessed: ClaudeAPI._now() }, m)));
+      changed = true;
+    }
     // Sliders were never stored on created friends, so anything reading them
     // (the flirt-sport branch, curiosity) silently saw nothing. Backfill from
     // the template, and give any friend — custom ones included — a curiosity

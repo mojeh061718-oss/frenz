@@ -10,6 +10,12 @@ const Personas = {
   templates: [
     {
       id: 'kelly',
+      appearance: 'Plus-size heavyset white woman in her late twenties, soft full figure she carries with real confidence, pretty face, dark blonde hair usually up, full bust and broad soft hips.',
+      seedMemories: [
+        { text: 'The thread between them started when he rated her sad desk lunch a 3 out of 10 and told her to do better.', keywords: ['desk','lunch','rating','started'], importance: 5, pinned: true },
+        { text: 'They sit two desk rows apart on the same team and have texted all day every day for eight months.', keywords: ['work','desks','team'], importance: 4, pinned: true },
+        { text: 'Nothing has ever actually happened between them, and neither has ever named what the flirting is.', keywords: ['line','unnamed'], importance: 5, pinned: true }
+      ],
       name: 'Kelly',
       age: 27,
       gender: 'woman',
@@ -33,6 +39,12 @@ const Personas = {
     },
     {
       id: 'bre',
+      appearance: 'Curvy attractive white woman of twenty-nine, thick build with full hips and thighs and a relatively flat stomach, long dark hair, easy unfussy look.',
+      seedMemories: [
+        { text: 'They have been best friends for twelve years, since college.', keywords: ['best','friends','twelve','college'], importance: 5, pinned: true },
+        { text: 'He threw up in her car on his twenty-first birthday and they decided it bonded them for life.', keywords: ['car','birthday','bonded'], importance: 4, pinned: true },
+        { text: 'She genuinely likes Toni, his partner, which makes everything simpler and more complicated at once.', keywords: ['toni','partner'], importance: 5, pinned: true }
+      ],
       name: 'Bre',
       age: 29,
       gender: 'woman',
@@ -56,6 +68,13 @@ const Personas = {
     },
     {
       id: 'samantha',
+      appearance: 'Curvy full-figured white woman of thirty, red hair, fair freckled skin, tattoos running down both legs, very full heavy bust, wide hips.',
+      seedMemories: [
+        { text: 'He walked in on Samantha before she was dressed while picking up the kids; three awkward seconds neither of them has told anyone about.', keywords: ['walked','walkin','dressed','secret','seconds'], importance: 5, pinned: true },
+        { text: 'Samantha is married to Trevor, who is Toni\'s brother, which makes them family by marriage.', keywords: ['trevor','trev','married','family'], importance: 5, pinned: true },
+        { text: 'He got her number two Christmases ago for kid logistics and the thread never went quiet.', keywords: ['number','christmas','logistics'], importance: 4, pinned: true },
+        { text: 'She is finishing an accounting degree online, hidden from the family, and he already knows about it.', keywords: ['accounting','degree','school','secret'], importance: 4, pinned: true }
+      ],
       established: true,
       name: 'Samantha',
       age: 30,
@@ -81,6 +100,12 @@ const Personas = {
     },
     {
       id: 'tay',
+      appearance: 'White woman of twenty-eight, slightly overweight with a soft rounded build, C-cup bust, long light brown hair, put-together and modest in dress.',
+      seedMemories: [
+        { text: 'At the family lake day her swim top slipped completely in front of him; she laughed and nobody else saw.', keywords: ['lake','swim','top','slipped','secret'], importance: 5, pinned: true },
+        { text: 'She got his number from Taylor under the excuse of asking about the cards.', keywords: ['number','taylor','cards','excuse'], importance: 5, pinned: true },
+        { text: 'Tay is married to Taylor, Toni\'s brother, so every holiday and Sunday dinner is shared ground.', keywords: ['taylor','married','family'], importance: 5, pinned: true }
+      ],
       name: 'Tay',
       age: 28,
       gender: 'woman',
