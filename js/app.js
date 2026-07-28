@@ -791,6 +791,18 @@ async function deliverBubble(friend, b, atTs) {
   $('#typing').classList.remove('hidden');
   $('#chat-status').textContent = 'sending a photo…';
   scrollChat();
+  // Every rung of the re-framing ladder lands in the ledger, whether or not
+  // a later one succeeds — otherwise a photo that took three tries looks
+  // identical to one that worked first time, and there is no way to tell
+  // which framings the provider actually objects to.
+  ClaudeAPI._onImageDecline = (e, i, total) => {
+    DB.addEvent({
+      friendId: friend.id, ts: ClaudeAPI._now(), kind: 'imgerr',
+      declined: true, status: e.status || 0, reframe: `${i + 1}/${total}`,
+      message: String(e.providerMessage || e.message || '').slice(0, 200),
+      desc: String(desc || '').slice(0, 160)
+    }).catch(() => {});
+  };
   try {
     // stable per-friend seed: her photos lean toward the same body and the
     // same rooms instead of rerolling a stranger every time
@@ -815,15 +827,22 @@ async function deliverBubble(friend, b, atTs) {
     // analysis archive can show WHY a photo never arrived — a content
     // decision and a bad parameter need opposite fixes and look identical
     // from the outside.
-    DB.addEvent({
-      friendId: friend.id, ts: ClaudeAPI._now(), kind: 'imgerr',
-      declined: !!e.declined, status: e.status || 0,
-      message: String(e.providerMessage || e.message || '').slice(0, 200),
-      desc: String(desc || '').slice(0, 160)
-    }).catch(() => {});
-    toast('Her photo didn\'t send — ' + e.message, 6000);
+    // A declined run already logged each framing it tried; only log here for
+    // the failures the ladder never covered (key, network, model name).
+    if (!e.exhausted) {
+      DB.addEvent({
+        friendId: friend.id, ts: ClaudeAPI._now(), kind: 'imgerr',
+        declined: !!e.declined, status: e.status || 0,
+        message: String(e.providerMessage || e.message || '').slice(0, 200),
+        desc: String(desc || '').slice(0, 160)
+      }).catch(() => {});
+    }
+    toast(e.exhausted
+      ? 'Her photo didn\'t send — the provider declined every framing of it.'
+      : 'Her photo didn\'t send — ' + e.message, 6000);
     return null;
   } finally {
+    ClaudeAPI._onImageDecline = null;
     $('#chat-status').textContent = fmtClock();
   }
 }
@@ -929,6 +948,24 @@ async function sendMessage() {
     .map(m => ({ role: m.role, text: m.text }));
   history.push({ role: 'user', text });
 
+  askNotifyPermission();
+  await runReply(friend, history, settings, lastTs, text);
+}
+
+/* The model call and everything that lands because of it. Extracted from
+   sendMessage so an interrupted send — tab closed, phone locked long enough
+   for the page to be evicted — can be finished on the next open without the
+   user retyping a thing. */
+async function runReply(friend, history, settings, lastTs, fallbackPreview) {
+  // Recorded BEFORE the request leaves, so a page that dies mid-flight leaves
+  // a trail rather than a hole. One record per friend: a second attempt at
+  // the same unanswered message replaces it instead of queueing up.
+  const outboxId = 'send-' + friend.id;
+  DB.putOutbox({ id: outboxId, kind: 'send', friendId: friend.id, ts: ClaudeAPI._now() }).catch(() => {});
+  // Who a background notification would be from, for the duration of this
+  // send only. Cleared in the finally so nothing else can raise one.
+  ClaudeAPI._notify = { title: friend.profile.name || 'frenz', preview: 'sent you a message' };
+
   $('#typing').classList.remove('hidden');
   $('#chat-status').textContent = 'typing…';
   // Slow must never look like dead: after 20s the status starts counting, so
@@ -943,10 +980,17 @@ async function sendMessage() {
 
   try {
     const result = await ClaudeAPI.chat(friend, history, settings, lastTs, (attempt, retryErr) => {
-      // Say WHY when we know: a rate-limit wait reads as dead air unless named
-      $('#chat-status').textContent = retryErr && retryErr.quota
+      // Say WHY when we know: a rate-limit wait reads as dead air unless
+      // named — and say how long it has been, because "reconnecting…" with
+      // no clock attached is the thing that feels infinite.
+      const el = Math.round((Date.now() - sentAt) / 1000);
+      const left = Math.round(ClaudeAPI._budgetLeft() / 1000);
+      const clock = ` · ${el}s${left > 0 && left < 1e6 ? `, giving up in ${left}s` : ''}`;
+      $('#chat-status').textContent = (retryErr && retryErr.quota
         ? `rate-limited — retrying (${attempt})`
-        : `reconnecting… (${attempt})`;
+        : retryErr && retryErr.timeout
+          ? `no response — trying elsewhere (${attempt})`
+          : `reconnecting… (${attempt})`) + clock;
     });
     providerUp();   // something came back, so whatever was wrong isn't any more
 
@@ -1028,7 +1072,7 @@ async function sendMessage() {
 
     friend.lastActivity = ClaudeAPI._now();
     refreshTails();
-    friend.lastPreview = previews.length ? previews[previews.length - 1] : text;
+    friend.lastPreview = previews.length ? previews[previews.length - 1] : fallbackPreview;
     await DB.saveFriend(friend);
     renderFriendsList();
 
@@ -1071,9 +1115,74 @@ async function sendMessage() {
   } finally {
     clearInterval(slowTick);
     sending = false;
+    ClaudeAPI._notify = null;
+    // Settled either way — a delivered reply and a reported failure are both
+    // finished business, and neither should be replayed on the next open.
+    DB.clearOutbox('send-' + friend.id).catch(() => {});
     $('#btn-send').disabled = false;
     $('#chat-status').textContent = fmtClock();
   }
+}
+
+/* A send that never finished. The user's message is already in the thread
+   (it is persisted before the request goes out), so recovery is simply
+   asking for the reply again — which is why the outbox record holds an id
+   and nothing else. Anything the app cannot honestly finish is dropped
+   rather than left to look pending forever. */
+let resuming = false;
+async function resumeOutbox() {
+  if (resuming || sending) return;
+  resuming = true;
+  try { await _resumeOutbox(); } finally { resuming = false; }
+}
+async function _resumeOutbox() {
+  let pending = [];
+  try { pending = await DB.listOutbox(); } catch (_) { return; }
+  const stale = pending.filter(r => r && r.kind === 'send');
+  if (!stale.length) return;
+  for (const rec of stale) {
+    await DB.clearOutbox(rec.id).catch(() => {});
+    // Past a day the moment has gone; replying to it now would be stranger
+    // than not replying at all.
+    if (ClaudeAPI._now() - (rec.ts || 0) > 24 * 3600 * 1000) continue;
+    const friend = await DB.getFriend(rec.friendId).catch(() => null);
+    if (!friend) continue;
+    const msgs = await DB.getMessages(friend.id).catch(() => []);
+    const last = msgs[msgs.length - 1];
+    // If she already answered, there is nothing to recover.
+    if (!last || last.role !== 'user') continue;
+    const settings = Settings.get();
+    if (!ClaudeAPI.activeEntries(settings).length) continue;
+    await openChat(friend.id);
+    // openChat re-reads the friend; run against THAT object, because
+    // runReply mutates and saves it.
+    if (!currentFriend || currentFriend.id !== friend.id) continue;
+    const prior = msgs.slice(0, -1);
+    const history = msgs
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, text: m.text }));
+    sending = true;
+    $('#btn-send').disabled = true;
+    const note = document.createElement('div');
+    note.className = 'msg sys transient-note';
+    note.textContent = 'Picking that back up…';
+    $('#chat-messages').appendChild(note);
+    scrollChat();
+    await runReply(currentFriend, history, settings,
+      prior.length ? prior[prior.length - 1].ts : null, last.text);
+    return; // one recovery per open; the rest keep their place in the outbox
+  }
+}
+
+/* Background notifications are the closest a serverless app gets to push:
+   the request outlives the page inside the service worker, and when it
+   lands with nobody looking, the worker raises this. Asked for at the
+   moment it becomes meaningful — after a real send — never on first run. */
+async function askNotifyPermission() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+  if (localStorage.getItem('frenz-notify-asked')) return;
+  localStorage.setItem('frenz-notify-asked', '1');
+  try { await Notification.requestPermission(); } catch (_) { /* declined is fine */ }
 }
 
 /* ---------------- settings: provider pool ---------------- */
@@ -1725,7 +1834,15 @@ function init() {
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* offline shell is a bonus, not required */ });
+    ClaudeAPI.watchServiceWorker();
+    // Coming back to a foregrounded app is the moment a stranded send should
+    // finish — that is what makes a recovered reply feel pushed rather than
+    // retried. Guarded so a tab switch mid-send never doubles it up.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && !sending) resumeOutbox().catch(() => {});
+    });
   }
+  resumeOutbox().catch(() => { /* recovery is best-effort by definition */ });
 }
 
 document.addEventListener('DOMContentLoaded', init);

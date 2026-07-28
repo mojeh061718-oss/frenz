@@ -2,7 +2,7 @@
    internal state live in IndexedDB on this device only. */
 
 const DB_NAME = 'frenz';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const DB = {
   _db: null,
@@ -25,6 +25,12 @@ const DB = {
           // later rollups, and recomputing state if curves are retuned
           const ev = db.createObjectStore('events', { keyPath: 'id', autoIncrement: true });
           ev.createIndex('byFriend', 'friendId', { unique: false });
+        }
+        if (!db.objectStoreNames.contains('outbox')) {
+          // Sends that were in flight when the app went away. The service
+          // worker parks completed replies here too, so closing the tab
+          // mid-send costs a round trip rather than the message.
+          db.createObjectStore('outbox', { keyPath: 'id' });
         }
       };
       req.onsuccess = () => { this._db = req.result; resolve(this._db); };
@@ -79,6 +85,11 @@ const DB = {
   getEvents(friendId) {
     return this._tx('events', 'readonly', s => s.index('byFriend').getAll(friendId));
   },
+
+  // ---- outbox: sends that outlived the page ----
+  putOutbox(rec) { return this._tx('outbox', 'readwrite', s => s.put(rec)); },
+  listOutbox() { return this._tx('outbox', 'readonly', s => s.getAll()); },
+  clearOutbox(id) { return this._tx('outbox', 'readwrite', s => s.delete(id)); },
 
   // ---- backup ----
   async _getAll(store) {

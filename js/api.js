@@ -1800,7 +1800,14 @@ const ClaudeAPI = {
     // the reply quietly get worse. Silent degradation reads as "the app
     // suddenly writes badly"; named degradation reads as an outage.
     const skipped = [];
+    const startedAt = this._now();
+    this._deadline = startedAt + this.SEND_BUDGET_MS;
+    try {
     for (const entry of entries) {
+      if (this._budgetLeft() <= 0) {
+        skipped.push({ label: entry.label || entry.id, keyed: this._entryKeyed(entry, settings), reason: 'no time left in this send' });
+        continue;
+      }
       if (!this.entryAvailable(entry)) {
         skipped.push({ label: entry.label || entry.id, keyed: this._entryKeyed(entry, settings), reason: this._skipReason(entry) });
         continue;
@@ -1826,7 +1833,17 @@ const ClaudeAPI = {
         lastErr = err;
       }
     }
+    if (this._budgetLeft() <= 0) {
+      const secs = Math.round((this._now() - startedAt) / 1000);
+      const dead = new Error(`No answer after ${secs}s. Your message is saved — send it again when you're ready.`);
+      dead.transport = true;
+      dead.deadline = true;
+      throw dead;
+    }
     throw lastErr || new Error('Everyone\'s lines are busy — every provider is rate-limited or down right now. Give it a minute and send again.');
+    } finally {
+      this._deadline = 0;
+    }
   },
 
   /* Per-entry retry with backoff. After the attempts are spent, quota and
@@ -1834,8 +1851,10 @@ const ClaudeAPI = {
   async _chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry) {
     const MAX_ATTEMPTS = 4;
     let lastErr;
+    let timeouts = 0;
     let strictRegen = false; // a filler/parrot reply forced a silent redo
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (this._budgetLeft() <= 0) break;
       try {
         const res = await this._sendEntry(entry, friend, history, settings, lastMessageTs);
         // A reply made entirely of pleasantries is not a reply. Regenerate it
@@ -1861,9 +1880,17 @@ const ClaudeAPI = {
         return res;
       } catch (err) {
         lastErr = err;
-        if (!err.retryable || attempt === MAX_ATTEMPTS) break;
+        // A TIMEOUT is not a hiccup — the socket went nowhere for the full
+        // limit, and hammering the same provider three more times just burns
+        // ten minutes to reach the same answer. One more try, then take it
+        // to the next provider, which is where the actual chance of a reply
+        // now lives. Ordinary transport blips keep their four attempts.
+        timeouts += err && err.timeout ? 1 : 0;
+        const spent = attempt >= MAX_ATTEMPTS || timeouts >= 2 || this._budgetLeft() <= 0;
+        if (!err.retryable || spent) break;
         if (onRetry) onRetry(attempt, err);
-        await new Promise(r => setTimeout(r, this._retryDelay(err, attempt)));
+        await this._pause(this._retryDelay(err, attempt));
+        if (this._budgetLeft() <= 0) break;
       }
     }
     if (lastErr && (lastErr.quota || lastErr.transport)) lastErr.failover = true;
@@ -2071,7 +2098,12 @@ const ClaudeAPI = {
     // Who she is, right after the composition: subject description steers the
     // frame and belongs early. Without it every photo is a different woman —
     // the models roll a new person per generation and nothing anchored them.
-    const who = (!isObject && appearance) ? ' ' + String(appearance).trim().replace(/\.?$/, '.') : '';
+    // A custom friend with a blank appearance left the frame with no subject
+    // at all, which reads as ambiguous to both the renderer and the safety
+    // classifier. An explicit adult anchor costs nothing and is what the
+    // template sheets already carry ("of thirty", "in her late twenties").
+    const who = isObject ? ''
+      : appearance ? ' ' + String(appearance).trim().replace(/\.?$/, '.') : ' An adult woman.';
     const clothed = isObject ? ''
       : (this._CLOTHING_NAMED.test(String(desc || '')) ? '' : ' She is dressed for being at home.');
     // Framing, not exclusion: "cropped above the shoulders" describes the
@@ -2133,7 +2165,9 @@ const ClaudeAPI = {
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
-    if (this._isGrokImageModel(model)) return this._xaiImage(entry, model, prompt, width, height);
+    if (this._isGrokImageModel(model)) {
+      return this._xaiImageWithRecovery(entry, model, description, shotIdx, o, width, height, prompt);
+    }
 
     const attempts = [
       {
@@ -2183,6 +2217,45 @@ const ClaudeAPI = {
       throw new Error(`Couldn't reach Bedrock's image endpoints in ${region} from the browser (likely CORS). The chat models are unaffected. Check the region, and if it persists this route may need a proxy.`);
     }
     throw lastErr || new Error('Image generation failed.');
+  },
+
+  /* A declined generation used to end the photo. That is the wrong outcome:
+     the moment was real, she meant to send something, and an error bubble is
+     lower fidelity than any picture. A decline is a judgement about ONE
+     framing, so the recovery re-frames rather than retries — the same moment
+     from a wider angle, then from across the room, then as the thing in front
+     of her. Each rung is a picture she would plausibly have taken instead.
+
+     What this deliberately does not do is argue with the provider. There is
+     no jailbreak here and no moderation flag being flipped; if every framing
+     comes back declined, that is the provider's answer and the caller gets it
+     verbatim so the archive can record what was actually said. */
+  _RECOVERY_SHOTS: [4, 6],   // room-with-legs, then object/room only
+  async _xaiImageWithRecovery(entry, model, description, shotIdx, o, width, height, firstPrompt) {
+    const ladder = [firstPrompt];
+    if (!o.raw) {
+      for (const s of this._RECOVERY_SHOTS) {
+        if (s === shotIdx) continue;
+        ladder.push(this._imagePrompt(description, s, o.appearance, 0).slice(0, 1000));
+      }
+    }
+    let declined = null;
+    for (let i = 0; i < ladder.length; i++) {
+      try {
+        return await this._xaiImage(entry, model, ladder[i], width, height);
+      } catch (e) {
+        // Only a content decision is worth re-framing for. A bad key, a dead
+        // network or a wrong model name will fail identically every time and
+        // must surface immediately.
+        if (!e || !e.declined) throw e;
+        declined = e;
+        if (this._onImageDecline) {
+          try { this._onImageDecline(e, i, ladder.length); } catch (_) { /* logging must never break the send */ }
+        }
+      }
+    }
+    if (declined) declined.exhausted = true;
+    throw declined || new Error('Image generation failed.');
   },
 
   /* xAI's images route. No size/quality/style params (quality is the model
@@ -3164,7 +3237,7 @@ const ClaudeAPI = {
     if (!ev) return '';
     if (ev.kind === 'send') return this._archSendLine(ev);
     if (ev.kind === 'senderr') return `  » SEND FAILED${ev.status ? ' (' + ev.status + ')' : ''}: ${ev.message || 'unknown error'}`;
-    if (ev.kind === 'imgerr') return `  » PHOTO FAILED${ev.status ? ' (' + ev.status + ')' : ''}${ev.declined ? ' [declined on content]' : ''}: ${ev.message || 'unknown'}${ev.desc ? ' — she had asked for: "' + ev.desc + '"' : ''}`;
+    if (ev.kind === 'imgerr') return `  » PHOTO ${ev.reframe ? 'DECLINED, re-framing ' + ev.reframe : 'FAILED'}${ev.status ? ' (' + ev.status + ')' : ''}${ev.declined && !ev.reframe ? ' [declined on content]' : ''}: ${ev.message || 'unknown'}${ev.desc ? ' — she had asked for: "' + ev.desc + '"' : ''}`;
     if (ev.applied || ev.deltas || typeof ev.tension === 'number') {
       // the synthetic absence event is a state event with a telltale reason
       if (/absence/i.test(ev.reason || '')) return `  » absence drift: ${ev.reason}`;
@@ -3183,8 +3256,140 @@ const ClaudeAPI = {
      existing backoff/failover machinery turns a hang into a visible retry
      and the send-lock always releases. */
   TIMEOUTS: { chat: 150000, image: 90000, list: 20000, probe: 30000 },
-  async _timedFetch(url, opts, ms, what) {
-    const limit = ms || this.TIMEOUTS.chat;
+
+  /* A WHOLE send gets one budget, and it is nothing like the sum of its
+     parts. The old arithmetic was 4 attempts x 150s + backoff = 611s per
+     provider, and the pool ships with two — so a bad night could sit on
+     "reconnecting…" for twenty minutes before surfacing anything. Nobody
+     waits that long, and nobody should: the request is dead long before
+     then. One deadline covers every attempt and every failover, each fetch
+     is capped at whatever is left of it, and when it runs out the send
+     fails LOUDLY with the message still saved. */
+  SEND_BUDGET_MS: 200000,
+  _deadline: 0,
+  _budgetLeft() { return this._deadline ? Math.max(0, this._deadline - this._now()) : Infinity; },
+  /* Sleep that cannot outlive the budget — and that measures elapsed time by
+     the clock rather than trusting the timer. A backgrounded mobile tab
+     throttles setTimeout to minute granularity, so a "7 second" backoff came
+     back a minute later and the deadline meant nothing. */
+  async _pause(ms) {
+    const capped = Math.min(ms, this._budgetLeft());
+    if (capped <= 0) return;
+    const until = this._now() + capped;
+    await new Promise(r => setTimeout(r, capped));
+    const overshoot = this._now() - until;
+    if (overshoot > 1000 && this._deadline) this._deadline += Math.min(overshoot, 15000);
+  },
+
+  /* Hand the request to the service worker when one is driving this page.
+     The worker survives the tab being hidden, backgrounded, or evicted, so a
+     reply that was already on the wire arrives instead of vanishing. Any
+     failure of the channel itself falls straight back to a direct fetch —
+     durability must never become a new way for the app to break. */
+  _swTimeout: 4000,
+  _swAvailable() {
+    return typeof navigator !== 'undefined' && navigator.serviceWorker
+      && navigator.serviceWorker.controller && typeof MessageChannel !== 'undefined';
+  },
+  /* Whether the CONTROLLING worker actually speaks this protocol. A page can
+     be controlled by a worker shipped before any of this existed; handing it
+     a request would mean waiting out the entire timeout for a reply that is
+     never coming, on the very first send after an update. So ask first, once
+     per worker, with a 1.5s patience — and re-ask when the controller
+     changes, because that is a different worker. */
+  _swReady: null,
+  async _swSpeaks() {
+    if (!this._swAvailable()) return false;
+    if (this._swReady !== null) return this._swReady;
+    this._swReady = await new Promise((resolve) => {
+      let done = false;
+      const ch = new MessageChannel();
+      const t = setTimeout(() => { if (!done) { done = true; resolve(false); } }, 1500);
+      ch.port1.onmessage = (e) => {
+        if (done) return;
+        done = true; clearTimeout(t);
+        resolve(!!(e.data && e.data.pong));
+      };
+      try { navigator.serviceWorker.controller.postMessage({ type: 'ping' }, [ch.port2]); }
+      catch (_) { done = true; clearTimeout(t); resolve(false); }
+    });
+    return this._swReady;
+  },
+  watchServiceWorker() {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker) return;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { this._swReady = null; });
+  },
+  _shimResponse(p) {
+    return {
+      ok: p.ok, status: p.status,
+      headers: { get: (k) => (p.headers || {})[String(k).toLowerCase()] || null },
+      text: async () => p.body,
+      json: async () => JSON.parse(p.body)
+    };
+  },
+  _swFetch(url, opts, limit, notify) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const ch = new MessageChannel();
+      // If the worker never answers at all, do not hang on it: the handoff
+      // gets a short grace period, after which this call reports failure and
+      // the caller's own retry machinery takes over.
+      const guard = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const err = new Error('handoff');
+        err.swUnavailable = true;
+        reject(err);
+      }, limit + this._swTimeout);
+      ch.port1.onmessage = (e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(guard);
+        const p = e.data || {};
+        if (p.error) {
+          const err = new Error(p.message || 'network');
+          err.aborted = !!p.aborted;
+          reject(err);
+        } else resolve(this._shimResponse(p));
+      };
+      try {
+        navigator.serviceWorker.controller.postMessage(Object.assign({
+          type: 'net', id: 'r' + this._now() + Math.random().toString(36).slice(2, 8),
+          url, timeout: limit, notify: !!notify
+        }, notify || {}, { opts: { method: opts.method, headers: opts.headers, body: opts.body } }), [ch.port2]);
+      } catch (e) {
+        settled = true;
+        clearTimeout(guard);
+        const err = new Error('handoff');
+        err.swUnavailable = true;
+        reject(err);
+      }
+    });
+  },
+
+  /* Who the notification would be from, set by the UI for the duration of a
+     send. Only a chat send carries it (the deadline is the tell), so a
+     settings probe or an image fetch never raises one. */
+  _notify: null,
+  async _timedFetch(url, opts, ms, what, notify) {
+    const limit = Math.max(1000, Math.min(ms || this.TIMEOUTS.chat, this._budgetLeft()));
+    const wantNotify = notify || (this._deadline ? this._notify : null);
+    if (await this._swSpeaks()) {
+      try {
+        return await this._swFetch(url, opts, limit, wantNotify);
+      } catch (e) {
+        if (e && e.swUnavailable) { /* fall through to a direct fetch */ }
+        else if (e && e.aborted) {
+          const err = new Error(`${what || 'The request'} took longer than ${Math.round(limit / 1000)}s — retrying…`);
+          err.retryable = true; err.transport = true; err.timeout = true;
+          throw err;
+        } else {
+          const err = new Error(String((e && e.message) || e));
+          err.retryable = true; err.transport = true;
+          throw err;
+        }
+      }
+    }
     const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = ac ? setTimeout(() => ac.abort(), limit) : null;
     try {
