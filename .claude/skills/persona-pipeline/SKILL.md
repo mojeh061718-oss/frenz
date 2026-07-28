@@ -55,6 +55,29 @@ link while forgetting what another link assumed.
    lowercase. Example banks are register-matched (`_exampleBank`), and any
    new example must be added to BOTH banks at the same index.
 
+10. **Only the FIRST sentence of `style` reaches the generation point.**
+    `_plist` truncates it, and that sentence rides depth-4 — the
+    highest-attention slot in the prompt. It must carry register + bubble
+    rhythm + her one signature marker, and its register signal must be
+    unambiguous (not both "lowercase" and "properly punctuated", which is
+    what Kelly's said for a long time while stating no shape at all).
+    Everything after sentence one is still read, but only from the far
+    weaker system-block position.
+
+11. **Never gate a stable character property on volatile state.** The first
+    cut of the charged/platonic gate keyed off the attraction band, which
+    meant Kelly — flirtiness 85, "plays open sexual tension like a sport" —
+    would have lost her whole signature after one quiet week pushed her
+    under the band boundary. `_isPlatonic` reads type, sliders and her own
+    authored text, and defaults to CHARGED whenever the evidence is
+    ambiguous: the two failure directions are not symmetric.
+
+12. **Slider prose is for characters who have none of their own.** A
+    template with 2k chars of hand-written personality does not need a
+    generic clause restating a trait it already expresses better —
+    `sliderText` only speaks for dials the user actually moved off the
+    template default.
+
 3. **Two blocks that can co-occur must not disagree.** Any new dynamic section
    must be checked against every section that can be live in the same
    assembled prompt (assemble it and read it — don't reason from memory).

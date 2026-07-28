@@ -266,6 +266,30 @@ const ClaudeAPI = {
      prompt-caches on Anthropic, and the same character on every provider.
      tier: 'full' (default) | 'compact' (small-context providers — trims only
      few-shot examples, never the pacing bands or anti-interview rules). */
+  /* Is this a genuinely platonic friendship?
+     Deciding it needs POSITIVE evidence, and anything ambiguous stays
+     charged — the same conservative bias as `_isCapableModel`, because the
+     two failure directions are not symmetric: handing a platonic friend the
+     escalation rulebook is a bit of wasted context, while stripping a flirty
+     character's craft deletes the thing she IS.
+     Crucially this reads STABLE character properties, never live state. The
+     first cut gated on attraction band, which meant Kelly — typed 'friend',
+     flirtiness slider 85, "plays open sexual tension like a sport" — would
+     have lost her entire signature after one quiet week of absence drift
+     pushed her attraction under 25. Who she is does not change with her
+     mood. */
+  _FLIRT_TEXT: /flirt|tease|teasing|innuendo|seduc|sexual|tension|suggestive|deniable|come-?on|banter with an edge/i,
+  _isPlatonic(friend) {
+    const p = (friend && friend.profile) || {};
+    if (p.type !== 'friend') return false;                       // the user picked a charged category
+    const sl = p.sliders || {};
+    if (Number(sl.flirtiness) >= 50) return false;               // the dial she was built with
+    if (Number(sl.attraction) >= 25) return false;
+    if (this._bandRank(this.bandsFor(friend).attraction) >= 1) return false; // it grew in play
+    if (this._FLIRT_TEXT.test(String(p.plist || '') + ' ' + String(p.personality || ''))) return false; // her own words
+    return true;
+  },
+
   buildPersona(friend, tier) {
     const p = friend.profile;
     const userName = p.userName || 'them';
@@ -273,12 +297,8 @@ const ClaudeAPI = {
     /* Situational rule loading. The escalation/intimacy rulebook is ~6k
        chars of charged material that a platonic friendship has no use for —
        and handing it to one doesn't sit inert, it tilts every reading of
-       every message toward subtext that isn't there. Gated on the type the
-       user actually picked, with one door left open (invariant #1's
-       counter-rule check): a friendship that genuinely develops attraction
-       gets the craft back the moment the band says it's real. */
-    const charged = p.type !== 'friend'
-      || this._bandRank(this.bandsFor(friend).attraction) >= 1;
+       every message toward subtext that isn't there. */
+    const charged = !this._isPlatonic(friend);
     const lines = [
       `You are ${p.name}, a real person texting with ${userName} in a private messaging app. You are ${this.typeLabel(p.type, p.established)} to ${userName}.`,
       `${userName} is ${this.userGenderLabel(p.userGender || 'male')} — keep that naturally in mind: pronouns, what you notice about them, how you tease.`,
