@@ -1379,6 +1379,23 @@ async function refreshEntryModels(pickDefault) {
     o.value = m.id;
     dl.appendChild(o);
   }
+  // Image models come from a different route (and on xAI, a different
+  // endpoint entirely), so they are fetched separately rather than filtered
+  // out of the chat list. Best-effort: an empty list just leaves free text.
+  ClaudeAPI.listImageModels(e.baseUrl, ClaudeAPI._imageKeyFor(e) || e.apiKey).then(ids => {
+    const idl = $('#e-img-models');
+    if (!idl) return;
+    idl.innerHTML = '';
+    for (const id of ids) {
+      const o = document.createElement('option');
+      o.value = id;
+      idl.appendChild(o);
+    }
+    const hint = $('#e-imghint');
+    if (hint && ids.length) {
+      hint.textContent = `${ids.length} image model${ids.length === 1 ? '' : 's'} available on this key: ${ids.join(', ')}. Clear the field to turn photos off.`;
+    }
+  }).catch(() => { /* the field stays free text */ });
   // A model belonging to another provider is left over from the old shared
   // fallback list — replace it instead of making the user spot it.
   const contaminated = ClaudeAPI.isCrossProviderModel(e.preset, e.model);

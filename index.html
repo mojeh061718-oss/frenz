@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">9.7</span></h1>
+        <h1 class="logo">frenz <span class="app-version">9.8</span></h1>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
       <div id="friends-list" class="friends-list"></div>
@@ -243,8 +243,9 @@
           </label>
           <div id="e-image-wrap" class="hidden">
             <label>Image model — lets her send photos (optional)
-              <input type="text" id="e-img-model" placeholder="grok-imagine-image">
-              <small id="e-imghint">grok-imagine-image (≈2¢/photo) or grok-imagine-image-quality (≈5¢). Clear the field to turn photos off.</small>
+              <input type="text" id="e-img-model" list="e-img-models" placeholder="grok-imagine-image">
+              <datalist id="e-img-models"></datalist>
+              <small id="e-imghint">Pick from the list — it's loaded live from your key, so it shows exactly what your account can use. Clear the field to turn photos off.</small>
             </label>
             <label>Image API key — only if photos use a different provider than chat
               <input type="password" id="e-img-key" placeholder="xai-…" autocomplete="off">

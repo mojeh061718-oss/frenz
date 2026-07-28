@@ -2019,34 +2019,43 @@ const ClaudeAPI = {
      Every shot therefore leads with the viewpoint and describes only what is
      visible from it. The mirror shot is the one deliberate exception: there
      the phone must be named, because it is the thing hiding her face. */
-  _SHOTS: [
-    'First-person POV photo looking down at her own lap and legs',
-    'First-person POV looking straight down her own body from chest height, everything above the collarbone out of frame past the top edge',
-    'Full-length mirror photo of her outfit, the phone held up in front of her head and completely hiding her face in the reflection, her whole outfit visible from shoes to shoulders',
-    'First-person POV looking down at her own hands and what she is holding, nothing above the wrists in frame',
-    'First-person POV of the room in front of her, her own legs stretched out along the bottom edge of the frame',
-    'First-person POV looking down at herself sitting, thighs and knees filling the lower half of the frame',
-    'Photo of the room or object in front of her, taken by her on her phone, nobody in the frame at all'
-  ],
-  _SHOT_MIRROR: 2,
-  _SHOT_OBJECT: 6,
+  /* THREE framings, not seven compositions — and the scene picks which.
 
-  /* The shot has to follow what she is actually showing him, not a hash.
-     "here's my outfit" taken as a POV-down-at-her-lap frame cannot show an
-     outfit at all — the only framing that answers that request is the
-     full-length mirror, where the phone is what hides her face. Content
-     wins; the hash only breaks ties for generic scenes so those still
-     rotate. */
-  _SHOT_HINTS: [
-    // A fit check is a deliberate "look at what I have on" — that is the only
-    // clothing case that wants a full-length mirror. Being in a hoodie on the
-    // couch is not a fit check, so it must fall through to the casual POV
-    // below or every cosy evening turns into a fashion shoot.
-    [/\b(outfit|fit check|ootd|dressed up|(getting|got|all) ready|going out|new (top|dress|jeans|skirt)|heels on|before i (go|leave)|what i('m| am) wearing)\b/i, 2],
-    [/\b(holding|hands?|nails|mug|cup|coffee|wine glass|book|keys|phone case)\b/i, 3],
-    [/\b(view|window|out(side)?|sunset|street|balcony|backyard)\b/i, 4],
-    [/\b(legs|lap|blanket|thighs|knees|curled up|under the covers|hoodie|pyjamas|pajamas|pjs|sweats|socks|t-?shirt|tank)\b/i, 0]
-  ],
+     The seven-shot rotation imposed a composition on whatever she happened to
+     be describing, which is how "send me a pic of your couch" became a body
+     shot. What she says she is sending IS the picture; the framing only has
+     to answer the question "where was the phone". So: pointed outward at the
+     scene, angled down at herself, or held up at a mirror. Everything else
+     the picture contains comes from her own words.
+
+     Every framing is a photo SHE took, in her own hand. Third-person camera
+     positions ("photographed from behind her") imply somebody else in the
+     room and quietly break the whole fiction. Naming the phone as an object
+     is equally fatal — "phone held in one hand" makes the model draw a phone
+     AND the person holding it, i.e. a portrait with a face in it. So the
+     phone is described as a POSITION, never as a prop. The mirror is the one
+     deliberate exception: there the phone must be named, because it is the
+     thing covering her face. */
+  _FRAMING: {
+    scene: [
+      'A photo she took on her phone of what is in front of her, holding it up and pointing it at the scene. She is not in the picture at all.',
+      'A photo she took on her phone of the thing she is looking at, grabbed quickly and one-handed. Nobody is in the frame.'
+    ],
+    pov: [
+      'A photo she took on her phone, held at chest height and angled down at herself, so the frame begins below her collarbone and her head is outside the picture entirely.',
+      'A photo she took on her phone looking down at herself, the top edge of the frame cutting across below her shoulders, so nothing above them is in the picture.',
+      'A photo she took on her phone with her arm out, the camera pointed down the length of her own body, everything above the collarbone past the top edge of the frame.'
+    ],
+    mirror: [
+      'A full-length mirror photo she took on her phone, the phone raised in front of her head so that it covers her face completely in the reflection, her whole outfit visible from shoes to shoulders.',
+      'A mirror photo she took on her phone, holding it up in front of her face so the phone is what appears in the reflection where her head would be, the rest of her visible head to toe.'
+    ]
+  },
+
+  /* A fit check is a deliberate "look at what I have on" — the only clothing
+     case that wants a mirror. Being in a hoodie on the couch is not a fit
+     check, or every cosy evening becomes a fashion shoot. */
+  _MIRROR_RE: /\b(outfit|fit check|ootd|dressed up|(getting|got|all) ready|going out|new (top|dress|jeans|skirt)|heels on|before i (go|leave)|what i('m| am) wearing|in the mirror)\b/i,
   /* Words that mean the picture is OF something, not of her. Archive case:
      "send me a pic of your couch" matched the couch/lap hint and returned a
      body shot — a request for a THING answered with a picture of HER, which
@@ -2055,11 +2064,20 @@ const ClaudeAPI = {
      points outward and she is not in the frame at all. */
   _OBJECT_SUBJECT: /\b(couch|sofa|sectional|room|kitchen|bedroom|bathroom|house|apartment|view|tv|screen|dog|cat|car|garden|plant|desk|table|fridge|mess|bookshelf|bed(?!room))\b/i,
   _BODY_SUBJECT: /\b(myself|sitting|sat|lying|laying|curled|standing|wearing|outfit|dressed|pyjamas|pajamas|hoodie|towel|heels|nails|thighs|knees|legs|lap|my (legs|lap|body|outfit|hands?|feet|hair|skin|chest|top|shirt|dress|socks|arms?|stomach|waist))\b/i,
-  _shotFor(desc) {
+  /* Default is SCENE, deliberately. The old default was a hash across seven
+     framings, five of which pointed at her body — so an ambiguous scene came
+     back as a picture of a woman more often than not. A photo of a room that
+     should have had her in it is a small miss; a portrait when he asked about
+     the couch is the failure that made these stop making sense. */
+  _modeFor(desc) {
     const s = String(desc || '');
-    if (this._OBJECT_SUBJECT.test(s) && !this._BODY_SUBJECT.test(s)) return this._SHOT_OBJECT;
-    for (const [re, idx] of this._SHOT_HINTS) if (re.test(s)) return idx;
-    return this._hash32(s);
+    if (this._MIRROR_RE.test(s)) return 'mirror';
+    if (this._BODY_SUBJECT.test(s)) return 'pov';
+    return 'scene';
+  },
+  _frame(mode, desc) {
+    const set = this._FRAMING[mode] || this._FRAMING.scene;
+    return set[this._hash32(String(desc || '')) % set.length];
   },
 
   // Does the scene already say what she has on? If so the prompt must not
@@ -2092,57 +2110,64 @@ const ClaudeAPI = {
     ' The atmosphere is charged: low warm light, a closer crop, and what sits just outside the frame doing as much work as what is inside it — implication rather than display.'
   ],
 
-  _imagePrompt(desc, shotIdx, appearance, heat) {
-    const shot = this._SHOTS[((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length];
-    const isObject = (((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length) === this._SHOT_OBJECT;
-    // Who she is, right after the composition: subject description steers the
-    // frame and belongs early. Without it every photo is a different woman —
-    // the models roll a new person per generation and nothing anchored them.
-    // A custom friend with a blank appearance left the frame with no subject
-    // at all, which reads as ambiguous to both the renderer and the safety
-    // classifier. An explicit adult anchor costs nothing and is what the
-    // template sheets already carry ("of thirty", "in her late twenties").
-    const who = isObject ? ''
-      : appearance ? ' ' + String(appearance).trim().replace(/\.?$/, '.') : ' An adult woman.';
-    const clothed = isObject ? ''
+  /* Realism cues, split in two on purpose.
+
+     The old block stacked every degradation at once — harsh flash, crushed
+     shadows, JPEG artefacts, motion blur, soft focus "missing its mark". That
+     is a recipe for a mushy picture, and it was fighting the very thing it
+     was meant to produce: a photo can be candid AND sharp, which is what an
+     actual phone photo looks like in 2026. Keep the cues that say "nobody
+     staged this" (unlevel horizon, real clutter, no retouching) and drop the
+     ones that only destroy detail. */
+  _CAMERA: ' Shot on a recent phone camera in whatever light is actually in the room, the flash only if it is dark.' +
+    ' Real photographic detail: crisp where the focus falls, natural depth of field, true skin and fabric texture,' +
+    ' faint sensor noise in the shadows. Handheld, so the horizon sits slightly off level. Ordinary clutter left exactly where it is.' +
+    ' Flat unedited colour straight out of the camera, no filter, no retouching, no beauty smoothing, no captions or app overlay.',
+
+  _imagePrompt(desc, mode, appearance, heat) {
+    const m = this._FRAMING[mode] ? mode : this._modeFor(desc);
+    const frame = this._frame(m, desc);
+    const isScene = m === 'scene';
+
+    /* THE BUG THIS FIXES. The appearance sheet used to sit immediately after
+       the composition, as its own sentence: "…looking down at her own lap.
+       Curvy full-figured redhead of thirty, pale freckled skin, tattoos down
+       both legs…". That is a character sheet in the highest-weight position,
+       and every model read it the obvious way — as a commission for a
+       PORTRAIT of that woman. The composition never stood a chance.
+
+       She is the photographer here, not the subject. So the sheet moves
+       after the scene, is introduced as who is HOLDING the phone, and is
+       explicitly scoped to whatever the framing actually contains. It still
+       does its original job (the same woman every time, not a new stranger
+       per generation) without commissioning a picture of her. */
+    const who = isScene ? ''
+      : ' The woman holding the phone is the same one in every one of these photos: ' +
+        (appearance ? String(appearance).trim().replace(/\.?$/, '.') : 'an adult woman.') +
+        ' Only the part of her that falls inside the framing described above appears in the picture.';
+
+    const clothed = isScene ? ''
       : (this._CLOTHING_NAMED.test(String(desc || '')) ? '' : ' She is dressed for being at home.');
-    // Framing, not exclusion: "cropped above the shoulders" describes the
-    // picture, where "her face is not visible" describes a removal — and the
-    // second, sitting beside a physical description, is what reads as intent.
-    const faceRule = isObject ? ' Nobody is in the frame.'
-      : ' The frame is cropped above the shoulders, so her head is outside the picture entirely.';
-    // Composition first (it steers the whole frame), then her scene, then the
-    // amateur-camera cues. Positive description only — no "not/never/without".
-    // "She is dressed" is stated explicitly because a scene description is
-    // about a room and a mood, not an outfit, and a weak model will happily
-    // fill that gap with nothing — the free model returned a nude frame from
-    // "in the kitchen at night, just got home, heels off". The app's own rule
-    // for these is suggestion over explicitness; the prompt now says so
-    // instead of assuming it.
-    // The face rule is carried by the composition, but it is also stated
-    // plainly as a backstop — the mirror shot is the one framing where a
-    // reflection could still put a face in frame, and a capable model that
-    // reads the instruction should have it available to follow.
-    /* Wording is tuned to avoid FALSE moderation trips as well as to look
-       right. Three things were removed after photos started being declined,
-       none of which carried any visual information:
-       - "the kind sent on Snapchat and forgotten" — pure intent signal,
-         reads as disappearing intimate imagery.
-       - enumerated body parts in the appearance sheet — a body-part list
-         paired with an excluded face is the signature of exactly the
-         request these classifiers exist to stop.
-       - "her face is NOT visible" as a standalone negation next to that
-         list. The composition already guarantees it; stating it as an
-         exclusion alongside body description is what made the pair read
-         badly. It survives, phrased as framing rather than removal. */
-    return shot + '.' + who + ' ' + desc +
-      '.' + faceRule + clothed +
-      ' An unedited everyday snapshot straight off a phone sensor:' +
-      ' harsh direct on-camera flash with hard falloff into darkness, blown-out highlights on the nearest fabric and surfaces,' +
-      ' crushed muddy shadows, auto white balance slightly wrong with a colour cast, visible high-ISO luminance noise and JPEG artefacts,' +
-      ' handheld motion blur and soft focus missing its mark, tilted crooked framing, ordinary clutter in the background,' +
-      ' flat ungraded phone-camera colour, no filter, no retouching, no beauty smoothing, no captions or app overlay.' +
-      (isObject ? '' : (this._HEAT_TONE[Math.max(0, Math.min(2, heat | 0))] || ''));
+
+    // Framing, not exclusion: "her head is outside the picture" describes the
+    // photograph, where "her face is not visible" describes a removal — and
+    // the second, sitting beside a physical description, reads as intent.
+    const faceRule = isScene ? ' Nobody is in the frame.'
+      : m === 'mirror' ? ' The phone covers her face in the reflection, so no face is in the picture.'
+        : ' Her head is outside the picture entirely.';
+
+    /* Order: where the phone was, then WHAT SHE SAID SHE IS SENDING, then
+       who was holding it, then the camera. Her own words are the subject of
+       the photograph — everything else exists to describe the photograph OF
+       them. Positive description throughout; no "not/never/without".
+
+       "She is dressed" stays explicit because a scene description is about a
+       room and a mood, not an outfit, and a model will happily fill that gap
+       with nothing — the old free model returned a nude frame from "in the
+       kitchen at night, just got home, heels off". */
+    return frame + ' The picture shows: ' + String(desc || '').trim().replace(/\.?$/, '.') +
+      who + faceRule + clothed + this._CAMERA +
+      (isScene ? '' : (this._HEAT_TONE[Math.max(0, Math.min(2, heat | 0))] || ''));
   },
 
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
@@ -2160,13 +2185,13 @@ const ClaudeAPI = {
     const width = o.width || 768, height = o.height || 1280;
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
-    const shotIdx = o.shot !== undefined ? o.shot : this._shotFor(description);
-    const prompt = (o.raw ? description : this._imagePrompt(description, shotIdx, o.appearance, o.heat)).slice(0, 1000);
+    const mode = o.mode || this._modeFor(description);
+    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 1000);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
     if (this._isGrokImageModel(model)) {
-      return this._xaiImageWithRecovery(entry, model, description, shotIdx, o, width, height, prompt);
+      return this._xaiImageWithRecovery(entry, model, description, mode, o, width, height, prompt);
     }
 
     const attempts = [
@@ -2230,13 +2255,15 @@ const ClaudeAPI = {
      no jailbreak here and no moderation flag being flipped; if every framing
      comes back declined, that is the provider's answer and the caller gets it
      verbatim so the archive can record what was actually said. */
-  _RECOVERY_SHOTS: [4, 6],   // room-with-legs, then object/room only
-  async _xaiImageWithRecovery(entry, model, description, shotIdx, o, width, height, firstPrompt) {
+  /* Each rung steps further back from her: a mirror retries as a POV, a POV
+     retries as the room. Ordered, not shuffled — the point is that every
+     retry contains strictly less of a person than the one before it. */
+  _RECOVERY_LADDER: { mirror: ['pov', 'scene'], pov: ['scene'], scene: [] },
+  async _xaiImageWithRecovery(entry, model, description, mode, o, width, height, firstPrompt) {
     const ladder = [firstPrompt];
     if (!o.raw) {
-      for (const s of this._RECOVERY_SHOTS) {
-        if (s === shotIdx) continue;
-        ladder.push(this._imagePrompt(description, s, o.appearance, 0).slice(0, 1000));
+      for (const m of (this._RECOVERY_LADDER[mode] || [])) {
+        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 1000));
       }
     }
     let declined = null;
@@ -4217,6 +4244,33 @@ const ClaudeAPI = {
       }))
       .filter(m => m.id)
       .sort((a, b) => a.id.localeCompare(b.id));
+  },
+
+  /* Which image models this key can actually reach. Guessing a slug from
+     memory is how you get a 404 on every photo with nothing pointing at the
+     cause — and provider model names change faster than any hardcoded list.
+     xAI publishes image models on their own endpoint, so both are tried and
+     merged; whatever comes back is what the account really has.
+
+     Never throws: an empty list simply means the field stays free text. */
+  async listImageModels(baseUrl, key) {
+    const base = String(baseUrl || 'https://api.x.ai/v1').replace(/\/+$/, '');
+    const headers = key ? { authorization: 'Bearer ' + key } : {};
+    const ids = new Set();
+    const pull = async (path, filter) => {
+      try {
+        const res = await this._timedFetch(base + path, { headers }, this.TIMEOUTS.list, 'The model list');
+        if (!res.ok) return;
+        const data = await res.json();
+        for (const m of (data.models || data.data || [])) {
+          const id = String((m && (m.id || m.name)) || '').replace(/^models\//, '');
+          if (id && (!filter || filter.test(id))) ids.add(id);
+        }
+      } catch (_) { /* one route missing says nothing about the other */ }
+    };
+    await pull('/image-generation-models', null);
+    await pull('/models', /image|imagine|diffus|flux|aurora/i);
+    return Array.from(ids).sort();
   },
 
   /* Prefer a large, long-context instruct model; skip anything that clearly
