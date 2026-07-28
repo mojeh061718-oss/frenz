@@ -10,6 +10,41 @@ let editingId = null;           // friend id being edited, null = creating
 let customizeTemplate = null;   // persona template on the customize screen
 let sending = false;
 
+/* THE COMPOSER MUST ALWAYS COME BACK.
+
+   `sending` gates typing, and every path that raises it also lowers it in a
+   finally — which is precisely the assumption that stranded one. A single
+   wrong path and the composer is dead for the rest of the session, and
+   because a stranded send used to re-arm itself in the outbox, closing and
+   reopening the app walked straight back into the same lock.
+
+   So the flag is no longer set by hand anywhere. It goes up through
+   beginSend(), which arms an absolute ceiling, and comes down through
+   endSend() or the watchdog. Whatever else is wrong, the app stays usable. */
+const SEND_WATCHDOG_MS = 300000;
+let sendWatchdog = 0;
+function releaseComposer() {
+  clearTimeout(sendWatchdog);
+  sendWatchdog = 0;
+  sending = false;
+  const btn = $('#btn-send');
+  if (btn) btn.disabled = false;
+}
+function beginSend() {
+  sending = true;
+  const btn = $('#btn-send');
+  if (btn) btn.disabled = true;
+  clearTimeout(sendWatchdog);
+  sendWatchdog = setTimeout(() => {
+    if (!sending) return;
+    releaseComposer();
+    const t = $('#typing'); if (t) t.classList.add('hidden');
+    const s = $('#chat-status'); if (s) s.textContent = fmtClock();
+    toast('That one never came back. Your message is still here — send it again.', 6000);
+  }, SEND_WATCHDOG_MS);
+}
+function endSend() { releaseComposer(); }
+
 /* ---------------- helpers ---------------- */
 
 function showView(id) {
@@ -375,7 +410,13 @@ async function openChat(friendId) {
   await renderMessages();
   showView('view-chat');
   scrollChat(false);
-  maybeOpener(currentFriend);
+  // Opening the thread is the ONLY trigger for finishing a send that was cut
+  // off — you are already here, looking at your own unanswered message, so a
+  // reply arriving reads as her getting back to you. Deliberately not on
+  // boot: recovery must never decide which conversation you are in.
+  resumeIfStranded(currentFriend)
+    .then(() => { if (!sending) maybeOpener(currentFriend); })
+    .catch(() => maybeOpener(currentFriend));
 }
 
 /* ---------------- relationship graph (tap her name in chat) ----------------
@@ -576,7 +617,7 @@ async function maybeOpener(friend, background) {
     await DB.saveFriend(friend);
 
     if (!background) {
-      sending = true;
+      beginSend();
       $('#typing').classList.remove('hidden');
       $('#chat-status').textContent = 'typing…';
       scrollChat();
@@ -636,7 +677,7 @@ async function maybeOpener(friend, background) {
     renderFriendsList();
   } catch { /* silent — she just didn't text first today */ } finally {
     if (!background) {
-      sending = false;
+      endSend();
       $('#typing').classList.add('hidden');
       $('#chat-status').textContent = fmtClock();
     }
@@ -902,8 +943,7 @@ async function sendMessage() {
     return;
   }
 
-  sending = true;
-  $('#btn-send').disabled = true;
+  beginSend();
   input.value = '';
   input.style.height = 'auto';
 
@@ -956,12 +996,18 @@ async function sendMessage() {
    sendMessage so an interrupted send — tab closed, phone locked long enough
    for the page to be evicted — can be finished on the next open without the
    user retyping a thing. */
-async function runReply(friend, history, settings, lastTs, fallbackPreview) {
+async function runReply(friend, history, settings, lastTs, fallbackPreview, attempt) {
   // Recorded BEFORE the request leaves, so a page that dies mid-flight leaves
   // a trail rather than a hole. One record per friend: a second attempt at
   // the same unanswered message replaces it instead of queueing up.
   const outboxId = 'send-' + friend.id;
-  DB.putOutbox({ id: outboxId, kind: 'send', friendId: friend.id, ts: ClaudeAPI._now() }).catch(() => {});
+  // The attempt count RIDES ON the record. Without it a resume that is itself
+  // interrupted writes a fresh record at zero attempts and the loop is
+  // immortal — which is exactly how this stranded a composer across restarts.
+  DB.putOutbox({
+    id: outboxId, kind: 'send', friendId: friend.id,
+    ts: ClaudeAPI._now(), attempts: Number(attempt) || 0
+  }).catch(() => {});
   // Who a background notification would be from, for the duration of this
   // send only. Cleared in the finally so nothing else can raise one.
   ClaudeAPI._notify = { title: friend.profile.name || 'frenz', preview: 'sent you a message' };
@@ -1114,12 +1160,11 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview) {
     }).catch(() => {});
   } finally {
     clearInterval(slowTick);
-    sending = false;
+    endSend();
     ClaudeAPI._notify = null;
     // Settled either way — a delivered reply and a reported failure are both
     // finished business, and neither should be replayed on the next open.
     DB.clearOutbox('send-' + friend.id).catch(() => {});
-    $('#btn-send').disabled = false;
     $('#chat-status').textContent = fmtClock();
   }
 }
@@ -1129,48 +1174,62 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview) {
    asking for the reply again — which is why the outbox record holds an id
    and nothing else. Anything the app cannot honestly finish is dropped
    rather than left to look pending forever. */
+/* RESUMING A STRANDED SEND — the version that cannot trap you.
+
+   The first cut ran on boot and on every return to the app: it hunted for an
+   unfinished send, NAVIGATED into that friend's thread, and locked the
+   composer for the length of a fresh request. Worse, runReply re-writes the
+   outbox record as its first act, so a resume that was itself interrupted
+   re-armed the very thing that stranded you. Force-quitting walked straight
+   back into it. That is the "closing and coming back doesn't help, and I
+   can't type" loop.
+
+   Now: it never navigates and never runs on boot. It runs only for the
+   thread you have just opened, at most twice per stranded message, and only
+   while the moment is still live. If it gives up, it gives up quietly and
+   your message is simply sitting there to send again. */
+const RESUME_MAX_ATTEMPTS = 2;
+const RESUME_WINDOW_MS = 60 * 60 * 1000;
 let resuming = false;
-async function resumeOutbox() {
-  if (resuming || sending) return;
-  resuming = true;
-  try { await _resumeOutbox(); } finally { resuming = false; }
-}
-async function _resumeOutbox() {
-  let pending = [];
-  try { pending = await DB.listOutbox(); } catch (_) { return; }
-  const stale = pending.filter(r => r && r.kind === 'send');
-  if (!stale.length) return;
-  for (const rec of stale) {
+
+async function resumeIfStranded(friend) {
+  if (resuming || sending || !friend) return;
+  let rec = null;
+  try { rec = (await DB.listOutbox()).find(r => r && r.kind === 'send' && r.friendId === friend.id); }
+  catch (_) { return; }
+  if (!rec) return;
+
+  const dead = ClaudeAPI._now() - (rec.ts || 0) > RESUME_WINDOW_MS
+    || (rec.attempts || 0) >= RESUME_MAX_ATTEMPTS;
+  const msgs = await DB.getMessages(friend.id).catch(() => []);
+  const last = msgs[msgs.length - 1];
+  // She already answered, the moment has passed, or we have tried enough:
+  // drop the record so it can never come back.
+  if (dead || !last || last.role !== 'user') {
     await DB.clearOutbox(rec.id).catch(() => {});
-    // Past a day the moment has gone; replying to it now would be stranger
-    // than not replying at all.
-    if (ClaudeAPI._now() - (rec.ts || 0) > 24 * 3600 * 1000) continue;
-    const friend = await DB.getFriend(rec.friendId).catch(() => null);
-    if (!friend) continue;
-    const msgs = await DB.getMessages(friend.id).catch(() => []);
-    const last = msgs[msgs.length - 1];
-    // If she already answered, there is nothing to recover.
-    if (!last || last.role !== 'user') continue;
-    const settings = Settings.get();
-    if (!ClaudeAPI.activeEntries(settings).length) continue;
-    await openChat(friend.id);
-    // openChat re-reads the friend; run against THAT object, because
-    // runReply mutates and saves it.
-    if (!currentFriend || currentFriend.id !== friend.id) continue;
-    const prior = msgs.slice(0, -1);
-    const history = msgs
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => ({ role: m.role, text: m.text }));
-    sending = true;
-    $('#btn-send').disabled = true;
+    return;
+  }
+  const settings = Settings.get();
+  if (!ClaudeAPI.activeEntries(settings).length) return;
+
+  resuming = true;
+  try {
+    beginSend();
     const note = document.createElement('div');
     note.className = 'msg sys transient-note';
     note.textContent = 'Picking that back up…';
     $('#chat-messages').appendChild(note);
     scrollChat();
-    await runReply(currentFriend, history, settings,
-      prior.length ? prior[prior.length - 1].ts : null, last.text);
-    return; // one recovery per open; the rest keep their place in the outbox
+    const prior = msgs.slice(0, -1);
+    const history = msgs
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, text: m.text }));
+    await runReply(friend, history, settings,
+      prior.length ? prior[prior.length - 1].ts : null, last.text,
+      (rec.attempts || 0) + 1);
+  } finally {
+    resuming = false;
+    endSend();
   }
 }
 
@@ -1852,14 +1911,14 @@ function init() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* offline shell is a bonus, not required */ });
     ClaudeAPI.watchServiceWorker();
-    // Coming back to a foregrounded app is the moment a stranded send should
-    // finish — that is what makes a recovered reply feel pushed rather than
-    // retried. Guarded so a tab switch mid-send never doubles it up.
+    // Returning to the app is a good moment to finish a stranded send — but
+    // only for the thread already on screen. Nothing here may navigate.
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && !sending) resumeOutbox().catch(() => {});
+      if (document.visibilityState === 'visible' && !sending && currentFriend) {
+        resumeIfStranded(currentFriend).catch(() => {});
+      }
     });
   }
-  resumeOutbox().catch(() => { /* recovery is best-effort by definition */ });
 }
 
 document.addEventListener('DOMContentLoaded', init);

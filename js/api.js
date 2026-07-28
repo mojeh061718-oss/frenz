@@ -1802,6 +1802,7 @@ const ClaudeAPI = {
     const skipped = [];
     const startedAt = this._now();
     this._deadline = startedAt + this.SEND_BUDGET_MS;
+    this._forgiven = 0;
     try {
     for (const entry of entries) {
       if (this._budgetLeft() <= 0) {
@@ -2178,7 +2179,11 @@ const ClaudeAPI = {
     return this._ASPECTS.reduce((best, a) => Math.abs(a[1] - r) < Math.abs(best[1] - r) ? a : best)[0];
   },
 
-  async generateImage(entry, description, opts) {
+  generateImage(entry, description, opts) {
+    // Every route out of here is bounded, including the re-framing ladder.
+    return this.withBudget(this.PHOTO_BUDGET_MS, () => this._generateImage(entry, description, opts));
+  },
+  async _generateImage(entry, description, opts) {
     const o = opts || {};
     const model = entry.imageModel;
     const region = entry.imageRegion || entry.region || 'us-east-1';
@@ -2268,6 +2273,9 @@ const ClaudeAPI = {
     }
     let declined = null;
     for (let i = 0; i < ladder.length; i++) {
+      // Re-framing is worth a wait, but not an unbounded one — a photo the
+      // thread has already moved past is worse than no photo.
+      if (i > 0 && this._budgetLeft() < 8000) break;
       try {
         return await this._xaiImage(entry, model, ladder[i], width, height);
       } catch (e) {
@@ -3292,7 +3300,10 @@ const ClaudeAPI = {
      through this. A timeout throws a RETRYABLE transport error, so the
      existing backoff/failover machinery turns a hang into a visible retry
      and the send-lock always releases. */
-  TIMEOUTS: { chat: 150000, image: 90000, list: 20000, probe: 30000 },
+  /* Per-request ceilings. Both came down in v10.0: a reply that is coming
+     arrives well inside these, so the only thing a generous ceiling bought
+     was a longer stare at "typing…" when nothing was coming at all. */
+  TIMEOUTS: { chat: 90000, image: 45000, list: 20000, probe: 30000 },
 
   /* A WHOLE send gets one budget, and it is nothing like the sum of its
      parts. The old arithmetic was 4 attempts x 150s + backoff = 611s per
@@ -3302,9 +3313,25 @@ const ClaudeAPI = {
      then. One deadline covers every attempt and every failover, each fetch
      is capped at whatever is left of it, and when it runs out the send
      fails LOUDLY with the message still saved. */
-  SEND_BUDGET_MS: 200000,
+  SEND_BUDGET_MS: 150000,
+  /* PHOTOS NEEDED ONE TOO. v9.6 gave chat a budget and left the image path
+     on nothing but a per-request timeout, so one photo could legitimately
+     occupy: 45s attempt, worker guard, direct-fetch fallback, times three
+     re-framing rungs. That is minutes of "sending a photo…" with the
+     composer locked, and it got worse with the ladder in 9.6 and the slower
+     quality model in 9.9 — which is exactly when the stalling started. */
+  PHOTO_BUDGET_MS: 110000,
   _deadline: 0,
   _budgetLeft() { return this._deadline ? Math.max(0, this._deadline - this._now()) : Infinity; },
+  /* Run something under a deadline. A nested call may only TIGHTEN the
+     budget it inherits, never widen it — otherwise a photo inside a reply
+     could hand itself more time than the reply had left. */
+  async withBudget(ms, fn) {
+    const prev = this._deadline;
+    const want = this._now() + ms;
+    this._deadline = prev ? Math.min(prev, want) : want;
+    try { return await fn(); } finally { this._deadline = prev; }
+  },
   /* Sleep that cannot outlive the budget — and that measures elapsed time by
      the clock rather than trusting the timer. A backgrounded mobile tab
      throttles setTimeout to minute granularity, so a "7 second" backoff came
@@ -3314,9 +3341,17 @@ const ClaudeAPI = {
     if (capped <= 0) return;
     const until = this._now() + capped;
     await new Promise(r => setTimeout(r, capped));
+    // A throttled background tab oversleeps every pause, and forgiving each
+    // one individually let the budget creep well past its ceiling. Forgive
+    // the lost time once, in total, not per pause.
     const overshoot = this._now() - until;
-    if (overshoot > 1000 && this._deadline) this._deadline += Math.min(overshoot, 15000);
+    if (overshoot > 1000 && this._deadline && this._forgiven < 15000) {
+      const give = Math.min(overshoot, 15000 - this._forgiven);
+      this._forgiven += give;
+      this._deadline += give;
+    }
   },
+  _forgiven: 0,
 
   /* Hand the request to the service worker when one is driving this page.
      The worker survives the tab being hidden, backgrounded, or evicted, so a
