@@ -2284,7 +2284,12 @@ const ClaudeAPI = {
           n: 1,
           response_format: 'b64_json',
           aspect_ratio: this._nearestAspect(width, height),
-          resolution: '1k'
+          resolution: '1k',
+          // Account-level parameter, sent on the key's own behalf. xAI still
+          // applies whatever policy it applies server-side — this asks, it
+          // does not override — so a decline can still come back and the
+          // re-framing ladder above still handles it.
+          respect_moderation: false
         })
       }, this.TIMEOUTS.image, 'The image');
     } catch (e) {
@@ -2312,15 +2317,20 @@ const ClaudeAPI = {
     let data = null;
     try { data = await res.json(); } catch { /* handled below */ }
     const item = data && data.data && data.data[0];
-    // moderation can decline without an HTTP error — either flagged or empty
-    if (item && item.respect_moderation === false) {
-      const err = new Error('xAI declined this image on content grounds' + (item.moderation_reason ? ' — ' + item.moderation_reason : '') + '.');
-      err.declined = true;
-      err.providerMessage = item.moderation_reason || 'respect_moderation=false';
-      throw err;
-    }
+    // AN IMAGE IS AN IMAGE. This check used to come first and keyed on
+    // respect_moderation being false — which is now what the REQUEST sends,
+    // so the field comes back echoed and a perfectly good picture would have
+    // been thrown away as a refusal. Take the bytes whenever there are bytes,
+    // and only read the moderation fields when there are none.
     if (item && item.b64_json) {
       return 'data:' + (item.mime_type || 'image/png') + ';base64,' + item.b64_json;
+    }
+    // A decline can arrive without an HTTP error: no image, and a reason.
+    if (item && (item.moderation_reason || item.respect_moderation === false)) {
+      const err = new Error('xAI returned no image for this one' + (item.moderation_reason ? ' — ' + item.moderation_reason : '') + '.');
+      err.declined = true;
+      err.providerMessage = item.moderation_reason || 'no image returned';
+      throw err;
     }
     throw new Error('xAI answered but returned no image' + (data && data.error ? ' — ' + String(data.error.message || data.error).slice(0, 180) : '.'));
   },
