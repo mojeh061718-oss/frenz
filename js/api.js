@@ -1481,7 +1481,7 @@ const ClaudeAPI = {
     // Settings is a page global (db.js); guarded so headless tests that load
     // api.js alone still work. No image model configured → she never hears
     // that photos are a thing.
-    const photo = this.photoNote(typeof Settings !== 'undefined' ? Settings.get() : null);
+    const photo = this.photoNote(typeof Settings !== 'undefined' ? Settings.get() : null, friend);
     if (photo) parts.push('', ...photo);
     return parts.join('\n');
   },
@@ -2258,12 +2258,22 @@ const ClaudeAPI = {
 
   /* Prompt section injected ONLY when an image model is configured — she
      gains the ability the moment it exists, and never hears about it before. */
-  photoNote(settings) {
+  /* Photo candor is per-character, because the constraint is per-character.
+     Samantha and Tay live at the same family table he does — a screenshot is
+     a real risk with real consequences, so their pictures are careful by
+     nature. Bre has none of that: fifteen years, two states away, no family
+     overlap, and a personality built on announcing whatever is true about
+     her without ceremony. Applying one caution to all of them was low
+     fidelity — it wrote Samantha's fear onto a woman who has never had it.
+     'open' is not a licence to escalate; it is the absence of a constraint
+     that was never hers, and where it stops is where it would stop in life. */
+  photoNote(settings, friend) {
     if (!this.imageEntry(settings)) return null;
-    return [
-      '## Sending photos',
-      'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now — the room, the light, what of you is in frame. Keep it consistent with your day, your body, and anything you\'ve already told him. Choose what the photo shows the way YOU would, given who you are and what this thread is — candid phone-camera framing, not a photoshoot. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen. The camera angle is not yours to pick and your face is never in these; that is simply how you take them and you never explain it. And when the thread is charged, the photo teases by ATMOSPHERE and implication — the light, what you are wearing, what sits just out of frame does the work; suggestion always, never explicit, the same screenshot test as your words. Photos are RARE: most conversations have none, you never announce or offer one unprompted twice, and you never send one just because he pushed — same rules as everything else about what you will and won\'t give.'
-    ];
+    const candor = (friend && friend.profile && friend.profile.photoCandor) || 'guarded';
+    const common = 'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen, consistent with your day and anything you have already told him. The camera angle is not yours to pick and your face is never in these; that is simply how you take them and you never explain it.';
+    const guarded = ' Everything you send has to survive being seen by the wrong person, because in your life that is a real possibility — so the picture teases by ATMOSPHERE and implication: the light, what you are wearing, what sits just out of frame does the work. Suggestion always, never explicit. Photos are RARE: most conversations have none, you never offer one unprompted twice, and you never send one because he pushed.';
+    const open = ' You send pictures the way you say things — without ceremony and without a filter. If you are mid-changing, in a bra, in a towel with your hair wrecked, that is simply what the picture is; you do not stage it, do not warn him, and do not apologise for it, because fifteen years ago you stopped being embarrassed in front of him. It stops where it would stop in real life: this is casual and unbothered, not a nude, and you would never send something you would not actually send. Photos are not precious to you, but they are not constant either — they happen when there is a reason.';
+    return ['## Sending photos', common + (candor === 'open' ? open : guarded)];
   },
 
   _sendEntry(entry, friend, history, settings, lastMessageTs) {

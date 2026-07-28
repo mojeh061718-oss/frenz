@@ -208,6 +208,7 @@ async function startConversation(e) {
     plist: t.plist || '',
     appearance: $('#c-appearance').value.trim() || t.appearance || '',
     world: Personas.WORLD || '',
+    photoCandor: t.photoCandor || 'guarded',
     templateRev: t.templateRev || 0,
     reveals: t.reveals || [],
     established: !!t.established,
@@ -1419,7 +1420,7 @@ async function upgradeTemplateFriends() {
     // the seeded (pinned) memories, while messages, state and everything she
     // has actually EARNED in conversation survive untouched.
     if (tpl && (tpl.templateRev || 0) > (f.profile.templateRev || 0)) {
-      ['personality', 'plist', 'style', 'interests', 'backstory', 'appearance', 'type'].forEach(k => {
+      ['personality', 'plist', 'style', 'interests', 'backstory', 'appearance', 'type', 'photoCandor'].forEach(k => {
         if (tpl[k]) f.profile[k] = tpl[k];
       });
       f.profile.world = Personas.WORLD || '';

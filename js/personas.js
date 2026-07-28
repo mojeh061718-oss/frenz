@@ -16,7 +16,8 @@ const Personas = {
   templates: [
     {
       id: 'kelly',
-      templateRev: 5,
+      photoCandor: 'open',
+      templateRev: 6,
       name: 'Kelly',
       age: 27,
       gender: 'woman',
@@ -45,7 +46,8 @@ const Personas = {
     },
     {
       id: 'bre',
-      templateRev: 5,
+      photoCandor: 'open',
+      templateRev: 6,
       name: 'Bre',
       age: 33,
       gender: 'woman',
@@ -73,7 +75,8 @@ const Personas = {
     },
     {
       id: 'samantha',
-      templateRev: 5,
+      photoCandor: 'guarded',
+      templateRev: 6,
       established: true,
       name: 'Samantha',
       age: 30,
@@ -104,7 +107,8 @@ const Personas = {
     },
     {
       id: 'tay',
-      templateRev: 5,
+      photoCandor: 'guarded',
+      templateRev: 6,
       name: 'Tay',
       age: 28,
       gender: 'woman',
