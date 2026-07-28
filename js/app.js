@@ -1426,13 +1426,37 @@ async function upgradeTemplateFriends() {
       f.profile.world = Personas.WORLD || '';
       f.profile.reveals = tpl.reveals || [];
       f.profile.established = !!tpl.established;
-      const earned = (f.memories || []).filter(m => !(m && m.pinned));
+      // Seeded memories are deliberately NOT pinned (v9.1 — pinning made her
+      // recite them every turn), so filtering on `pinned` kept the OLD seeds
+      // and prepended the new ones: every revision quietly doubled her origin
+      // story. Age is the reliable tell instead — nothing genuinely EARNED
+      // can exist within a minute of the friend being created, because that
+      // takes a full exchange.
+      const born = f.createdAt || 0;
+      const earned = (f.memories || []).filter(m => m && !m.pinned && (m.ts || 0) > born + 60000);
       f.memories = (tpl.seedMemories || []).map(m => ClaudeAPI._normMemory(
-        Object.assign({ ts: f.createdAt || ClaudeAPI._now(), lastAccessed: ClaudeAPI._now() }, m))).concat(earned);
+        Object.assign({ ts: born || ClaudeAPI._now(), lastAccessed: ClaudeAPI._now() }, m))).concat(earned);
+      // When a template's SEED was wrong, existing friends keep running on it
+      // forever — Samantha and Tay were seeded as though Jon were close to
+      // them, and he is not related to either. `seedFix` is the correction
+      // stated outright by the template rather than inferred from a slider
+      // the user may have set themselves: shift live state by exactly that
+      // much, so everything earned on top of the bad seed survives.
+      const fix = tpl.seedFix;
+      if (fix && f.state && (fix.rev || 0) === tpl.templateRev) {
+        ['closeness', 'comfort', 'attraction'].forEach(k => {
+          if (typeof fix[k] === 'number') {
+            f.state[k] = Math.max(0, Math.min(100, (Number(f.state[k]) || 0) + fix[k]));
+          }
+        });
+      }
       f.profile.templateRev = tpl.templateRev;
       changed = true;
     }
-    if (tpl && !f.profile.world) { f.profile.world = Personas.WORLD || ''; changed = true; }
+    // The world map is shared and not user-editable, so a stale copy is pure
+    // loss — refresh it for every template friend whether or not the template
+    // revision moved, rather than only backfilling an empty one.
+    if (tpl && f.profile.world !== (Personas.WORLD || '')) { f.profile.world = Personas.WORLD || ''; changed = true; }
     if (knownName && !f.profile.userName) { f.profile.userName = knownName; changed = true; }
     // Same for the founding facts: friends made before v8.6 started with an
     // empty memory list and the state model would never record an event that

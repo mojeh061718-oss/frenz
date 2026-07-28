@@ -147,8 +147,11 @@ const ClaudeAPI = {
   typeLabel(type, established) {
     // 'romantic' with real history (Samantha, Aubrey) must not open the
     // system prompt with "recently started talking" — the first sentence
-    // contradicting the backstory poisons everything after it.
-    if (type === 'romantic' && established) return 'someone they have known for a long time, where the charge is recent even if the history isn\'t';
+    // contradicting the backstory poisons everything after it. It must not
+    // say "known for a long time" either: Samantha and Tay have been IN his
+    // life for two years without ever being CLOSE to him, and the old wording
+    // handed them a familiarity nothing in their history supports.
+    if (type === 'romantic' && established) return 'someone whose place in their life predates this thread, however well or little they actually know each other, and where the charge between them is recent';
     return { friend: 'a friend', close_friend: 'a close friend', romantic: 'someone they recently started talking to, with possible romantic potential' }[type] || 'a friend';
   },
 
@@ -2259,19 +2262,21 @@ const ClaudeAPI = {
   /* Prompt section injected ONLY when an image model is configured — she
      gains the ability the moment it exists, and never hears about it before. */
   /* Photo candor is per-character, because the constraint is per-character.
-     Samantha and Tay live at the same family table he does — a screenshot is
-     a real risk with real consequences, so their pictures are careful by
-     nature. Bre has none of that: fifteen years, two states away, no family
-     overlap, and a personality built on announcing whatever is true about
-     her without ceremony. Applying one caution to all of them was low
-     fidelity — it wrote Samantha's fear onto a woman who has never had it.
-     'open' is not a licence to escalate; it is the absence of a constraint
-     that was never hers, and where it stops is where it would stop in life. */
+     Samantha's and Tay's exposure runs through Toni, and it is compounded by
+     distance rather than closeness: neither is related to him and neither
+     really knows him, so a picture is a large step taken with a near
+     stranger, not a casual one between friends. Bre has neither problem —
+     fifteen years, two states away, nobody in common who would care, and a
+     personality built on announcing whatever is true about her without
+     ceremony. Applying one caution to all of them was low fidelity: it wrote
+     Samantha's fear onto a woman who has never had it. 'open' is not a
+     licence to escalate; it is the absence of a constraint that was never
+     hers, and where it stops is where it would stop in life. */
   photoNote(settings, friend) {
     if (!this.imageEntry(settings)) return null;
     const candor = (friend && friend.profile && friend.profile.photoCandor) || 'guarded';
     const common = 'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen, consistent with your day and anything you have already told him. The camera angle is not yours to pick and your face is never in these; that is simply how you take them and you never explain it.';
-    const guarded = ' Everything you send has to survive being seen by the wrong person, because in your life that is a real possibility — so the picture teases by ATMOSPHERE and implication: the light, what you are wearing, what sits just out of frame does the work. Suggestion always, never explicit. Photos are RARE: most conversations have none, you never offer one unprompted twice, and you never send one because he pushed.';
+    const guarded = ' A picture from you is not a small thing. Everything you send has to survive being seen by the wrong person, because in your life that is a real possibility — and you do not know him well enough for any of this to be casual, which makes it a bigger step, not a smaller one. So the picture teases by ATMOSPHERE and implication: the light, what you are wearing, what sits just out of frame does the work. Suggestion always, never explicit. Photos are RARE: most conversations have none, you never offer one unprompted twice, and you never send one because he pushed.';
     const open = ' You send pictures the way you say things — without ceremony and without a filter. If you are mid-changing, in a bra, in a towel with your hair wrecked, that is simply what the picture is; you do not stage it, do not warn him, and do not apologise for it, because fifteen years ago you stopped being embarrassed in front of him. It stops where it would stop in real life: this is casual and unbothered, not a nude, and you would never send something you would not actually send. Photos are not precious to you, but they are not constant either — they happen when there is a reason.';
     return ['## Sending photos', common + (candor === 'open' ? open : guarded)];
   },
