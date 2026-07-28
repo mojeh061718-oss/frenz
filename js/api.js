@@ -1909,13 +1909,27 @@ const ClaudeAPI = {
      The set rotates so her photos don't all look like the same shot, and is
      seeded per photo (see generateImage) rather than random, so a retry of
      the same moment is stable. */
+  /* Every entry is a frame HER OWN PHONE takes, held in her own hand. No
+     third-person camera positions: "photographed from behind her" implies
+     somebody else in the room holding a camera, which is a different picture
+     entirely and quietly breaks the fiction that she snapped this herself.
+     The phone is the eye, so the face is out of frame by construction. */
+  /* Phrasing matters more than intent here, and it was learned the hard way.
+     Naming the camera as an OBJECT — "front-facing phone camera", "phone held
+     in one hand" — makes the model draw a phone and a person holding it, i.e.
+     a third-person portrait with a face in it, which is the exact opposite of
+     the ask. Framing it as a VIEWPOINT — "first-person POV looking down at
+     her own…" — puts the camera behind her eyes, where a face cannot exist.
+     Every shot therefore leads with the viewpoint and describes only what is
+     visible from it. The mirror shot is the one deliberate exception: there
+     the phone must be named, because it is the thing hiding her face. */
   _SHOTS: [
-    'First-person POV, phone held at chest height looking down at her own lap and legs',
-    'Photographed from behind her, over her shoulder, her back and the room in front of her',
-    'Bathroom mirror selfie with the phone held up completely covering her face, only her body and arm visible',
-    'Tight close crop on her hands and what she is holding, everything above the collarbone out of frame',
-    'Low angle from her lap looking along her body toward the room, her head out of frame past the top edge',
-    'Over-the-shoulder shot of what she is looking at, the back of her head soft and out of focus at the edge'
+    'First-person POV photo looking down at her own lap and legs',
+    'First-person POV looking straight down her own body from chest height, everything above the collarbone out of frame past the top edge',
+    'Bathroom mirror photo with the phone held up flat and completely covering her face, only her body and the arm holding it visible',
+    'First-person POV looking down at her own hands and what she is holding, nothing above the wrists in frame',
+    'First-person POV of the room in front of her, her own legs stretched out along the bottom edge of the frame',
+    'First-person POV looking down at herself sitting, thighs and knees filling the lower half of the frame'
   ],
   _imagePrompt(desc, shotIdx) {
     const shot = this._SHOTS[((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length];
@@ -1929,9 +1943,11 @@ const ClaudeAPI = {
     // instead of assuming it.
     return shot + '. ' + desc +
       '. She is dressed, in ordinary everyday clothes.' +
-      ' Casual amateur smartphone snapshot, shot one-handed without thinking about it,' +
-      ' slightly crooked framing, real skin texture and stray hair, ordinary clutter in the background,' +
-      ' available indoor light with a phone-camera flash falloff, faint sensor grain, softly imperfect focus.';
+      ' Unedited snapshot straight off a phone sensor, the kind sent on Snapchat and forgotten:' +
+      ' harsh direct on-camera flash with hard falloff into darkness, blown-out highlights on nearest skin and fabric,' +
+      ' crushed muddy shadows, auto white balance slightly wrong with a colour cast, visible high-ISO luminance noise and JPEG artefacts,' +
+      ' handheld motion blur and soft focus missing its mark, tilted crooked framing, real pores and stray hair and everyday clutter,' +
+      ' flat ungraded phone-camera colour, no filter, no retouching, no beauty smoothing, no captions or app overlay.';
   },
 
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
