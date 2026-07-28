@@ -1451,9 +1451,14 @@ const ClaudeAPI = {
     }
     const mems = (memoriesOverride || (friend.memories || []).map(m => typeof m === 'string' ? m : (m && m.text) || '')).filter(m => m);
     if (mems.length) {
-      parts.push('', '## Things you remember (about him, about you two, about your own life)',
+      parts.push('', '## Things you remember',
         ...mems.map(m => '- ' + m),
-        'These may color your reply or surface naturally when they fit — the unprompted callback to a small detail is what being close IS. But never announce the remembering ("I remember you said...") and never force one in. If a memory conflicts with what he just said, trust him and quietly update.');
+        // Written as narration, a memory gets narrated BACK. Measured in a
+        // real transcript: seeded memories were pinned at top importance so
+        // they rode every single turn, and she recited them almost verbatim —
+        // re-telling him an event he had personally been present for, twice,
+        // as though he needed the summary. Memory is knowledge, not a script.
+        'These are things you KNOW, not lines to say. They show up as consequences — you act on them, allow for them, let them colour a reply — and the unprompted callback to a small detail is what being close IS. But he was THERE for anything the two of you did together, so never re-tell him an event he was present for as though he needs it recapped; that is the least natural thing a person can do. Never announce the remembering ("I remember you said..."), never force one in, and never list them. If a memory conflicts with what he just said, trust him and quietly update.');
     }
     if (omittedCount > 0 && sceneLines && sceneLines.length) {
       parts.push('', '## The story so far — scenes you remember from earlier in this conversation', ...sceneLines);
@@ -2702,8 +2707,17 @@ const ClaudeAPI = {
     const chosen = new Set();
     let used = 0;
     const budget = Math.max(300, charBudget || 2000);
+    /* A COUNT cap as well as a character one. The char budget alone allows
+       roughly sixty entries, and a "## Things you remember" block sixty
+       bullets long stops reading like recall and starts reading like a
+       database she is consulting — which is exactly how it comes out: listed,
+       recited, all of it live at once. People surface a handful of relevant
+       things, so the block stays a handful. Everything else is still stored
+       and still retrievable the moment it becomes relevant. */
+    const MAX_MEMORIES = 9;
     const take = (s) => {
       if (chosen.has(s.i)) return true;
+      if (chosen.size >= MAX_MEMORIES) return false;
       const cost = s.m.text.length + 3;
       if (used + cost > budget) return false;
       chosen.add(s.i);
