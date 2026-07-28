@@ -201,7 +201,9 @@ async function startConversation(e) {
     interests: $('#c-interests').value.trim(),
     style: (style ? style + ' ' : '') + notes.style,
     backstory: $('#c-backstory').value.trim(),
-    userName: $('#c-username').value.trim(),
+    // Blank here means she can never say his name — fall back to the one he
+    // gave last time rather than shipping a nameless relationship.
+    userName: $('#c-username').value.trim() || localStorage.getItem('frenz-user-name') || '',
     userGender: $('#c-usergender').value,
     plist: t.plist || '',
     appearance: $('#c-appearance').value.trim() || t.appearance || '',
@@ -210,8 +212,12 @@ async function startConversation(e) {
     sliders,
     color: t.color
   };
-  localStorage.setItem('frenz-user-name', profile.userName);
-  localStorage.setItem('frenz-user-gender', profile.userGender);
+  // Only remember a REAL answer. This used to store whatever was in the box,
+  // so creating one friend with the name left blank wiped the remembered
+  // name for every friend made afterwards — which is exactly how a thread
+  // that once said "Jon" started rendering as "Him".
+  if (profile.userName) localStorage.setItem('frenz-user-name', profile.userName);
+  if (profile.userGender) localStorage.setItem('frenz-user-gender', profile.userGender);
 
   const friend = {
     id: uid(),
@@ -309,7 +315,7 @@ async function saveFriendFromForm(e) {
     style: $('#f-style').value.trim(),
     appearance: $('#f-appearance').value.trim(),
     backstory: $('#f-backstory').value.trim(),
-    userName: $('#f-username').value.trim(),
+    userName: $('#f-username').value.trim() || localStorage.getItem('frenz-user-name') || '',
     userGender: $('#f-usergender').value,
     color: $('#f-colors').dataset.color || AVATAR_COLORS[0]
   };
@@ -1360,6 +1366,20 @@ async function purgeStateArtifacts() {
    relationship state all survive. Only unedited template text is touched. */
 async function upgradeTemplateFriends() {
   const friends = await DB.listFriends();
+  // Recover his name for friends created while the box was blank. Any friend
+  // who still has it is as good a source as localStorage — and if one is
+  // found, put it back in storage so the next friend starts with it too.
+  let knownName = localStorage.getItem('frenz-user-name') || '';
+  let knownGender = localStorage.getItem('frenz-user-gender') || '';
+  if (!knownName) {
+    const named = friends.find(f => f.profile && f.profile.userName);
+    if (named) {
+      knownName = named.profile.userName;
+      knownGender = knownGender || named.profile.userGender || '';
+      localStorage.setItem('frenz-user-name', knownName);
+      if (knownGender) localStorage.setItem('frenz-user-gender', knownGender);
+    }
+  }
   for (const f of friends) {
     let changed = Personas.upgradeProfile(f.profile);
     const tpl = Personas.templates.find(x => x.name === f.profile.name);
@@ -1378,6 +1398,7 @@ async function upgradeTemplateFriends() {
     // upgrade rules cannot reach it — they replace inside an existing string.
     // Backfill from the template, and never overwrite one the user wrote.
     if (tpl && tpl.appearance && !f.profile.appearance) { f.profile.appearance = tpl.appearance; changed = true; }
+    if (knownName && !f.profile.userName) { f.profile.userName = knownName; changed = true; }
     // Same for the founding facts: friends made before v8.6 started with an
     // empty memory list and the state model would never record an event that
     // predates message one. Only seeded when she has no memories at all, so a
