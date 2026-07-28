@@ -183,7 +183,9 @@ async function startConversation(e) {
   const sliders = readSliders(t);
   // Flirtiness/warmth/confidence get woven into her personality and texting
   // style so they change how she actually behaves, not just numbers in a field.
-  const notes = Personas.sliderText(sliders);
+  // seeded by her name so two friends on the same slider positions don't end
+  // up carrying byte-identical personality sentences
+  const notes = Personas.sliderText(sliders, name);
   const personality = $('#c-personality').value.trim();
   const style = $('#c-style').value.trim();
 

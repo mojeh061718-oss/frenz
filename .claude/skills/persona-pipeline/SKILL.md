@@ -26,6 +26,34 @@ link while forgetting what another link assumed.
    priority system nobody designed — the model weighs a rule stated three
    times over one stated once. Before adding an instruction, grep the persona,
    dynamic block, plist and phi for a sibling. Move, don't copy.
+   This is the invariant that has broken most often and cost the most. The
+   attraction/pace ruling once shipped in THREE places (persona ladder,
+   state block, depth-4 gloss) while each character's signature shipped in
+   one — and the measured result was two very different characters both
+   answering flat. Count copies before adding: `_buildPlainRequest` the
+   prompt and grep it. Two is already a bug.
+
+7. **Rule mass is itself a failure mode.** Every rule here was added for a
+   real past failure, so each is individually defensible — but the model has
+   finite attention, and the character is competing with the rulebook for
+   it. Measured at v8.0: the persona block is ~21k chars against ~4k of
+   character. When adding a rule, ask what it should REPLACE, and prefer
+   positive specification ("do Y") over another prohibition — the prompt
+   already carries ~60 "never"s, and prohibition-heavy prompts produce
+   cautious, flavourless writing.
+
+8. **Load rules situationally.** A platonic friendship does not need the
+   escalation/intimacy rulebook, and handing it over doesn't sit inert — it
+   tilts every reading toward subtext that isn't there. `buildPersona`'s
+   `charged` flag gates that material on relationship type, with a door left
+   open for a friendship that genuinely develops attraction. Same pattern
+   applies to anything else that only matters in one situation.
+
+9. **Examples teach VOICE, not just shape.** "Shape only, never wording" does
+   not survive contact with a few-shot: a friend whose style said "properly
+   punctuated" wrote 0/12 capitalized messages because every example was
+   lowercase. Example banks are register-matched (`_exampleBank`), and any
+   new example must be added to BOTH banks at the same index.
 
 3. **Two blocks that can co-occur must not disagree.** Any new dynamic section
    must be checked against every section that can be live in the same
@@ -55,7 +83,16 @@ link while forgetting what another link assumed.
   grep it for contradictions and duplicated rules;
 - run `s.day()` / `s.turnMany()` over 30 days to verify state movement,
   tension arcs, opener cadence, and that no guard has gone overbroad;
-- read `s.privateNotes()` to see which private directives co-occur tonight.
+- read `s.privateNotes()` to see which private directives co-occur tonight;
+- count instruction weight: assemble the prompt and grep for how many times
+  a ruling appears versus how many times her signature does. If restraint
+  outnumbers character, the writing will show it.
+
+The analysis archive (Settings → Download analysis archive) is the other
+half of this: it runs the detectors over real conversations and reports
+worn phrases, mirroring, and **voice fidelity** (does her output match the
+punctuation/register her style field claims). A claim about live behaviour
+should be checked against an archive, not eyeballed.
 
 A claim about pipeline behavior that isn't demonstrated through the harness
 or a test is a guess. The detectors have been right and the fixtures wrong
