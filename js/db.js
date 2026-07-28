@@ -150,8 +150,8 @@ const DEFAULT_SETTINGS = {
   // fresh install genuinely cannot talk until a key is in. The entries exist
   // so Settings shows two labelled slots to paste into rather than a blank.
   pool: [
-    { id: 'grok', kind: 'openai', preset: 'grok', label: 'Grok (xAI)', baseUrl: 'https://api.x.ai/v1', apiKey: '', model: 'grok-4.3', imageModel: 'grok-imagine-image', contextTokens: 1000000, enabled: true },
-    { id: 'bedrock', kind: 'bedrock', preset: 'bedrock', label: 'Grok (AWS Bedrock)', apiKey: '', model: 'xai.grok-4.3', imageModel: 'grok-imagine-image', region: 'us-east-1', contextTokens: 1000000, enabled: true }
+    { id: 'grok', kind: 'openai', preset: 'grok', label: 'Grok (xAI)', baseUrl: 'https://api.x.ai/v1', apiKey: '', model: 'grok-4.3', imageModel: 'grok-imagine-image-quality', contextTokens: 1000000, enabled: true },
+    { id: 'bedrock', kind: 'bedrock', preset: 'bedrock', label: 'Grok (AWS Bedrock)', apiKey: '', model: 'xai.grok-4.3', imageModel: 'grok-imagine-image-quality', region: 'us-east-1', contextTokens: 1000000, enabled: true }
   ]
 };
 
@@ -184,11 +184,22 @@ const Settings = {
       // `undefined` ONLY — a user who blanked the field ('') chose no
       // photos, and the heal must never override a choice.
       if ((e.preset === 'grok' || e.preset === 'bedrock') && e.imageModel === undefined) {
-        e.imageModel = 'grok-imagine-image';
+        e.imageModel = 'grok-imagine-image-quality';
       }
       // 'pollinations'/'free' was a keyless fallback that has been removed;
       // point those at the real model rather than leaving a dead route.
-      if (/^(pollinations|free)$/i.test(String(e.imageModel || ''))) e.imageModel = 'grok-imagine-image';
+      if (/^(pollinations|free)$/i.test(String(e.imageModel || ''))) e.imageModel = 'grok-imagine-image-quality';
+    }
+    // ONE-TIME upgrade to the quality model. Changing DEFAULT_SETTINGS alone
+    // does nothing for an existing install — the stored value wins — so the
+    // request for "the best model" would have quietly changed nothing. Done
+    // once and flagged, so choosing the cheaper model later sticks.
+    if (!s.imgQualityUpgraded) {
+      for (const e of s.pool) {
+        if (e.imageModel === 'grok-imagine-image') e.imageModel = 'grok-imagine-image-quality';
+      }
+      s.imgQualityUpgraded = 1;
+      try { localStorage.setItem('frenz-settings', JSON.stringify(s)); } catch (_) { /* quota; retried next load */ }
     }
     return s;
   },
