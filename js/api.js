@@ -2040,7 +2040,29 @@ const ClaudeAPI = {
   // stays, but only when the scene is silent, and phrased for being at home.
   _CLOTHING_NAMED: /\b(hoodie|sweater|jumper|shirt|tee|t-shirt|top|dress|skirt|jeans|leggings|shorts|pyjamas|pajamas|pjs|robe|towel|bikini|swimsuit|sweats|sweatshirt|tank|bra|socks|coat|jacket|uniform|outfit|wearing|dressed|heels|boots)\b/i,
 
-  _imagePrompt(desc, shotIdx, appearance) {
+  /* How charged the thread actually is, 0-2. A photo she sends on an ordinary
+     Tuesday and one she sends on a night that has been building should not
+     come out of the same prompt — that flatness is the fidelity gap. Read off
+     the same private state the conversation runs on, so the picture tracks
+     the relationship instead of ignoring it. Suggestion scales; explicitness
+     never enters, exactly as her own photo rules already say. */
+  _imageHeat(friend) {
+    if (!friend || !friend.state) return 0;
+    const b = this.bandsFor(friend);
+    const att = this._bandRank(b.attraction);
+    const com = this._bandRank(b.comfort);
+    const tension = Number(friend.state.tension) || 0;
+    if (att >= 2 || tension >= 7) return 2;
+    if (att >= 1 || tension >= 4 || com >= 3) return 1;
+    return 0;
+  },
+  _HEAT_TONE: [
+    '',
+    ' Warm low lamp light and a slightly more considered frame than she would admit to.',
+    ' The atmosphere is charged: low warm light, a closer crop, and what sits just outside the frame doing as much work as what is inside it — implication rather than display.'
+  ],
+
+  _imagePrompt(desc, shotIdx, appearance, heat) {
     const shot = this._SHOTS[((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length];
     const isObject = (((shotIdx | 0) % this._SHOTS.length + this._SHOTS.length) % this._SHOTS.length) === this._SHOT_OBJECT;
     // Who she is, right after the composition: subject description steers the
@@ -2084,7 +2106,8 @@ const ClaudeAPI = {
       ' harsh direct on-camera flash with hard falloff into darkness, blown-out highlights on the nearest fabric and surfaces,' +
       ' crushed muddy shadows, auto white balance slightly wrong with a colour cast, visible high-ISO luminance noise and JPEG artefacts,' +
       ' handheld motion blur and soft focus missing its mark, tilted crooked framing, ordinary clutter in the background,' +
-      ' flat ungraded phone-camera colour, no filter, no retouching, no beauty smoothing, no captions or app overlay.';
+      ' flat ungraded phone-camera colour, no filter, no retouching, no beauty smoothing, no captions or app overlay.' +
+      (isObject ? '' : (this._HEAT_TONE[Math.max(0, Math.min(2, heat | 0))] || ''));
   },
 
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
@@ -2103,7 +2126,7 @@ const ClaudeAPI = {
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
     const shotIdx = o.shot !== undefined ? o.shot : this._shotFor(description);
-    const prompt = (o.raw ? description : this._imagePrompt(description, shotIdx, o.appearance)).slice(0, 1000);
+    const prompt = (o.raw ? description : this._imagePrompt(description, shotIdx, o.appearance, o.heat)).slice(0, 1000);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.

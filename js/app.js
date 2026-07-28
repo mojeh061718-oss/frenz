@@ -796,7 +796,9 @@ async function deliverBubble(friend, b, atTs) {
     const dataUrl = await ClaudeAPI.generateImage(entry, desc, {
       seed: ClaudeAPI._hash32(String(friend.id) + '|photolook') % 1e9,
       // who she is, so every photo is the same woman instead of a new one
-      appearance: friend.profile.appearance || ''
+      appearance: friend.profile.appearance || '',
+      // the photo tracks where the thread actually is, not a fixed neutral
+      heat: ClaudeAPI._imageHeat(friend)
     });
     $('#typing').classList.add('hidden');
     const msg = { friendId: friend.id, role: 'assistant', text: '', photo: dataUrl, photoDesc: desc, ts: ClaudeAPI._now() };
