@@ -207,6 +207,8 @@ async function startConversation(e) {
     userGender: $('#c-usergender').value,
     plist: t.plist || '',
     appearance: $('#c-appearance').value.trim() || t.appearance || '',
+    world: Personas.WORLD || '',
+    templateRev: t.templateRev || 0,
     reveals: t.reveals || [],
     established: !!t.established,
     sliders,
@@ -1398,6 +1400,26 @@ async function upgradeTemplateFriends() {
     // upgrade rules cannot reach it — they replace inside an existing string.
     // Backfill from the template, and never overwrite one the user wrote.
     if (tpl && tpl.appearance && !f.profile.appearance) { f.profile.appearance = tpl.appearance; changed = true; }
+    // A template REVISION is a rewrite, not a tweak: when the world itself was
+    // wrong — who is engaged to whom, whose best friend is whose — substring
+    // upgrades cannot repair it, and the friend would keep answering from a
+    // world that never existed. Refresh her defining text wholesale and swap
+    // the seeded (pinned) memories, while messages, state and everything she
+    // has actually EARNED in conversation survive untouched.
+    if (tpl && (tpl.templateRev || 0) > (f.profile.templateRev || 0)) {
+      ['personality', 'plist', 'style', 'interests', 'backstory', 'appearance', 'type'].forEach(k => {
+        if (tpl[k]) f.profile[k] = tpl[k];
+      });
+      f.profile.world = Personas.WORLD || '';
+      f.profile.reveals = tpl.reveals || [];
+      f.profile.established = !!tpl.established;
+      const earned = (f.memories || []).filter(m => !(m && m.pinned));
+      f.memories = (tpl.seedMemories || []).map(m => ClaudeAPI._normMemory(
+        Object.assign({ ts: f.createdAt || ClaudeAPI._now(), lastAccessed: ClaudeAPI._now() }, m))).concat(earned);
+      f.profile.templateRev = tpl.templateRev;
+      changed = true;
+    }
+    if (tpl && !f.profile.world) { f.profile.world = Personas.WORLD || ''; changed = true; }
     if (knownName && !f.profile.userName) { f.profile.userName = knownName; changed = true; }
     // Same for the founding facts: friends made before v8.6 started with an
     // empty memory list and the state model would never record an event that
