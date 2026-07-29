@@ -893,7 +893,15 @@ const ClaudeAPI = {
         // reduced odds, because the late text that admits what hour it is IS
         // the genre. The 1am text is a CLOSENESS behavior as much as an
         // attraction one (the drunk-best-friend persona's signature).
-        if (hour >= 2 && hour < 8) continue;
+        // Deep night (2-5am) belongs only to a relationship that has night
+        // hours (_nightNorm 'normal'), rarely even then — the 3am first-text
+        // is the strongest social signal this app can send, and it has to be
+        // EARNED. Toward dawn everyone is asleep, norms or not.
+        if (hour >= 2 && hour < 8) {
+          if (hour >= 5) continue;
+          if (this._nightNorm(friend).tier !== 'normal') continue;
+          pct = 10;
+        } else
         if (lateNight) {
           const b = this.bandsFor(friend);
           if (this._bandRank(b.attraction) < 1 && this._bandRank(b.closeness) < 3) continue;
@@ -1034,18 +1042,56 @@ const ClaudeAPI = {
       'If one of these is due or just passed and he hasn\'t mentioned it, asking about it unprompted — specifically, like you\'ve been thinking about it — is exactly what someone who actually cares does.'];
   },
 
+  /* ---------------- night norms: 3am is a relationship, not a clock ----------------
+     Whether a middle-of-the-night text is normal between two people is one of
+     the sharpest social signals there is, and it is a property of the
+     RELATIONSHIP, not the hour: a fifteen-year best friend drunk-texting at
+     3am is Tuesday; the same text from the fiancee of your fiancee's brother
+     is an event. The score is computed from the live bands plus the stable
+     relationship shape, so it GROWS — a family-orbit persona who genuinely
+     builds closeness and attraction earns night hours the same way anyone
+     does. Deliberately not a persona field: hand-authoring "3am is weird for
+     me" would freeze forever a thing that is supposed to be earnable. */
+  _nightNorm(friend) {
+    const p = (friend && friend.profile) || {};
+    const b = this.bandsFor(friend);
+    const sl = p.sliders || {};
+    let score = this._bandRank(b.closeness) * 1.2
+      + this._bandRank(b.attraction) * 0.8
+      + (p.type === 'close_friend' ? 1.2 : p.type === 'friend' ? 0.6 : 0)
+      + (Number(sl.flirtiness) >= 70 ? 0.4 : 0)
+      // The family-orbit personas (established) carry real-world stakes: a
+      // house asleep around her, a phone that other people can see. That
+      // cost fades as the thread genuinely becomes hers, not before.
+      - (p.established ? 1.2 : 0);
+    const tier = score < 1 ? 'strange' : score < 2.5 ? 'notable' : 'normal';
+    return { score, tier };
+  },
+
   /* Time is real in this app — her clock is his clock. The hour goes into
      her private context every turn, and late hours genuinely loosen things:
      the near-universal human experience that 11pm says what noon never
-     would. A notch, not a collapse — bands and pace still govern. */
-  _timeNote(now) {
+     would. A notch, not a collapse — bands and pace still govern.
+     Deep night (2-6am) is its own thing entirely, governed by _nightNorm:
+     before this branch existed, 3am fell into the DAYTIME flavor
+     ("squeezed between things") — a text at 3:40am read as a lunch break. */
+  _timeNote(now, friend) {
     const t = now === undefined ? this._now() : now;
     const d = new Date(t);
     const h = d.getHours();
     const clock = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     const wd = d.toLocaleDateString([], { weekday: 'long' });
     let flavor;
-    if (h >= 21 || h < 2) {
+    if (h >= 2 && h < 6) {
+      const tier = friend ? this._nightNorm(friend).tier : 'notable';
+      if (tier === 'strange') {
+        flavor = ' It is the MIDDLE OF THE NIGHT. You two do not have 3am texting norms — nothing about this relationship has earned that hour yet — so a text from him right now is genuinely out of the ordinary, and you react to the HOUR as much as to the words: surprise, "why are you up", the half-asleep shorthand of someone who was asleep or nearly, and your own honest reason if you happen to be awake. The strangeness can be funny, or a little charged precisely because it is outside the lines — but it is NOTICED, never treated as routine, and it does not rewrite where you two actually stand. If you were asleep, you found the message when you surfaced, and you say so.';
+      } else if (tier === 'notable') {
+        flavor = ' It is deep night, and texting at this hour is NEW territory for you two — one of the first times this thread has existed while the rest of the world is asleep, and you both feel that. It has its own intimacy: quieter, a little conspiratorial, more honest than daylight. You notice the hour out loud or under your breath, and being one of the people awake together is itself a small event.';
+      } else {
+        flavor = ' It is deep night, and 3am texts are a thing you two genuinely DO — this relationship has night hours. Quieter, half-asleep honest, comfortable: no performance at this hour, shorter messages, the guard fully down in the way only this hour allows. The hour is not remarkable to either of you, and you never act like it is.';
+      }
+    } else if (h >= 21 || h < 2) {
       flavor = ' Late-night texting is its own register: quieter, more honest, guards a notch lower — things get said at this hour that daylight would never allow, and flirtation that got a laugh at noon gets a beat of real consideration now. A notch, not a collapse: who you are and where you two actually stand still govern.';
     } else if (h >= 17) {
       flavor = ' The workday is done — texting is leisure now: more time, more warmth, more play than midday.';
@@ -1429,7 +1475,7 @@ const ClaudeAPI = {
         opinion_notes: s.opinion_notes
       }, null, 1)
     ];
-    parts.push('', this._timeNote());
+    parts.push('', this._timeNote(undefined, friend));
     // ONE disposition section. Vibe, momentum, wildcard, and initiative used
     // to be four competing headers modulating the same axis — a mid-tier
     // model averaged them into mush. Merged: at most five flat lines.
@@ -2041,7 +2087,7 @@ const ClaudeAPI = {
       && (this._isGrokImageModel(e.imageModel) || e.kind === 'bedrock')) || null;
   },
 
-  _IMAGE_NEGATIVE: 'professional studio photography, posed fashion model, perfect makeup, watermark, text, caption, logo, cartoon, illustration, 3d render, oversaturated, hdr, extra fingers, deformed hands',
+  _IMAGE_NEGATIVE: 'professional studio photography, posed fashion model, perfect makeup, watermark, text, caption, logo, cartoon, illustration, 3d render, oversaturated, hdr, extra fingers, deformed hands, visible face, head in frame, portrait framing, posed selfie smile, camera-aware pose',
 
   // Inline avoid-clause for routes with no negativeText parameter (xAI) —
   // same intent as _IMAGE_NEGATIVE, phrased as prose.
@@ -2097,12 +2143,21 @@ const ClaudeAPI = {
   _FRAMING: {
     scene: [
       'A photo she took on her phone of what is in front of her, holding it up and pointing it at the scene. She is not in the picture at all.',
-      'A photo she took on her phone of the thing she is looking at, grabbed quickly and one-handed. Nobody is in the frame.'
+      'A photo she took on her phone of the thing she is looking at, grabbed quickly and one-handed. Nobody is in the frame.',
+      'A photo she took on her phone of what she has in front of her right now — her own hands allowed at the very edge of the frame where they hold or touch the thing, and nothing else of her in the picture.'
     ],
+    /* Variety matters here as much as facelessness: three near-identical
+       torso framings made every body photo the same photo. The added shots
+       are the ones people actually take — down the body TOWARD the room, so
+       her legs share the frame with the couch and the TV; the lap-level
+       what-I'm-doing shot where hands and thighs and the mug are one
+       picture. Her world stays in the picture with her. */
     pov: [
       'A photo she took on her phone, held at chest height and angled down at herself, so the frame begins below her collarbone and her head is outside the picture entirely.',
       'A photo she took on her phone looking down at herself, the top edge of the frame cutting across below her shoulders, so nothing above them is in the picture.',
-      'A photo she took on her phone with her arm out, the camera pointed down the length of her own body, everything above the collarbone past the top edge of the frame.'
+      'A photo she took on her phone with her arm out, the camera pointed down the length of her own body, everything above the collarbone past the top edge of the frame.',
+      'A photo she took on her phone while lying back, aimed down her own body toward her legs and past them into the room, so her legs and whatever is beyond them — the far end of the couch, the TV, the window — share the frame, and her head stays far above the top edge of the picture.',
+      'A casual photo she took on her phone at lap height, looking down at what she is doing — her hands, her thighs or knees, the thing she is holding — the frame starting mid-torso so everything above it is out of the picture.'
     ],
     mirror: [
       'A full-length mirror photo she took on her phone, the phone raised in front of her head so that it covers her face completely in the reflection, her whole outfit visible from shoes to shoulders.',
@@ -2179,7 +2234,9 @@ const ClaudeAPI = {
      ones that only destroy detail. */
   _CAMERA: ' Shot on a recent phone camera in whatever light is actually in the room, the flash only if it is dark.' +
     ' Real photographic detail: crisp where the focus falls, natural depth of field, true skin and fabric texture,' +
-    ' faint sensor noise in the shadows. Handheld, so the horizon sits slightly off level. Ordinary clutter left exactly where it is.' +
+    ' faint sensor noise in the shadows. Handheld and one-handed, so the horizon sits slightly off level and the framing is the' +
+    ' casual, imperfect crop of a picture taken in two seconds mid-moment — an amateur snapshot, composed by nobody.' +
+    ' Ordinary clutter left exactly where it is.' +
     ' Flat unedited colour straight out of the camera, no filter, no retouching, no beauty smoothing, no captions or app overlay.',
 
   _imagePrompt(desc, mode, appearance, heat) {
@@ -2450,9 +2507,9 @@ const ClaudeAPI = {
   photoNote(settings, friend) {
     if (!this.imageEntry(settings)) return null;
     const candor = (friend && friend.profile && friend.profile.photoCandor) || 'guarded';
-    const common = 'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen, consistent with your day and anything you have already told him. The camera angle is not yours to pick and your face is never in these; that is simply how you take them and you never explain it.';
+    const common = 'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen, consistent with your day and anything you have already told him. Your pictures are grabbed one-handed mid-moment, framed by nobody: aimed down at your own lap and legs and whatever the room holds beyond them, or at the thing in your hands — never staged, never composed. Your face is never in these; that is simply how you take them and you never explain it.';
     const guarded = ' A picture from you is not a small thing. Everything you send has to survive being seen by the wrong person, because in your life that is a real possibility — and you do not know him well enough for any of this to be casual, which makes it a bigger step, not a smaller one. So the picture teases by ATMOSPHERE and implication: the light, what you are wearing, what sits just out of frame does the work. Suggestion always, never explicit. Photos are RARE: most conversations have none, you never offer one unprompted twice, and you never send one because he pushed.';
-    const open = ' You send pictures the way you say things — without ceremony and without a filter. If you are mid-changing, in a bra, in a towel with your hair wrecked, that is simply what the picture is; you do not stage it, do not warn him, and do not apologise for it, because fifteen years ago you stopped being embarrassed in front of him. It stops where it would stop in real life: this is casual and unbothered, not a nude, and you would never send something you would not actually send. Photos are not precious to you, but they are not constant either — they happen when there is a reason.';
+    const open = ' You send pictures the way you say things — without ceremony and without a filter. If you are mid-changing, in a bra, in a towel with your hair wrecked, that is simply what the picture is; you do not stage it, do not warn him, and do not apologise for it, because somewhere along the way you stopped being embarrassed in front of him. It stops where it would stop in real life: this is casual and unbothered, not a nude, and you would never send something you would not actually send. Photos are not precious to you, but they are not constant either — they happen when there is a reason.';
     return ['## Sending photos', common + (candor === 'open' ? open : guarded)];
   },
 

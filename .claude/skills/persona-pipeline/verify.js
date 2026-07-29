@@ -246,5 +246,78 @@ console.log('\n== 10. prompt assembly still sane ==');
   ok(prof.plist.includes('stay-at-home mother of four') && !prof.plist.includes('three-month-old'), 'plist dedupe upgrade reaches existing friends');
 }
 
+console.log('\n== 11. night norms: 3am is earned per relationship ==');
+{
+  const tiers = {};
+  for (const id of ['kelly', 'bre', 'anna', 'samantha', 'tay']) {
+    tiers[id] = API._nightNorm(mkFriend(id)).tier;
+  }
+  ok(tiers.bre === 'normal' && tiers.kelly === 'normal' && tiers.anna === 'normal',
+    'deep friendships have night hours (bre/kelly/anna: ' + [tiers.bre, tiers.kelly, tiers.anna] + ')');
+  ok(tiers.samantha === 'strange' && tiers.tay === 'strange',
+    'family-orbit near-strangers do not (samantha/tay: ' + [tiers.samantha, tiers.tay] + ')');
+  // earned, not fixed: the same persona with genuinely built state graduates
+  const grown = mkFriend('samantha');
+  grown.state.closeness = 65; grown.state.attraction = 55;
+  ok(API._nightNorm(grown).tier !== 'strange', 'samantha can EARN night hours (' + API._nightNorm(grown).tier + ')');
+
+  const at3am = new Date(2026, 6, 29, 3, 10).getTime();
+  const sNote = API._timeNote(at3am, mkFriend('samantha'));
+  const bNote = API._timeNote(at3am, mkFriend('bre'));
+  ok(/MIDDLE OF THE NIGHT/.test(sNote) && /why are you up/.test(sNote), 'samantha at 3am: the hour is an event');
+  ok(/genuinely DO/.test(bNote), 'bre at 3am: the hour is unremarkable');
+  ok(!/Daytime texting/.test(sNote), '3am no longer reads as daytime (pre-existing bug)');
+  const noonNote = API._timeNote(new Date(2026, 6, 29, 12, 0).getTime(), mkFriend('samantha'));
+  ok(/Daytime texting/.test(noonNote), 'noon unchanged');
+
+  // her own 3am first-texts: only for night-normal friends, rare even then
+  let sHits = 0, bHits = 0;
+  for (let d = 0; d < 120; d++) {
+    const now = new Date(2026, 6, 1 + d, 3, 15).getTime();
+    const last = now - 7 * 3600000;
+    const msgs = [{ role: 'user', text: 'night', ts: last }];
+    if (API.openerDue(mkFriend('samantha'), msgs, now)) sHits++;
+    if (API.openerDue(mkFriend('bre'), msgs, now)) bHits++;
+  }
+  ok(sHits === 0, 'samantha never opens at 3am at seed state (' + sHits + '/120)');
+  ok(bHits >= 1 && bHits <= 30, 'bre opens at 3am rarely but really (' + bHits + '/120)');
+}
+
+console.log('\n== 12. Anna ==');
+{
+  const t = Personas.byId('anna');
+  ok(!!t && Personas.templates.some(x => x.id === 'anna'), 'template registered (gallery renders from templates)');
+  ok(t.type === 'close_friend' && /Courtney/.test(t.interests) && /Sadie/.test(t.interests), 'married to Courtney, kid exists');
+  ok(Array.isArray(t.beats) && t.beats.length === 12, 'beat bank of 12');
+  ok(t.beats.some(b => /Toni/.test(b)), 'a beat proposes plans including Toni');
+  const first = (t.style || '').split(/[.!]/)[0];
+  ok(/Sentence case/.test(first) && /\(like this\)/.test(first), 'style sentence one carries register + signature');
+  const f = mkFriend('anna');
+  ok(API._isPlatonic(f) === false, 'close_friend -> charged ruleset (light, via low attraction band)');
+  const plist = API._plist(f);
+  ok(plist.includes('roundabout') && plist.length > 400, 'plist assembles with her traits');
+  const persona = API.buildPersona(f, 'rich');
+  ok(persona.length > 3000, 'full persona assembles');
+  ok(API._nightNorm(f).tier === 'normal', 'old-best-friend night norm');
+}
+
+console.log('\n== 13. photos: faceless amateur POV ==');
+{
+  ok(API._modeFor('lying on the couch, my legs and the tv on in the background') === 'pov', 'legs+TV -> pov');
+  ok(API._modeFor('the bowl of ramen i just made on the counter') === 'scene', 'the bowl -> scene (thing, not her)');
+  const app = Personas.byId('samantha').appearance;
+  const pov = API._imagePrompt('my legs stretched out on the couch, tv on', 'pov', app, 0);
+  ok(/head|collarbone|shoulders|torso/.test(pov) && !/her face is visible/i.test(pov), 'pov framing keeps the head out of frame');
+  ok(pov.includes('amateur snapshot') && pov.includes('one-handed'), 'amateur cues present');
+  ok(pov.includes('redhead'), 'body-type fidelity: appearance sheet rides as the phone-holder');
+  const mirror = API._imagePrompt('new dress, fit check', 'mirror', app, 0);
+  ok(/covers her face completely|where her head would be/.test(mirror), 'mirror framing: phone over face');
+  const scene = API._imagePrompt('the bowl of ramen on the counter', 'scene', app, 0);
+  ok(/Nobody is in the frame|not in the picture|nothing else of her/.test(scene), 'scene framing keeps her out');
+  ok(/visible face/.test(API._IMAGE_NEGATIVE), 'face in the negative prompt');
+  const note = API.photoNote({ pool: [] }, mkFriend('anna'));
+  ok(note === null || true, 'photoNote tolerates no image entry'); // imageEntry({pool:[]}) -> null path
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -21,7 +21,11 @@ let sending = false;
    So the flag is no longer set by hand anywhere. It goes up through
    beginSend(), which arms an absolute ceiling, and comes down through
    endSend() or the watchdog. Whatever else is wrong, the app stays usable. */
-const SEND_WATCHDOG_MS = 300000;
+/* 180s, not 300: every send path is bounded well under this (chat budget
+   150s, photo budget 110s), so anything still "typing" at three minutes is
+   dead and the composer comes back. Five minutes of locked composer was
+   most of what "the app keeps freezing" actually was. */
+const SEND_WATCHDOG_MS = 180000;
 let sendWatchdog = 0;
 function releaseComposer() {
   clearTimeout(sendWatchdog);
@@ -595,18 +599,45 @@ async function sweepOpeners() {
   let friends = [];
   try { friends = await DB.listFriends(); } catch { return; }
   friends.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  // The sweep spends the SAME per-minute provider quota the user's own sends
+  // need. Unthrottled, a launch with several due openers burned the whole
+  // minute's budget in the background — and the user's first send then sat
+  // in 429 backoff looking frozen, "randomly" recovering whenever the window
+  // reset. So: the user's live send always wins (bail), a launch fires at
+  // most two background firsts (the rest keep their per-day roll and fire on
+  // a later open), a breath between requests spreads the load, and an
+  // already-rate-limited session doesn't dig the hole deeper.
+  let fired = 0;
   for (const f of friends) {
+    if (sending || ClaudeAPI._underPressure()) break;
     if (currentFriend && currentFriend.id === f.id) continue;
     try {
       const msgs = await DB.getMessages(f.id);
       if (!msgs.length || !ClaudeAPI.openerDue(f, msgs)) continue;
+      if (fired > 0) await new Promise(r => setTimeout(r, 8000));
+      if (sending || ClaudeAPI._underPressure()) break;
       await maybeOpener(f, true);
+      if (++fired >= 2) break;
     } catch { /* one friend failing never stops the sweep */ }
   }
 }
 
+/* HER INITIATIVE NEVER LOCKS HIS KEYBOARD.
+
+   The foreground opener used to run through beginSend(), which gated
+   sendMessage — so "she's typing…" (her own idea, not a reply he asked for)
+   made the composer silently eat every tap for up to the full 150s send
+   budget. Chained after a stranded-send resume (also up to 150s), that is
+   minutes of an app that shows a typing indicator and responds to nothing:
+   the reported freeze, reproduced. Now an in-flight opener is a token the
+   user can trump — if he starts talking first, her opener is quietly
+   discarded (she just didn't text first today) and his send runs normally. */
+let openerFlight = null;
+
 async function maybeOpener(friend, background) {
   if (sending && !background) return;
+  const flight = { cancelled: false };
+  if (!background) openerFlight = flight;
   try {
     const msgs = await DB.getMessages(friend.id);
     const last = msgs[msgs.length - 1];
@@ -618,7 +649,6 @@ async function maybeOpener(friend, background) {
     await DB.saveFriend(friend);
 
     if (!background) {
-      beginSend();
       $('#typing').classList.remove('hidden');
       $('#chat-status').textContent = 'typing…';
       scrollChat();
@@ -630,6 +660,9 @@ async function maybeOpener(friend, background) {
     // one request, never in stored history.
     const nudge = { role: 'user', text: ClaudeAPI.openerNudge(ClaudeAPI._now() - last.ts, last.role === 'assistant', friend) };
     const result = await ClaudeAPI.chat(friend, history.concat([nudge]), settings, last.ts, null);
+    // He started talking while she was drafting — his message wins, her
+    // opener is discarded whole (no bubbles, no state, no memory of it).
+    if (flight.cancelled) return;
     // The echo guard may decide the opener had nothing new to say (every
     // bubble restated a finished topic) — on this path silence is a real
     // outcome, not an error: she simply didn't text first today. Nothing is
@@ -685,8 +718,10 @@ async function maybeOpener(friend, background) {
     await DB.saveFriend(friend);
     renderFriendsList();
   } catch { /* silent — she just didn't text first today */ } finally {
-    if (!background) {
-      endSend();
+    if (openerFlight === flight) openerFlight = null;
+    // If the user trumped this opener, his send owns the typing indicator
+    // and status line now — touching them here would stomp a live send.
+    if (!background && !flight.cancelled) {
       $('#typing').classList.add('hidden');
       $('#chat-status').textContent = fmtClock();
     }
@@ -940,7 +975,19 @@ function scrollChat(smooth = true) {
 }
 
 async function sendMessage() {
-  if (sending || !currentFriend) return;
+  if (!currentFriend) return;
+  // A blocked send must SAY so — the silent early-return here was the other
+  // half of the freeze: taps on Send doing nothing, with no sign of why.
+  if (sending) {
+    toast('Still working on the last one — it comes back on its own, or frees up within a couple of minutes.');
+    return;
+  }
+  // Her in-flight opener yields to him: discard it and let his send run.
+  if (openerFlight) {
+    openerFlight.cancelled = true;
+    openerFlight = null;
+    $('#typing').classList.add('hidden');
+  }
   const input = $('#composer-input');
   const text = input.value.trim();
   if (!text) return;

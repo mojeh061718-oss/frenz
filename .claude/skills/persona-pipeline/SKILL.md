@@ -140,6 +140,14 @@ editing one link while forgetting what another link assumed.
     nothing rather than shipping the least-bad echo, and app.js treats empty
     bubbles as "she just didn't text first today" — never save, never clear
     `unresolved`, never bump `lastActivity` on a message that wasn't sent.
+    Two more clauses of the same contract, learned from the reported freeze:
+    her INITIATIVE never locks his keyboard — a foreground opener is a
+    cancellable token (`openerFlight`), not a `beginSend()`, and the user's
+    send trumps and discards it — and the boot sweep competes with the
+    user's own sends for the SAME per-minute provider quota, so it bails
+    under `_underPressure()`, caps firings per launch, and always yields to
+    a live send. A blocked composer must SAY it is blocked; a silent
+    early-return on Send is a freeze report waiting to be filed.
 
 ### The state
 
@@ -170,8 +178,8 @@ editing one link while forgetting what another link assumed.
 ## The sim harness — prove it, don't eyeball it
 
 The suite ships WITH this skill so it survives sessions: run
-`node .claude/skills/persona-pipeline/verify.js` (39 assertions as of
-v10.1). It loads `js/personas.js` then `js/api.js` into a `vm` context with
+`node .claude/skills/persona-pipeline/verify.js` (66 assertions as of
+v10.2). It loads `js/personas.js` then `js/api.js` into a `vm` context with
 stub `localStorage` and drives the REAL engine headlessly — extend it there,
 and add assertions for any new behavior before shipping. Use it to:
 
@@ -251,3 +259,13 @@ the fixtures were wrong before.
 - Rut exemption liveness: exempt if he used it ≥2 times or within his last
   4-6 messages. Widening it re-opens the lifetime-pass blind spot; narrowing
   it starts flagging genuinely shared bits.
+- Night norms (`_nightNorm`): closeness×1.2 + attraction×0.8 + type bonus
+  (close_friend 1.2 / friend 0.6) + flirt-sport 0.4 − established 1.2;
+  tiers at <1 strange / <2.5 notable / else normal. Computed from LIVE bands
+  on purpose — hand-authoring "3am is weird for me" onto a persona would
+  freeze a thing that must be earnable. Deep-night openers (2-5am) need the
+  'normal' tier and roll at 10%; 5am-8am nobody texts first, norms or not.
+- Photo framing pools (`_FRAMING`): scene default, pov only on body words,
+  mirror only on fit-check words; every framing is faceless by construction
+  (head past the frame edge, phone over the face) and the pov pool must stay
+  VARIED — near-identical torso shots made every body photo the same photo.
