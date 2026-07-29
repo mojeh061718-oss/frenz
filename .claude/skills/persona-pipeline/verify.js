@@ -393,5 +393,47 @@ console.log('\n== 15. significant nights get reckoned with, not small-talked pas
   ok(API.unresolvedNote(fight) !== null, 'unresolved note now survives 10+ days');
 }
 
+console.log('\n== 16. testlook lens ==');
+{
+  for (const t of Personas.templates) {
+    const p = API.testLookPrompt({ profile: { appearance: t.appearance } });
+    ok(p.length <= 1000, t.id + ': prompt survives the 1000-char slice (' + p.length + ')');
+  }
+  const p = API.testLookPrompt(mkFriend('samantha'));
+  ok(/base of her neck/.test(p) && /down to her feet/.test(p), 'mirror ends at the neck, full figure below');
+  ok(/redhead/.test(p) && /tattoos/.test(p), 'appearance sheet is the subject');
+  ok(/no filter, no retouching/.test(p), 'raw-photo cues intact (not truncated)');
+  ok(API.testLookPrompt({ profile: {} }).includes('an adult woman'), 'tolerates a persona with no appearance');
+}
+
+console.log('\n== 17. v10.4 backstory rewrites ==');
+{
+  const sam = Personas.byId('samantha');
+  ok(sam.templateRev === 8, 'samantha at rev 8');
+  ok(/did not stop/.test(sam.backstory) && /five seconds/.test(sam.backstory), 'the five seconds are in the backstory');
+  ok(/never about those five seconds/.test(sam.backstory), '…and marked as the thing she never mentions');
+  ok(sam.greeting.length === 2 && /mortified/.test(sam.greeting[1]) && /sorry/.test(sam.greeting[1]), 'her first text is mortified + sorry, nothing more');
+  ok(!/five seconds/.test(sam.greeting.join(' ')), 'the greeting never mentions the five seconds');
+  ok(/did not stop/.test(sam.seedMemories[0].text), 'seed memory carries the real event');
+
+  const tay = Personas.byId('tay');
+  ok(tay.templateRev === 8, 'tay at rev 8');
+  ok(/(texted|from) Toni for your number|number from Toni/.test(tay.backstory) && /from Toni/.test(tay.greeting[0]), 'number comes from Toni everywhere');
+  ok(!/from Taylor/.test(tay.backstory + tay.plist + tay.greeting.join(' ') + JSON.stringify(tay.seedMemories)), 'no stale from-Taylor left');
+  ok(/[Nn]erdy/.test(tay.personality) && /tangent/.test(tay.personality) && /off-the-wall/.test(tay.personality), 'nerdy, outgoing, off-the-wall');
+  ok(/GREAT deal|takes a LOT/.test(tay.personality + tay.plist), 'still takes a lot to get through her');
+  ok(/sorry/i.test(tay.greeting.join(' ')) && /top/.test(tay.greeting[1]), 'greeting apologizes for the top');
+
+  const anna = Personas.byId('anna');
+  ok(anna.templateRev === 2, 'anna at rev 2');
+  ok(/husband-and-kid-free/.test(anna.greeting[0]) && /riding like old times/.test(anna.greeting[1]), 'kid-free night + riding like old times opener');
+  ok(/riding around/.test(anna.backstory), 'the riding history is real backstory, not an orphan line');
+
+  // rev-8 refresh must not re-trigger the rev-7 seed correction on a
+  // friend already at rev 7 — and must still catch a rev-6 straggler
+  ok(!(7 > 7), 'seedFix skips rev-7 friends crossing to 8 (7 > 7 is false)');
+  ok(7 > 6, 'seedFix still fires for a pre-correction rev-6 friend');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

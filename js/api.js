@@ -2368,6 +2368,25 @@ const ClaudeAPI = {
       (isScene ? '' : (this._HEAT_TONE[Math.max(0, Math.min(2, heat | 0))] || ''));
   },
 
+  /* Debug-only portrait (the composer command 'testlook'): the neck-down
+     mirror check. A quality lens, not a message — it never reaches the
+     model, the history, or the state engine. One fixed framing so persona
+     renders are comparable: a mirror whose top edge sits at the base of her
+     neck, full figure below it, everyday clothes, the same amateur camera
+     as every real photo. What varies between personas is exactly what the
+     lens exists to inspect: the appearance sheet. */
+  testLookPrompt(friend) {
+    const appearance = (friend && friend.profile && friend.profile.appearance) || 'an adult woman';
+    // Compact camera clause, not the full _CAMERA block: generateImage
+    // slices prompts at 1000 chars, and the full block pushed every
+    // persona's test prompt past it — truncating exactly the no-filter
+    // cues the lens exists to check.
+    return 'A mirror photo she took on her phone, standing square to a tall wall mirror mounted low: the mirror\'s top edge sits at the base of her neck, so the reflection shows her from the base of the neck down to her feet, and everything above the neck is past the mirror\'s edge.' +
+      ' The picture shows her whole figure exactly as it is, standing relaxed at home in simple everyday clothes that show her true build.' +
+      ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.') +
+      ' Shot on a phone in real room light, handheld and slightly off level, true skin and fabric texture, flat unedited colour, no filter, no retouching, no beauty smoothing, no text or overlay.';
+  },
+
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
      map whatever width/height the caller wanted onto the nearest ratio. */
   _ASPECTS: [['1:1', 1], ['3:4', 3 / 4], ['4:3', 4 / 3], ['2:3', 2 / 3], ['3:2', 3 / 2], ['9:16', 9 / 16], ['16:9', 16 / 9], ['1:2', 1 / 2], ['2:1', 2]],

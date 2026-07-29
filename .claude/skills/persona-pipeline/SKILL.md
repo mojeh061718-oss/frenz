@@ -199,8 +199,12 @@ editing one link while forgetting what another link assumed.
 ## The sim harness — prove it, don't eyeball it
 
 The suite ships WITH this skill so it survives sessions: run
-`node .claude/skills/persona-pipeline/verify.js` (84 assertions as of
-v10.3). It loads `js/personas.js` then `js/api.js` into a `vm` context with
+`node .claude/skills/persona-pipeline/verify.js` (110 assertions as of
+v10.4). Two out-of-band tools live beside the pipeline and must STAY out of
+band: the composer command `testlook` (renders the persona's appearance
+sheet as a neck-down mirror shot — no history, no state, no model call, no
+acknowledgment, swept with the transient notes) and the triple-tap panic
+cover (pure UI). Neither may ever leak into anything the model reads. It loads `js/personas.js` then `js/api.js` into a `vm` context with
 stub `localStorage` and drives the REAL engine headlessly — extend it there,
 and add assertions for any new behavior before shipping. Use it to:
 

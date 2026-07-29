@@ -982,15 +982,28 @@ async function sendMessage() {
     toast('Still working on the last one — it comes back on its own, or frees up within a couple of minutes.');
     return;
   }
+  const input = $('#composer-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  // 'testlook' is a debug lens, not a message: render this persona's
+  // appearance sheet as a neck-down mirror shot and touch NOTHING else —
+  // no history, no state, no model call, no acknowledgment, and it does
+  // not even cancel an opener she happens to be drafting.
+  if (/^testlook$/i.test(text)) {
+    input.value = '';
+    input.style.height = 'auto';
+    updateSendButton();
+    runTestLook(currentFriend);
+    return;
+  }
+
   // Her in-flight opener yields to him: discard it and let his send run.
   if (openerFlight) {
     openerFlight.cancelled = true;
     openerFlight = null;
     $('#typing').classList.add('hidden');
   }
-  const input = $('#composer-input');
-  const text = input.value.trim();
-  if (!text) return;
 
   const settings = Settings.get();
   if (!ClaudeAPI.activeEntries(settings).length) {
@@ -1046,6 +1059,41 @@ async function sendMessage() {
 
   askNotifyPermission();
   await runReply(friend, history, settings, lastTs, text);
+}
+
+/* The testlook lens. Everything about it is transient: the placeholder, the
+   rendered image (swept with the other transient notes on the next real
+   send), and the generation itself — nothing is written to the DB, so the
+   model never sees that this happened. Deliberately does not take the
+   composer lock: it is a tool, not a conversation turn. */
+let testlookBusy = false;
+async function runTestLook(friend) {
+  if (testlookBusy || !friend) return;
+  const settings = Settings.get();
+  const entry = ClaudeAPI.imageEntry(settings);
+  if (!entry) {
+    toast('No image model configured — add one in Settings to use testlook.');
+    return;
+  }
+  testlookBusy = true;
+  const note = document.createElement('div');
+  note.className = 'msg sys transient-note';
+  note.textContent = 'test shot — rendering her appearance sheet…';
+  $('#chat-messages').appendChild(note);
+  scrollChat();
+  try {
+    const url = await ClaudeAPI.generateImage(entry, ClaudeAPI.testLookPrompt(friend), { raw: true, width: 768, height: 1280 });
+    note.remove();
+    const div = bubbleEl('assistant', '', { photo: url });
+    div.classList.add('transient-note'); // never persisted; gone on the next real send
+    $('#chat-messages').appendChild(div);
+    scrollChat();
+  } catch (err) {
+    note.textContent = 'test shot failed — ' + ((err && err.message) || 'image error');
+    setTimeout(() => note.remove(), 8000);
+  } finally {
+    testlookBusy = false;
+  }
 }
 
 /* The model call and everything that lands because of it. Extracted from
@@ -1299,6 +1347,31 @@ async function askNotifyPermission() {
   localStorage.setItem('frenz-notify-asked', '1');
   try { await Notification.requestPermission(); } catch (_) { /* declined is fine */ }
 }
+
+/* ---------------- panic cover ----------------
+   Triple-tap anywhere → instant black screen, indistinguishable from the
+   display being off. Triple-tap again to come back. Single taps on the
+   cover do nothing (a glance-over-the-shoulder can't reveal anything), and
+   while the app is covered nothing underneath is tappable. Interactive
+   elements don't count toward the three taps, so fast typing or button
+   mashing can't black the screen by accident. */
+let panicTaps = [];
+document.addEventListener('pointerdown', (e) => {
+  const cover = $('#panic-cover');
+  if (!cover) return;
+  const covered = !cover.classList.contains('hidden');
+  if (!covered && e.target.closest('button, input, textarea, select, a')) {
+    panicTaps = [];
+    return;
+  }
+  const now = Date.now();
+  panicTaps = panicTaps.filter(t => now - t < 600);
+  panicTaps.push(now);
+  if (panicTaps.length >= 3) {
+    panicTaps = [];
+    cover.classList.toggle('hidden');
+  }
+}, true);
 
 /* ---------------- settings: provider pool ---------------- */
 
@@ -1689,7 +1762,11 @@ async function upgradeTemplateFriends() {
       // the user may have set themselves: shift live state by exactly that
       // much, so everything earned on top of the bad seed survives.
       const fix = tpl.seedFix;
-      if (fix && f.state && (fix.rev || 0) === tpl.templateRev) {
+      // "The friend's rev is still below the fix's rev" — not "the fix rev
+      // equals the template's". The old equality check meant a template that
+      // moved past the fix's revision (rev 8) silently skipped the rev-7
+      // state correction for any install upgrading across both at once.
+      if (fix && f.state && (fix.rev || 0) > (f.profile.templateRev || 0)) {
         ['closeness', 'comfort', 'attraction'].forEach(k => {
           if (typeof fix[k] === 'number') {
             f.state[k] = Math.max(0, Math.min(100, (Number(f.state[k]) || 0) + fix[k]));
