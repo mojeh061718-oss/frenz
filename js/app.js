@@ -242,6 +242,7 @@ async function startConversation(e) {
     userGender: $('#c-usergender').value,
     plist: t.plist || '',
     appearance: $('#c-appearance').value.trim() || t.appearance || '',
+    beats: t.beats || [],
     world: Personas.WORLD || '',
     photoCandor: t.photoCandor || 'guarded',
     templateRev: t.templateRev || 0,
@@ -629,6 +630,14 @@ async function maybeOpener(friend, background) {
     // one request, never in stored history.
     const nudge = { role: 'user', text: ClaudeAPI.openerNudge(ClaudeAPI._now() - last.ts, last.role === 'assistant', friend) };
     const result = await ClaudeAPI.chat(friend, history.concat([nudge]), settings, last.ts, null);
+    // The echo guard may decide the opener had nothing new to say (every
+    // bubble restated a finished topic) — on this path silence is a real
+    // outcome, not an error: she simply didn't text first today. Nothing is
+    // saved, nothing is cleared; the day was already marked above.
+    if (!result.bubbles || !result.bubbles.length) {
+      await DB.saveFriend(friend);   // keep the beat log the nudge may have rolled
+      return;
+    }
     // She texted while he was away, not the instant he opened the app: place
     // the message at a believable past moment inside her waking hours since
     // the gap began. Nothing else in the app makes her feel like a person with
@@ -1598,6 +1607,10 @@ async function upgradeTemplateFriends() {
     // upgrade rules cannot reach it — they replace inside an existing string.
     // Backfill from the template, and never overwrite one the user wrote.
     if (tpl && tpl.appearance && !f.profile.appearance) { f.profile.appearance = tpl.appearance; changed = true; }
+    // Beats (v10.1) are the same shape of new field: backfill existing
+    // friends so the life-beat engine reaches them, never overwrite a bank
+    // that already exists.
+    if (tpl && tpl.beats && !(f.profile.beats || []).length) { f.profile.beats = tpl.beats; changed = true; }
     // A template REVISION is a rewrite, not a tweak: when the world itself was
     // wrong — who is engaged to whom, whose best friend is whose — substring
     // upgrades cannot repair it, and the friend would keep answering from a
@@ -1610,6 +1623,7 @@ async function upgradeTemplateFriends() {
       });
       f.profile.world = Personas.WORLD || '';
       f.profile.reveals = tpl.reveals || [];
+      f.profile.beats = tpl.beats || [];
       f.profile.established = !!tpl.established;
       // Seeded memories are deliberately NOT pinned (v9.1 — pinning made her
       // recite them every turn), so filtering on `pinned` kept the OLD seeds

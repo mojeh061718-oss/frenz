@@ -618,7 +618,7 @@ const ClaudeAPI = {
   },
 
   _recentTone(history) {
-    const last = (history || []).slice(-10);
+    const last = this._realHistory(history).slice(-10);
     const his = last.filter(m => m.role === 'user');
     if (!his.length) return 'a fresh start — no read yet';
     let flirty = 0, playful = 0, flat = 0, explicit = 0;
@@ -646,7 +646,7 @@ const ClaudeAPI = {
   /* He is pulling back. A person FEELS that; a service bot papers over it
      with more pleasantness, which is exactly what was happening. */
   _isWithdrawing(history) {
-    const his = (history || []).filter(m => m.role === 'user');
+    const his = this._realHistory(history).filter(m => m.role === 'user');
     if (his.length < 6) return false;
     const recent = his.slice(-3), before = his.slice(-10, -3);
     if (before.length < 3) return false;
@@ -656,6 +656,7 @@ const ClaudeAPI = {
   },
 
   readTheRoom(friend, history) {
+    history = this._realHistory(history);
     const lastUser = (history || []).slice().reverse().find(m => m.role === 'user');
     if (!lastUser) return null;
     const kind = this._classifyUserTurn(lastUser.text);
@@ -917,6 +918,7 @@ const ClaudeAPI = {
   openerNudge(gapMs, sheSpokeLast, friend) {
     const hours = Math.round(gapMs / 3600000);
     const gap = hours >= 40 ? Math.round(hours / 24) + ' days' : hours + ' hours';
+    const unresolved = this.unresolvedNote(friend) || '';
     const doubleText = sheSpokeLast
       ? ' Your last message never got a reply — this is a double-text, and you know it. Play that however you would: a new topic like nothing happened, calling it out with a jab, or the thing you were going to say anyway.'
       : '';
@@ -926,7 +928,7 @@ const ClaudeAPI = {
     // A rough ending or a left-on-read is never a bold-opener night: the
     // saved-up tease IS the small talk that pretends nothing happened, which
     // the unresolved note in this same nudge explicitly forbids (audit #6).
-    if (friend && !this.unresolvedNote(friend)
+    if (friend && !unresolved
         && this._bandRank(this.bandsFor(friend).attraction) >= 1
         && this._hash32(String(friend.id) + '|bold|' + this._dayKey(this._now())) % 100 < 35) {
       bold = ' Today you\'re allowed to open BOLD: the kind of first text that catches him off guard — a two-word message with intent behind it, a tease you\'d been saving, a thought you\'d normally sit on, something that makes him look at his phone twice. Only if it fits who you are and where you two actually stand — and if you take the swing, commit to it.';
@@ -935,7 +937,16 @@ const ClaudeAPI = {
     const late = (h >= 22 || h < 2)
       ? ' It\'s late, and a late-night first text is its own genre: short, low-lit, the kind that admits what hour it is without saying so.'
       : '';
-    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. A first text can also just be tiny — two or three words that only exist to see if he\'s there. If something genuinely significant he mentioned was coming — an event, a plan, a thing he was dreading — asking how it went is a strong open. But ONLY for something that genuinely mattered — a job, a family thing, something he was dreading. Never open by following up on ordinary small talk: chores, errands, the weather, what he ate, how his afternoon went. Those threads are closed, and reopening one reads as having nothing of your own to say. The default opener brings something NEW from your side. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + late + bold + doubleText + (this.unresolvedNote(friend) || '') + '</system-reminder>';
+    // The nudge orders "something NEW from your side" — a beat is the fuel
+    // for that. Without it the model reaches for the last live topic, which
+    // is how finished conversations got a restatement double-text. Never on
+    // an unresolved night: opening with cheerful news IS the small talk that
+    // pretends nothing happened, which the unresolved note forbids.
+    const beat = friend && !unresolved ? this._lifeBeat(friend) : null;
+    const material = beat
+      ? ' If you want material: ' + beat + ' That happened to you today, and opening with it — your version, your reason for telling him — is exactly the kind of first text a person sends.'
+      : '';
+    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. A first text can also just be tiny — two or three words that only exist to see if he\'s there. If something genuinely significant he mentioned was coming — an event, a plan, a thing he was dreading — asking how it went is a strong open. But ONLY for something that genuinely mattered — a job, a family thing, something he was dreading. Never open by following up on ordinary small talk: chores, errands, the weather, what he ate, how his afternoon went. Those threads are closed, and reopening one reads as having nothing of your own to say. The default opener brings something NEW from your side. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + late + material + bold + doubleText + unresolved + '</system-reminder>';
   },
 
   /* Memories accumulate forever, and models re-report the same fact in fresh
@@ -1105,10 +1116,11 @@ const ClaudeAPI = {
   applyStateDeltas(friend, raw, opts) {
     const T = this.STATE_TUNING;
     const prev = friend.state;
+    const now = (opts && opts.now) || this._now();
     const conf = typeof raw.confidence === 'number' ? Math.max(0, Math.min(1, raw.confidence)) : 0.8;
     const scale = (1 - T.DAMPEN) + conf * T.DAMPEN;
     const session = this._sessionNetFor(friend, opts && opts.gapMs);
-    const todayKey = this._dayKey((opts && opts.now) || this._now());
+    const todayKey = this._dayKey(now);
     let day = friend.dayNet;
     if (!day || day.day !== todayKey) day = { day: todayKey };
     // Attraction rises only in genuinely charged context — but for ANY type.
@@ -1165,6 +1177,24 @@ const ClaudeAPI = {
       return clamped;
     };
 
+    // Her floating inner line — what she's not saying right now. Sticky, but
+    // no longer immortal: "sticky forever" meant one theme the model wrote
+    // once (the secret, the incident) rode the depth-4 slot on every message
+    // for weeks with nothing able to dislodge it. An unrefreshed thought now
+    // expires after three days — people put things down. A report from the
+    // model restamps it; legacy values with no timestamp start their clock
+    // on the next exchange rather than living forever.
+    const UNSAID_TTL = 3 * 86400000;
+    let unsaid, unsaidTs;
+    if (raw.unsaid) {
+      unsaid = String(raw.unsaid).slice(0, 160); unsaidTs = now;
+    } else if (prev.unsaid && Number(prev.unsaidTs) && now - Number(prev.unsaidTs) > UNSAID_TTL) {
+      unsaid = ''; unsaidTs = 0;
+    } else {
+      unsaid = prev.unsaid || '';
+      unsaidTs = unsaid ? (Number(prev.unsaidTs) || now) : 0;
+    }
+
     const next = {
       // mood is categorical and sticky: it only changes on a confident read
       mood: conf >= 0.6 && raw.mood ? String(raw.mood) : prev.mood,
@@ -1172,15 +1202,13 @@ const ClaudeAPI = {
       closeness: applyOne('closeness', raw.closeness_delta, true),
       attraction: applyOne('attraction', raw.attraction_delta, romanceOk),
       opinion_notes: this._reviseNotes(prev.opinion_notes, raw.opinion_notes, conf),
-      // her floating inner line — what she's not saying right now. Sticky:
-      // an absent report keeps the previous thought alive.
-      unsaid: raw.unsaid ? String(raw.unsaid).slice(0, 160) : (prev.unsaid || ''),
+      unsaid,
+      unsaidTs,
       _carry: carry
     };
 
     // ---- tension accumulation (see the tension engine block above) ----
     const T2 = this._TENSION;
-    const now = (opts && opts.now) || this._now();
     const charged = this._recentRomance(opts && opts.history);
     const releaseWasActive = this.tensionReleaseActive(friend, now);
     let build = 0;
@@ -1366,16 +1394,24 @@ const ClaudeAPI = {
     return 'Your initiative is the ordinary kind and it\'s real: the story you\'ve been saving, the take, the honest question, the callback. Being actively interesting is what makes talking to you worth it.';
   },
 
-  /* Mood is sticky by design, but intoxication is not a personality trait:
-     without this, last night's "three drinks in" was still her stated mood at
-     10:25 the next morning. */
+  /* Mood is sticky by design, but it is weather, not climate. Intoxication
+     was the first fix (last night's "three drinks in" was still her stated
+     mood at 10:25 the next morning); the general case is the same failure
+     slower — a seeded "mortified" or a bad-day mood surviving a week of
+     silence anchors her to a moment that has passed. After three days of
+     silence, any mood has broken. Gated on the relationship having actually
+     started (exchanged > 0): a scenario persona's seeded mood is the setup
+     for the FIRST exchange and holds until it happens, however long that
+     takes — the incident itself lives on in backstory and memories either
+     way. */
   _INTOX_RE: /drink|drunk|tipsy|buzzed|wine|wasted|loose/i,
-  _freshMood(friend, lastMessageTs) {
+  _freshMood(friend, lastMessageTs, exchangedCount) {
     const mood = (friend.state && friend.state.mood) || '';
-    if (!lastMessageTs || !this._INTOX_RE.test(mood)) return mood;
+    if (!lastMessageTs || !mood) return mood;
     const gapH = (this._now() - lastMessageTs) / 3600000;
-    if (gapH < 7) return mood;
-    return 'sober and a little sheepish about last night';
+    if (this._INTOX_RE.test(mood) && gapH >= 7) return 'sober and a little sheepish about last night';
+    if ((exchangedCount || 0) > 0 && gapH >= 72) return 'an ordinary day — whatever was going on last time has mostly settled';
+    return mood;
   },
 
   buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines, history) {
@@ -1386,7 +1422,7 @@ const ClaudeAPI = {
     const parts = [
       '## Your current private state (your honest read going into this reply)',
       JSON.stringify({
-        mood: this._freshMood(friend, lastMessageTs),
+        mood: this._freshMood(friend, lastMessageTs, exchangedCount),
         comfort: this._BAND_TEXT.comfort[bands.comfort] + this._bandDrift(s.comfort, bands.comfort),
         closeness: this._BAND_TEXT.closeness[bands.closeness] + this._bandDrift(s.closeness, bands.closeness),
         attraction: this._BAND_TEXT.attraction[bands.attraction] + this._bandDrift(s.attraction, bands.attraction),
@@ -1410,6 +1446,11 @@ const ClaudeAPI = {
     }
     const wc = this._wildcard(friend);
     if (wc) tonight.push(wc + ' (Never announced, never explained.)');
+    // A beat is CONTENT, and unlike the week-event it is allowed out loud —
+    // that asymmetry is deliberate: tone stays invisible, events are what
+    // people actually text each other about.
+    const beat = this._lifeBeat(friend);
+    if (beat) tonight.push('Meanwhile, something real happened in your world: ' + beat + ' It is yours — bring it up if a natural opening appears (as a story, a complaint, or an invitation), once, in your own words. If no opening comes tonight, it keeps.');
     // the "not a mirror" rule lives ONCE, in the persona's '## Your own will'
     // section — repeating it here made it outweigh single-stated rules
     // (audit #9); only the per-day initiative color belongs in this block
@@ -1520,7 +1561,23 @@ const ClaudeAPI = {
     // live transcripts show the same failure: she answers "what's up" with
     // "just my day" because her life is 20k tokens up in the cached block
     // and her traits are the only thing near the generation point.
-    const life = (p.interests || '').split(/(?<=[.!])\s+/).slice(0, 2).join(' ').trim();
+    //
+    // ROTATED, never static. A fixed slice(0, 2) put the same two sentences
+    // at the highest-attention slot on every message forever, under an
+    // imperative to draw specifics from them — and whatever concrete noun
+    // happened to lead `interests` became her only topic (measured live:
+    // the Rocky fixation — a newborn in sentence one, mentioned in nearly
+    // every reply for weeks). Deterministic per day (5am roll, the same
+    // _dayKey the vibe dice use) so the slice holds steady across a whole
+    // evening, then moves on — every corner of her life gets its day.
+    const sentences = (p.interests || '').split(/(?<=[.!])\s+/).map(x => x.trim()).filter(Boolean);
+    let life = '';
+    if (sentences.length) {
+      const off = sentences.length <= 2 ? 0
+        : this._hash32(String(friend.id) + '|slice|' + this._dayKey(this._now())) % sentences.length;
+      life = sentences.slice(off, off + 2).join(' ');
+      if (off + 2 > sentences.length) life += ' ' + sentences[0];   // wrap around
+    }
     if (life) segs.push(`Your life right now (draw specifics from HERE, never vague ones): ${life}`);
     if (styleShort) segs.push(`Style: ${styleShort}`);
     let out = '[ ' + segs.join('; ') + ' ]';
@@ -1865,7 +1922,7 @@ const ClaudeAPI = {
         // short human sign-off with no coda. Rejecting it here forced a
         // substantive retry with a hook in it — a conversation that could
         // never end (audit #5: guard and directive were in a retry loop).
-        const lastUser = [...history].reverse().find(m => m.role === 'user');
+        const lastUser = [...this._realHistory(history)].reverse().find(m => m.role === 'user');
         const windingDown = (lastUser && this._classifyUserTurn(lastUser.text) === 'signoff')
           || this._isWithdrawing(history);
         if (res && res.bubbles && attempt < 2 && !windingDown && !this._underPressure()
@@ -2937,7 +2994,34 @@ const ClaudeAPI = {
       }
     }
 
-    const picked = scored.filter(s => chosen.has(s.i)).sort((a, b) => a.i - b.i);
+    let picked = scored.filter(s => chosen.has(s.i)).sort((a, b) => a.i - b.i);
+    // Theme-saturation cap. Retrieval is relevance-driven, and relevance has
+    // a monoculture failure: a thread that keeps touching one theme (the
+    // secret, the baby) keeps re-warming that theme's memories, which keep
+    // getting selected, which keeps her talking about it — a self-feeding
+    // loop the block itself sustains. When three-plus selected memories
+    // share a keyword, the two strongest carry the theme and the rest make
+    // room; pinned entries always stay. Counter-rule check: a relationship
+    // genuinely ABOUT one thing still gets that thing — twice, every turn.
+    {
+      const themeKeys = (s) => [...new Set((s.m.keywords || []).map(k => this._stem(this._normBubble(String(k)))))].filter(Boolean);
+      const tally = new Map();
+      for (const s of picked) for (const k of themeKeys(s)) tally.set(k, (tally.get(k) || 0) + 1);
+      const hot = new Set([...tally].filter(([, c]) => c >= 3).map(([k]) => k));
+      if (hot.size) {
+        const kept = [];
+        const perTheme = new Map();
+        for (const s of picked.slice().sort((a, b) => b.score - a.score)) {
+          const hks = themeKeys(s).filter(k => hot.has(k));
+          const over = hks.some(k => (perTheme.get(k) || 0) >= 2);
+          if (s.m.pinned || !over) {
+            kept.push(s);
+            for (const k of hks) perTheme.set(k, (perTheme.get(k) || 0) + 1);
+          }
+        }
+        picked = kept.sort((a, b) => a.i - b.i);
+      }
+    }
     // touch-refresh: recalled memories stay warm, untouched ones cool (never deleted)
     for (const s of picked) {
       const orig = raw[s.i];
@@ -3804,11 +3888,35 @@ const ClaudeAPI = {
      so it can't feed the next reply. Tiny reactions ("lol", "same") get a
      pass: repeating those is how people actually text. */
   _normBubble(s) {
-    return String(s || '').toLowerCase().replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+    // Apostrophes are REMOVED, not blanked to spaces: "it's" must normalize
+    // to "its", not "it s". The old form meant "it's about secrets" vs "its
+    // about a secret" shared almost no tokens — the guards scored the most
+    // natural human restatement at 0.40 against a 0.8 threshold, and it also
+    // meant the motif stoplist's "dont/cant/im/youre" entries never matched
+    // anything, so contraction shrapnel counted as content words.
+    return String(s || '').toLowerCase().replace(/[’'`´]/g, '').replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  },
+  /* Light plural stem for guard comparisons only: "secret"/"secrets" are the
+     same reach. Deliberately crude — trailing single s, never ss — because
+     the guards need "same word, human variation" and nothing cleverer. */
+  _stem(w) {
+    return w.length >= 4 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w;
+  },
+  /* The opener/double-text nudge rides the request as a synthetic user turn.
+     It must reach the PROVIDER as a message — but every analysis function
+     that reads "what he said" must skip it, or the guards compare her reply
+     against instruction text (measured: a verbatim restatement of his last
+     real message passed the parrot guard, because the nudge was "his last
+     message"), and the room read classifies a system note as his tone. */
+  _isSyntheticTurn(m) {
+    return !!m && m.role === 'user' && /^\s*<system-reminder>/.test(String(m.text || ''));
+  },
+  _realHistory(history) {
+    return (history || []).filter(m => !this._isSyntheticTurn(m));
   },
   _echoScore(a, b) {
-    const ta = a.split(' ').filter(Boolean);
-    const tb = new Set(b.split(' ').filter(Boolean));
+    const ta = a.split(' ').filter(Boolean).map(w => this._stem(w));
+    const tb = new Set(b.split(' ').filter(Boolean).map(w => this._stem(w)));
     if (!ta.length || !tb.size) return 0;
     let hit = 0;
     for (const t of ta) if (tb.has(t)) hit++;
@@ -3848,8 +3956,13 @@ const ClaudeAPI = {
     });
     const kept = scored.filter(s => s.score < s.th).map(s => s.b);
     if (kept.length) return kept;
-    // Everything echoed. Silence isn't an option (never leave them on read),
-    // so keep the single least-repetitive bubble.
+    // Everything echoed. Mid-conversation, silence isn't an option (never
+    // leave them on read) — keep the single least-repetitive bubble. But on
+    // an OPENER/double-text run (the synthetic nudge is the final turn),
+    // silence is the documented outcome ("she just didn't text first today"):
+    // shipping the least-bad echo there is exactly the stale double-text
+    // that restates a finished topic. She simply doesn't send it.
+    if (this._isSyntheticTurn((history || [])[(history || []).length - 1])) return [];
     scored.sort((a, b) => a.score - b.score);
     return [scored[0].b];
   },
@@ -3882,7 +3995,7 @@ const ClaudeAPI = {
      phrasing with an agreement token stapled on. One parrot bubble in a
      real reply is fine (people do echo); a reply that is NOTHING BUT
      agreement-echo is dead air and gets one strict regenerate. */
-  _AGREE_TOKENS: new Set('haha hahah hahaha lol lmao yeah yea yes yep yup exactly totally right true fr honestly same ok okay sure definitely 😂 🤣'.split(' ')),
+  _AGREE_TOKENS: new Set('haha hahah hahaha lol lmao yeah yea ya yes yep yup exactly totally right true fr honestly same ok okay sure definitely 😂 🤣'.split(' ')),
   _isParrotBubble(bubble, lastUserText) {
     const u = this._normBubble(lastUserText || '');
     if (!u) return false;
@@ -3894,7 +4007,7 @@ const ClaudeAPI = {
   },
   _isParrotReply(bubbles, history) {
     if (!bubbles || !bubbles.length) return false;
-    const lastUser = [...(history || [])].reverse().find(m => m.role === 'user');
+    const lastUser = [...this._realHistory(history)].reverse().find(m => m.role === 'user');
     if (!lastUser) return false;
     return bubbles.every(b => this._isParrotBubble(b, lastUser.text) || this._isFillerBubble(b));
   },
@@ -3940,22 +4053,38 @@ const ClaudeAPI = {
      retire it — prompt-side, so no good bubble ever gets eaten. */
   _MOTIF_STOP: new Set(('a an the and or but if so it is was be been am are i you he she we they me him her them my your his our their this that these those to of in on at for with from by as not no yes do did does done get got go going im ive youre thats dont cant just really very much more most only also then than there here what when where who how why all any some out up down off over about like well ok okay lol haha yeah yea nah hey oh omg thing things one two now still even back after before never always').split(' ')),
   _motifs(history) {
+    history = this._realHistory(history);
     const mine = (history || []).filter(m => m.role === 'assistant').slice(-30);
     if (mine.length < 6) return [];
-    // A phrase HE has used too is a shared running joke — flagging it as a
+    // A phrase HE keeps using too is a shared running joke — flagging it as a
     // rut banned Kelly's own "sad desk lunch" bit the moment he joined in
-    // (audit, phase 1). A rut is something SHE alone keeps reaching for;
-    // a bit he plays back is the friendship working.
-    const his = new Set();
-    for (const m of (history || []).filter(m => m.role === 'user').slice(-40)) {
-      const w = this._normBubble(m.text).split(' ').filter(x => x && !this._MOTIF_STOP.has(x));
+    // (audit, phase 1). But the exemption EXPIRES: he must have used it more
+    // than once, or used it recently. A lifetime pass for anything he ever
+    // said once was the blind spot that let "our secret" run forever — the
+    // moment he engaged a topic, her restating it became invisible to every
+    // detector. A live bit is protected; a dead one she alone keeps reviving
+    // is exactly the rut this exists to catch.
+    const hisTurns = (history || []).filter(m => m.role === 'user').slice(-40);
+    const hisCounts = new Map();
+    hisTurns.forEach((m, i) => {
+      const live = i >= hisTurns.length - 6;
+      const w = this._normBubble(m.text).split(' ').filter(x => x && !this._MOTIF_STOP.has(x)).map(x => this._stem(x));
+      const seen = new Set();
       for (let n = 2; n <= 3; n++) {
-        for (let i = 0; i + n <= w.length; i++) his.add(w.slice(i, i + n).join(' '));
+        for (let j = 0; j + n <= w.length; j++) {
+          const g = w.slice(j, j + n).join(' ');
+          if (seen.has(g)) continue;
+          seen.add(g);
+          const e = hisCounts.get(g) || { n: 0, live: false };
+          e.n++; if (live) e.live = true;
+          hisCounts.set(g, e);
+        }
       }
-    }
+    });
+    const his = { has: (g) => { const e = hisCounts.get(g); return !!e && (e.n >= 2 || e.live); } };
     const counts = new Map();
     for (const m of mine) {
-      const w = this._normBubble(m.text).split(' ').filter(x => x && !this._MOTIF_STOP.has(x));
+      const w = this._normBubble(m.text).split(' ').filter(x => x && !this._MOTIF_STOP.has(x)).map(x => this._stem(x));
       const seen = new Set();
       for (let n = 2; n <= 3; n++) {
         for (let i = 0; i + n <= w.length; i++) {
@@ -3977,17 +4106,35 @@ const ClaudeAPI = {
      messages, zero flags. A content word she alone keeps reaching for, in
      3+ of her last 8 messages, is the same rut in a smaller coat. */
   _wordRuts(history) {
+    history = this._realHistory(history);
     const mine = (history || []).filter(m => m.role === 'assistant').slice(-8);
     if (mine.length < 5) return [];
-    const his = new Set();
-    for (const m of (history || []).filter(m => m.role === 'user').slice(-12)) {
-      for (const w of this._normBubble(m.text || '').split(' ')) his.add(w);
-    }
+    // Same expiring exemption as _motifs: a word he used twice, or used
+    // recently, is a live shared topic; a word he said ONCE that she has
+    // reached for in 3+ of her last 8 messages is her rut, not their bit.
+    // Measured before this: "rocky" in 8 of her 8 consecutive messages drew
+    // zero flags because he had asked about the baby once.
+    const hisTurns = (history || []).filter(m => m.role === 'user').slice(-12);
+    const hisCounts = new Map();
+    hisTurns.forEach((m, i) => {
+      const live = i >= hisTurns.length - 4;
+      const seen = new Set();
+      for (const w0 of this._normBubble(m.text || '').split(' ')) {
+        const w = this._stem(w0);
+        if (seen.has(w)) continue;
+        seen.add(w);
+        const e = hisCounts.get(w) || { n: 0, live: false };
+        e.n++; if (live) e.live = true;
+        hisCounts.set(w, e);
+      }
+    });
+    const hisExempt = (w) => { const e = hisCounts.get(w); return !!e && (e.n >= 2 || e.live); };
     const counts = new Map();
     for (const m of mine) {
       const seen = new Set();
-      for (const w of this._normBubble(m.text || '').split(' ')) {
-        if (w.length < 4 || this._MOTIF_STOP.has(w) || his.has(w) || seen.has(w)) continue;
+      for (const w0 of this._normBubble(m.text || '').split(' ')) {
+        const w = this._stem(w0);
+        if (w.length < 4 || this._MOTIF_STOP.has(w) || hisExempt(w) || seen.has(w)) continue;
         seen.add(w); // once per message: a rut is ACROSS messages
         counts.set(w, (counts.get(w) || 0) + 1);
       }
@@ -4012,6 +4159,7 @@ const ClaudeAPI = {
      of her own short line — that stays allowed, same carve-out the echo
      guard uses. */
   _isRerunReply(bubbles, history) {
+    history = this._realHistory(history);
     const text = (bubbles || []).join(' ').trim();
     if (!text || text.split(/\s+/).length < 4) return false; // short is texting, not a rerun
     const norm = this._normBubble(text);
@@ -4081,10 +4229,44 @@ const ClaudeAPI = {
     return e.text + ' It is background, not an announcement: it colors how you are, and only gets named if he actually notices and asks.';
   },
 
+  /* ---------------- life beats: things that actually HAPPEN to her ----------------
+     Every other "her life" system in the pipeline generates TONE — vibes,
+     wildcards, week-events are all moods, and the week-event is explicitly
+     ordered to stay invisible until asked about. Nothing generated CONTENT,
+     so her only concrete material was the depth-4 interests slice, the
+     origin incident, and her own recent messages — which is why long threads
+     went stale and nothing "truly random" ever happened (a kid's first goal,
+     an invitation, a group-chat war). A beat is a concrete event from her
+     world, authored per persona as a FACT, not a joke — her voice does the
+     writing (the same reason example banks are shape-only). Deterministic
+     per day; a rolled beat is logged on the friend so it never repeats
+     within three weeks. Roughly half of days carry one — scarcity is what
+     keeps it from turning her into a news ticker. */
+  _lifeBeat(friend, now) {
+    const t = now === undefined ? this._now() : now;
+    const bank = (friend.profile && friend.profile.beats) || [];
+    if (!bank.length) return null;
+    const dk = this._dayKey(t);
+    const h = this._hash32(String(friend.id) + '|beat|' + dk);
+    if (h % 100 >= 45) return null;
+    const log = friend.beatLog || [];
+    // exclude today's own entry so repeat calls the same day stay identical
+    const recent = new Set(log.filter(u => u.day !== dk && dk - u.day < 21).map(u => u.idx));
+    if (recent.size >= bank.length) return null;
+    let idx = (h >>> 8) % bank.length;
+    for (let i = 0; i < bank.length && recent.has(idx); i++) idx = (idx + 1) % bank.length;
+    if (recent.has(idx)) return null;
+    if (!log.some(u => u.day === dk && u.idx === idx)) {
+      log.push({ day: dk, idx });
+      friend.beatLog = log.slice(-24);   // persisted with the friend on the next save
+    }
+    return bank[idx];
+  },
+
   /* She keeps score of being asked about. A month of him talking only about
      himself should cost him, and she should be allowed to say so. */
   reciprocityNote(friend, history) {
-    const his = (history || []).filter(m => m.role === 'user').slice(-14);
+    const his = this._realHistory(history).filter(m => m.role === 'user').slice(-14);
     if (his.length < 10) return null;
     const asked = his.filter(m => /\?/.test(m.text || '')).length;
     if (asked > 1) return null;
