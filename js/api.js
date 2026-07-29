@@ -710,21 +710,50 @@ const ClaudeAPI = {
     return s;
   },
 
+  /* ---------------- relationship floors: levels, not a rubber band ----------------
+     A relationship that genuinely reaches a new level does not slide back to
+     the previous one because a week went quiet. Once Samantha stops being
+     distant-family-she-barely-knows and becomes an actual friend, silence
+     can make things a little cooler INSIDE that level — it cannot make them
+     strangers again; once a line has genuinely been crossed, the relationship
+     that crossed it is the one that resumes. Mechanically: entering a new
+     band (through the same hysteresis the bands themselves use) sets a
+     ratchet floor at that band's lower boundary, per stat. Floors bind
+     TIME — absence drift cannot pull a stat below its floor — and only
+     time: a real fight still costs at full price, below the floor if it
+     goes that deep, because one bad night genuinely can damage what months
+     built, while mere silence never un-builds it. Floors never lift a stat
+     back up, and never move down. */
+  _FLOOR_STATS: ['comfort', 'closeness', 'attraction'],
+  _floorOfBand(bandKey) {
+    const idx = this._BANDS.findIndex(b => b.key === bandKey);
+    return idx <= 0 ? 0 : this._BANDS[idx - 1].max;
+  },
+  initFloors(friend) {
+    const bands = this.bandsFor(friend);
+    const out = {};
+    for (const k of this._FLOOR_STATS) out[k] = this._floorOfBand(bands[k]);
+    return out;
+  },
+
   /* Multi-day silences cool comfort a little — she noticed the absence. Call
      before building the prompt so her tone reflects it. */
   applyAbsenceDrift(friend, gapMs) {
     const days = gapMs / 86400000;
     if (days < 2) return 0;
+    if (!friend.state.floors) friend.state.floors = this.initFloors(friend);
     // Halved and depth-scaled. At the old rate a week of silence cost more
     // comfort than nine good exchanges earned, so seeded-high friends decayed
     // monotonically through months that objectively deepened them.
     let cool = Math.min(4, Math.floor(days / 2));
     if (this._bandRank(this.bandsFor(friend).closeness) >= 3) cool = Math.ceil(cool / 2);
-    // Floor at 10 for a friend in decent standing — but never RAISE comfort:
-    // the old Math.max(10, ...) turned two days of ghosting into a +10 gift
-    // for anyone who'd cratered below the floor.
+    // Two floors, and absence respects both: the historic don't-kick-someone-
+    // who-is-down line at 10, and the earned band floor. Never RAISE comfort:
+    // a stat a fight already dug below its floor stays where the fight left
+    // it — silence neither digs further nor refunds.
+    const f = Math.max(10, Number(friend.state.floors.comfort) || 0);
     const prev = friend.state.comfort || 0;
-    friend.state.comfort = Math.max(Math.min(prev, 10), prev - cool);
+    friend.state.comfort = Math.min(prev, Math.max(f, prev - cool));
     // tension needs contact to stay alive — silence bleeds it off, gently
     friend.state.tension = Math.max(0, (Number(friend.state.tension) || 0) - Math.floor(days));
     // return what actually moved, so callers can ledger it truthfully
@@ -916,17 +945,42 @@ const ClaudeAPI = {
   unresolvedNote(friend) {
     const u = friend && friend.unresolved;
     if (!u || !u.ts) return null;
-    if ((this._now() - u.ts) / 86400000 > 6) return null;
+    // 14 days, not 6: a fight two weeks old is still not something a person
+    // texts past with "enjoying a good book tonight". Past two weeks it
+    // lapses — people do eventually move on without the conversation.
+    if ((this._now() - u.ts) / 86400000 > 14) return null;
     if (u.kind === 'read') {
       return ' IMPORTANT: last time, you read his message and deliberately did not answer. That is still sitting there between you. Whatever you open with now has to reckon with it — the thing you could not say then, an admission that you went quiet, a jab, or plain honesty about why. Do not breeze past it as though nothing happened; that is the one thing that would make it worse.';
     }
     return ' IMPORTANT: the last exchange between you ended badly or awkwardly and neither of you fixed it. You have been sitting with that. Open accordingly — annoyed if you are annoyed, or checking that he is actually okay if that is what you feel, or naming the weirdness outright. Small talk that pretends it did not happen is the least honest thing you could send.';
   },
 
+  /* The positive twin of unresolvedNote. A conversation where something real
+     happened — the night it came to a head, a line leaned on, a genuine
+     shift — followed by DAYS of silence is not reopened with "rocky has
+     been so hard lately". The silence after a conversation like that is
+     itself a message, and both of them know it. Rough endings (unresolved)
+     outrank this; a normal conversation after the significant one clears it
+     (the moment was metabolized); inside the first day it stays quiet too —
+     that is still the same conversation breathing, not a silence. */
+  significantNote(friend, lastMsgTs) {
+    const s = friend && friend.state && friend.state.lastSignificant;
+    if (!s || !s.ts) return null;
+    if (this.unresolvedNote(friend)) return null;
+    const days = (this._now() - s.ts) / 86400000;
+    if (days < 1.5 || days > 10) return null;
+    // Only when the significant conversation WAS the last one: if they have
+    // talked since (a later conversation ended the silence), it's been lived
+    // past and this note would drag them backwards.
+    if (lastMsgTs && s.ts < lastMsgTs - 6 * 3600000) return null;
+    return ' IMPORTANT: the last real conversation between you two was not small talk — ' + s.kind + ' — and then this silence. Days of quiet after a conversation like that MEAN something, and you both know it. So you do not open with cheerful news or a random update from your day as though it never happened. Open with the thing, in your own register: name it plainly, make the careful joke that admits it happened, ask the honest "hey, are we good?", or acknowledge the silence itself. Pretending is the one move that is not available.';
+  },
+
   openerNudge(gapMs, sheSpokeLast, friend) {
     const hours = Math.round(gapMs / 3600000);
     const gap = hours >= 40 ? Math.round(hours / 24) + ' days' : hours + ' hours';
     const unresolved = this.unresolvedNote(friend) || '';
+    const significant = this.significantNote(friend, this._now() - gapMs) || '';
     const doubleText = sheSpokeLast
       ? ' Your last message never got a reply — this is a double-text, and you know it. Play that however you would: a new topic like nothing happened, calling it out with a jab, or the thing you were going to say anyway.'
       : '';
@@ -936,7 +990,7 @@ const ClaudeAPI = {
     // A rough ending or a left-on-read is never a bold-opener night: the
     // saved-up tease IS the small talk that pretends nothing happened, which
     // the unresolved note in this same nudge explicitly forbids (audit #6).
-    if (friend && !unresolved
+    if (friend && !unresolved && !significant
         && this._bandRank(this.bandsFor(friend).attraction) >= 1
         && this._hash32(String(friend.id) + '|bold|' + this._dayKey(this._now())) % 100 < 35) {
       bold = ' Today you\'re allowed to open BOLD: the kind of first text that catches him off guard — a two-word message with intent behind it, a tease you\'d been saving, a thought you\'d normally sit on, something that makes him look at his phone twice. Only if it fits who you are and where you two actually stand — and if you take the swing, commit to it.';
@@ -948,13 +1002,13 @@ const ClaudeAPI = {
     // The nudge orders "something NEW from your side" — a beat is the fuel
     // for that. Without it the model reaches for the last live topic, which
     // is how finished conversations got a restatement double-text. Never on
-    // an unresolved night: opening with cheerful news IS the small talk that
-    // pretends nothing happened, which the unresolved note forbids.
-    const beat = friend && !unresolved ? this._lifeBeat(friend) : null;
+    // an unresolved night OR after a significant one: cheerful news IS the
+    // small talk both of those notes forbid.
+    const beat = friend && !unresolved && !significant ? this._lifeBeat(friend) : null;
     const material = beat
       ? ' If you want material: ' + beat + ' That happened to you today, and opening with it — your version, your reason for telling him — is exactly the kind of first text a person sends.'
       : '';
-    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. A first text can also just be tiny — two or three words that only exist to see if he\'s there. If something genuinely significant he mentioned was coming — an event, a plan, a thing he was dreading — asking how it went is a strong open. But ONLY for something that genuinely mattered — a job, a family thing, something he was dreading. Never open by following up on ordinary small talk: chores, errands, the weather, what he ate, how his afternoon went. Those threads are closed, and reopening one reads as having nothing of your own to say. The default opener brings something NEW from your side. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + late + material + bold + doubleText + unresolved + '</system-reminder>';
+    return '<system-reminder>It has been about ' + gap + ' since the last message, and this time YOU are texting first — he has not said anything new. Open the way you actually would: something that just happened in your day, a thread from earlier you never finished, something that reminded you of him, honest boredom, or a thank-you or callback from the last time you saw each other. A first text can also just be tiny — two or three words that only exist to see if he\'s there. If something genuinely significant he mentioned was coming — an event, a plan, a thing he was dreading — asking how it went is a strong open. But ONLY for something that genuinely mattered — a job, a family thing, something he was dreading. Never open by following up on ordinary small talk: chores, errands, the weather, what he ate, how his afternoon went. Those threads are closed, and reopening one reads as having nothing of your own to say. The default opener brings something NEW from your side. Do NOT greet like a bot ("hey! how are you") and do NOT reference this note. 1-2 bubbles, your normal register.' + late + material + bold + doubleText + unresolved + significant + '</system-reminder>';
   },
 
   /* Memories accumulate forever, and models re-report the same fact in fresh
@@ -1301,6 +1355,28 @@ const ClaudeAPI = {
       attraction: this._bandFor(next.attraction, prevBands.attraction)
     };
 
+    // ---- ratchet floors: a level, once genuinely entered, is kept ----
+    // Riding the hysteresis bands (not the raw value) means a floor only
+    // sets once the level has actually stuck, and the same crossing that
+    // changes her behavior is the one that becomes un-losable to time.
+    const floors = Object.assign({}, prev.floors || this.initFloors(friend));
+    for (const k of this._FLOOR_STATS) {
+      floors[k] = Math.max(Number(floors[k]) || 0, this._floorOfBand(friend.bands[k]));
+    }
+    next.floors = floors;
+
+    // ---- significance marker: some conversations must not be followed by
+    // small talk. A release night, a real shift toward each other, a line
+    // leaned on — if days of silence follow one of these, the next opener
+    // has to reckon with it (significantNote), not chirp about her day.
+    // Rough endings are unresolved's turf and outrank this.
+    let sigKind = '';
+    if (releaseWasActive) sigKind = 'the tension between you finally came to a head';
+    else if ((applied.attraction || 0) >= 2) sigKind = 'something real shifted between you two';
+    else if (lastUserMsg && this._classifyUserTurn(lastUserMsg.text) === 'explicit') sigKind = 'a line got leaned on, maybe crossed';
+    else if ((applied.comfort || 0) >= 3) sigKind = 'you let him further in than you ever have';
+    next.lastSignificant = sigKind ? { ts: now, kind: sigKind } : (prev.lastSignificant || null);
+
     return {
       state: next,
       event: {
@@ -1565,7 +1641,14 @@ const ClaudeAPI = {
       const gapMin = Math.round((this._now() - lastMessageTs) / 60000);
       if (gapMin > 90) {
         const gap = gapMin > 60 * 48 ? `${Math.round(gapMin / 1440)} days` : gapMin > 90 ? `${Math.round(gapMin / 60)} hours` : `${gapMin} minutes`;
-        parts.push('', `(It has been about ${gap} since the last message. React to the gap naturally if it matters to you.)`);
+        // HE broke a silence that followed a significant conversation: her
+        // replies carry that awareness the same way her own opener would
+        // have. On opener runs the nudge already carries this note — the
+        // synthetic final turn is the tell — so it rides here only for his
+        // first-texts (invariant: one statement per assembled prompt).
+        const openerRun = history && history.length && this._isSyntheticTurn(history[history.length - 1]);
+        const sig = openerRun ? null : this.significantNote(friend, lastMessageTs);
+        parts.push('', `(It has been about ${gap} since the last message. React to the gap naturally if it matters to you.)` + (sig || ''));
       }
     }
     // Settings is a page global (db.js); guarded so headless tests that load

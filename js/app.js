@@ -1703,6 +1703,13 @@ async function upgradeTemplateFriends() {
     // loss — refresh it for every template friend whether or not the template
     // revision moved, rather than only backfilling an empty one.
     if (tpl && f.profile.world !== (Personas.WORLD || '')) { f.profile.world = Personas.WORLD || ''; changed = true; }
+    // Relationship floors (v10.3): existing friends lock in the level they
+    // have already reached, so the first absence after this update cannot
+    // regress what was genuinely earned. Runs for custom friends too (floors
+    // are state, not template), and deliberately AFTER the templateRev /
+    // seedFix block above — a floor must never fossilize state a seed
+    // correction was about to fix.
+    if (f.state && !f.state.floors) { f.state.floors = ClaudeAPI.initFloors(f); changed = true; }
     if (knownName && !f.profile.userName) { f.profile.userName = knownName; changed = true; }
     // Same for the founding facts: friends made before v8.6 started with an
     // empty memory list and the state model would never record an event that

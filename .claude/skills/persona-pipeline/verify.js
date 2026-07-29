@@ -319,5 +319,79 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   ok(note === null || true, 'photoNote tolerates no image entry'); // imageEntry({pool:[]}) -> null path
 }
 
+console.log('\n== 14. relationship floors: levels that absence cannot undo ==');
+{
+  // seed floor: samantha's starting band is her first floor
+  const f = mkFriend('samantha');           // state closeness 40 -> 'building'
+  ok(API.initFloors(f).closeness === 25, 'seed floor at the band she starts in');
+
+  // ratchet on band entry
+  const g = mkFriend('samantha');
+  g.state.comfort = 62; g.state.closeness = 62; g.state.attraction = 40;
+  let out = API.applyStateDeltas(g, { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: Date.now(), history: [] });
+  g.state = out.state;
+  ok(g.state.floors && g.state.floors.comfort === 50 && g.state.floors.closeness === 50,
+    'entering "high" locks a floor at 50');
+
+  // absence cools inside the level, never below it
+  for (let i = 0; i < 12; i++) API.applyAbsenceDrift(g, 30 * DAY);
+  ok(g.state.comfort === 50, 'a year of silence stops at the floor (' + g.state.comfort + ')');
+
+  // a real fight still costs, below the floor if it goes that deep
+  out = API.applyStateDeltas(g, { comfort_delta: -3, closeness_delta: 0, attraction_delta: 0, confidence: 1, new_memories: [] }, { now: Date.now(), history: [] });
+  ok(out.state.comfort < 50, 'fights are not floored (' + out.state.comfort + ')');
+
+  // and silence after the fight neither digs further nor refunds
+  const dug = mkFriend('kelly');
+  dug.state.comfort = 30; dug.state.floors = { comfort: 50, closeness: 25, attraction: 25 };
+  API.applyAbsenceDrift(dug, 10 * DAY);
+  ok(dug.state.comfort === 30, 'below-floor stat is frozen to time: no dig, no refund');
+
+  // floors only ratchet up
+  const h = mkFriend('samantha');
+  h.state.floors = { comfort: 50, closeness: 50, attraction: 25 };
+  h.state.comfort = 30; h.state.closeness = 30; h.state.attraction = 20; h.bands = null;
+  out = API.applyStateDeltas(h, { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: Date.now(), history: [] });
+  ok(out.state.floors.comfort === 50 && out.state.floors.closeness === 50, 'floors never move down');
+}
+
+console.log('\n== 15. significant nights get reckoned with, not small-talked past ==');
+{
+  const now = Date.now();
+  const f = mkFriend('samantha');
+  f.state.lastTensionRelease = now;   // tonight came to a head
+  const out = API.applyStateDeltas(f, { comfort_delta: 1, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now, history: [] });
+  f.state = out.state;
+  ok(f.state.lastSignificant && /came to a head/.test(f.state.lastSignificant.kind), 'release night sets the marker');
+
+  const at = (daysAgo) => { const g = mkFriend('samantha'); g.state.lastSignificant = { ts: now - daysAgo * DAY, kind: 'a line got leaned on, maybe crossed' }; return g; };
+  ok(API.significantNote(at(3), now - 3 * DAY) !== null, 'note fires days later');
+  ok(/are we good/.test(API.significantNote(at(3), now - 3 * DAY)), 'offers the honest check-in');
+  ok(API.significantNote(at(0.5), now - 0.5 * DAY) === null, 'quiet inside the first day (same conversation breathing)');
+  ok(API.significantNote(at(12), now - 12 * DAY) === null, 'lapses after ten days');
+  ok(API.significantNote(at(3), now - 1 * DAY) === null, 'cleared once a later conversation ended the silence');
+  const ur = at(3); ur.unresolved = { ts: now - 2 * DAY, kind: 'rough' };
+  ok(API.significantNote(ur, now - 3 * DAY) === null, 'rough endings outrank it');
+
+  // opener nudge: reckoning in, cheerfulness out
+  const g = at(3);
+  const nudge = API.openerNudge(3 * DAY, false, g);
+  ok(/MEAN something/.test(nudge), 'opener nudge carries the reckoning');
+  ok(!/If you want material/.test(nudge) && !/open BOLD/.test(nudge), 'beats and bold openers suppressed');
+
+  // his first text after the silence: same awareness on the reply path…
+  const dyn = API.buildDynamicContext(g, now - 3 * DAY, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+  ok(/MEAN something/.test(dyn), 'reply path carries it when HE breaks the silence');
+  // …but not doubled into an opener run, where the nudge already has it
+  const dynOp = API.buildDynamicContext(g, now - 3 * DAY, 0, 40, null, null,
+    [{ role: 'user', text: 'hey' }, { role: 'user', text: '<system-reminder>opener</system-reminder>' }]);
+  ok(!/MEAN something/.test(dynOp), 'not restated on opener runs (one statement per prompt)');
+
+  // a two-week-old fight is still not small-talked past (was a 6-day cutoff)
+  const fight = mkFriend('kelly');
+  fight.unresolved = { ts: now - 10 * DAY, kind: 'rough' };
+  ok(API.unresolvedNote(fight) !== null, 'unresolved note now survives 10+ days');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

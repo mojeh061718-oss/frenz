@@ -165,11 +165,32 @@ editing one link while forgetting what another link assumed.
     exchange and holds until it happens), and `selectMemories` caps
     same-keyword memories at two per turn. If you add a persisted text field
     the model writes, give it a TTL the same day.
+    And decay has a third law: **time erodes, it never demotes.** Entering a
+    band sets a ratchet floor (`state.floors`, at the band's lower bound) —
+    absence drift cools INSIDE the level and stops at the floor, because a
+    week of silence cannot un-friend people who genuinely became friends.
+    Floors bind time only: a real fight still costs at full price, below
+    the floor if it goes that deep, and a stat a fight dug below its floor
+    is frozen to time (silence neither digs further nor refunds). Floors
+    never move down and never lift a stat up.
 
-16. **The model's testimony is input, not truth.** Everything coming back in
+16. **A significant conversation is a debt the next opener must pay.** The
+    night tension came to a head, a line leaned on, a real shift — followed
+    by days of silence — must not be reopened with "rocky has been so hard
+    lately". `applyStateDeltas` stamps `lastSignificant` on such bursts;
+    `significantNote` fires between 1.5 and 10 days later (quiet inside the
+    first day — that's the same conversation still breathing; lapsed after
+    ten; cleared if a later conversation ended the silence; outranked by
+    `unresolved`, whose own window is 14 days). While it is live, beats and
+    bold openers are suppressed on both the opener path and his-first-text
+    path — cheerful news is exactly the pretending both notes forbid — and
+    it is stated once per assembled prompt (the nudge on opener runs, the
+    gap note otherwise).
+
+17. **The model's testimony is input, not truth.** Everything coming back in
     the state JSON goes through clamps/damping/caps. Never apply a raw delta.
 
-17. **Silence, refusals, and errors are different things.** `[noreply]` is a
+18. **Silence, refusals, and errors are different things.** `[noreply]` is a
     reply (Read badge), a content refusal is the provider's decision (never
     rerouted, never persisted), a transport error is an outage (badge in the
     corner), and a skipped opener is a non-event. Don't let a change collapse
@@ -178,8 +199,8 @@ editing one link while forgetting what another link assumed.
 ## The sim harness — prove it, don't eyeball it
 
 The suite ships WITH this skill so it survives sessions: run
-`node .claude/skills/persona-pipeline/verify.js` (66 assertions as of
-v10.2). It loads `js/personas.js` then `js/api.js` into a `vm` context with
+`node .claude/skills/persona-pipeline/verify.js` (84 assertions as of
+v10.3). It loads `js/personas.js` then `js/api.js` into a `vm` context with
 stub `localStorage` and drives the REAL engine headlessly — extend it there,
 and add assertions for any new behavior before shipping. Use it to:
 
@@ -269,3 +290,8 @@ the fixtures were wrong before.
   mirror only on fit-check words; every framing is faceless by construction
   (head past the frame edge, phone over the face) and the pov pool must stay
   VARIED — near-identical torso shots made every body photo the same photo.
+- Floors & reckoning clocks: floors at band lower bounds (0/25/50/75), the
+  historic comfort-10 kindness floor kept; significantNote window 1.5-10
+  days, unresolved window 14 days, unresolved > significant. Shortening the
+  significant window brings back small-talk-past-the-moment; lengthening it
+  past two weeks reads as her holding a grudge against calendar time.
