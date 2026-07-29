@@ -199,8 +199,11 @@ editing one link while forgetting what another link assumed.
 ## The sim harness — prove it, don't eyeball it
 
 The suite ships WITH this skill so it survives sessions: run
-`node .claude/skills/persona-pipeline/verify.js` (116 assertions as of
-v10.5). Opening acts (`profile.opening = {text, until}`) are the pattern
+`node .claude/skills/persona-pipeline/verify.js` (134 assertions as of
+v10.8). The agent-driven conversation harness (`scratchpad/simchat.js`
+pattern: an agent plays both Jon and the provider over the real engine)
+found seven shipped fixes the unit suite alone never would — rerun that
+kind of test after any large behavior change. Opening acts (`profile.opening = {text, until}`) are the pattern
 for scene-premise personas: persona-scoped direction for the aftermath
 conversation, injected into the dynamic block only while `exchangedCount`
 is under the window, self-retiring before the reveal ladder takes over —
@@ -287,6 +290,13 @@ the fixtures were wrong before.
 - Life beats: ~45% of days, 21-day no-repeat, banks of ~12, ONE per prompt,
   suppressed on unresolved nights. More frequent reads as a news ticker;
   much rarer and her life stops running.
+- Textures (`_lifeTexture`): the dinner-then-couch layer — evening-gated
+  (17:00-02:00), ~65% of evenings, 8-day no-repeat, scenery not topic (one
+  mention at most). Authored mundane on purpose: "invent it fresh" produced
+  generic inventions, and cute-event-only banks produced the "bake sale"
+  complaint. Kid/dependent content stays a MINORITY of any bank and leads
+  at most one interests sentence — the weather-not-topic rule is authored
+  into the persona so the rare vent lands as real.
 - Decay clocks: `unsaid` TTL 3 days, mood break 72h (post-first-exchange),
   memory theme cap 2. Shorter clocks make her forgetful and cold; longer
   ones bring the immortal-theme loop back.

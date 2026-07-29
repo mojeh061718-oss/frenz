@@ -409,7 +409,7 @@ console.log('\n== 16. testlook lens ==');
 console.log('\n== 17. v10.4 backstory rewrites ==');
 {
   const sam = Personas.byId('samantha');
-  ok(sam.templateRev === 8, 'samantha at rev 8');
+  ok(sam.templateRev === 9, 'samantha at rev 9');
   ok(/did not stop/.test(sam.backstory) && /five seconds/.test(sam.backstory), 'the five seconds are in the backstory');
   ok(/never about those five seconds/.test(sam.backstory), '…and marked as the thing she never mentions');
   ok(sam.greeting.length === 2 && /mortified/.test(sam.greeting[1]) && /sorry/.test(sam.greeting[1]), 'her first text is mortified + sorry, nothing more');
@@ -417,7 +417,7 @@ console.log('\n== 17. v10.4 backstory rewrites ==');
   ok(/did not stop/.test(sam.seedMemories[0].text), 'seed memory carries the real event');
 
   const tay = Personas.byId('tay');
-  ok(tay.templateRev === 8, 'tay at rev 8');
+  ok(tay.templateRev === 9, 'tay at rev 9');
   ok(/(texted|from) Toni for your number|number from Toni/.test(tay.backstory) && /from Toni/.test(tay.greeting[0]), 'number comes from Toni everywhere');
   ok(!/from Taylor/.test(tay.backstory + tay.plist + tay.greeting.join(' ') + JSON.stringify(tay.seedMemories)), 'no stale from-Taylor left');
   ok(/[Nn]erdy/.test(tay.personality) && /tangent/.test(tay.personality) && /off-the-wall/.test(tay.personality), 'nerdy, outgoing, off-the-wall');
@@ -451,6 +451,78 @@ console.log('\n== 18. opening act: the aftermath is a scene, then it retires =='
   const g = mkFriend('samantha');
   g.state.unsaid = Personas.byId('samantha').unsaidSeed;
   ok(/On her mind right now, unsaid/.test(API._plist(g)), 'seeded unsaid reaches the generation point');
+}
+
+console.log('\n== 19. content diet: textures, kids-as-weather, agent-run fixes ==');
+{
+  // every template ships a texture bank
+  ok(Personas.templates.every(t => Array.isArray(t.textures) && t.textures.length >= 6), 'every template ships textures');
+  // evening-gated, deterministic, no repeats inside 8 days
+  const f = mkFriend('samantha');
+  const at = (d, h) => new Date(2026, 7, d, h, 30).getTime();
+  ok(API._lifeTexture(f, at(3, 10)) === null, 'no texture at 10am (evening layer)');
+  const seen = []; let hits = 0;
+  for (let d = 1; d <= 30; d++) {
+    const tx = API._lifeTexture(f, at(d, 20));
+    const tx2 = API._lifeTexture(f, at(d, 22));
+    if (tx !== tx2) ok(false, 'texture unstable within an evening');
+    if (tx) { hits++; seen.push({ d, tx }); }
+  }
+  ok(hits >= 10 && hits <= 28, 'texture frequency sane (' + hits + '/30 evenings)');
+  let soon = false;
+  for (let i = 0; i < seen.length; i++) for (let j = i + 1; j < seen.length; j++) {
+    if (seen[i].tx === seen[j].tx && seen[j].d - seen[i].d < 8) soon = true;
+  }
+  ok(!soon, 'no texture repeats within 8 days');
+  ok((Personas.byId('samantha').textures || []).some(t => /edible/.test(t)), 'the edible night exists');
+
+  // kids are weather, not the topic
+  // Kid-FOCUSED content (a kid is the subject) must be a minority; kids
+  // appearing incidentally inside her-evening sentences ("mom takes the
+  // kids overnight → bath and an edible") IS the weather framing, not a
+  // violation — a naive keyword count would punish exactly the right prose.
+  const si = Personas.byId('samantha').interests;
+  const sentences = si.split(/(?<=[.!])\s+/);
+  const kidFocused = sentences.filter(s => /^(Four kids|Rocky|Cam|Gunner|Blaze)/.test(s.trim())).length;
+  ok(kidFocused <= 1, 'interests: at most 1 of ' + sentences.length + ' sentences leads with the kids');
+  ok(/couch is HERS|the good quiet/.test(si) && /grievance/.test(si) && /edible/.test(si), 'interests carry her adult evening life');
+  const kidLed = Personas.byId('samantha').beats.filter(b => /^(Cam|Gunner|Blaze|Rocky|One of those days)/.test(b.trim())).length;
+  ok(kidLed <= 4, 'beats: kid-led entries a minority (' + kidLed + '/12)');
+  ok(/WEATHER/.test(Personas.byId('samantha').personality), 'kids-as-weather rule authored into her');
+
+  // agent-run fixes
+  ok(API._classifyUserTurn('that image has not left my head once since wednesday') === 'flirty', 'declarative desire reads as flirty, not ordinary');
+  ok(!!Personas.byId('samantha').significantSeed && !!Personas.byId('tay').significantSeed, 'scenario personas born significant');
+  const g = mkFriend('samantha');
+  g.state.lastSignificant = { ts: Date.now() - 2 * DAY, kind: 'the walk-in' };
+  const lastMsgTs = Date.now() - 2 * DAY;
+  const sixPm = (() => { const d = new Date(); d.setHours(18, 0, 0, 0); return d.getTime(); })();
+  const msgs = [{ role: 'user', text: 'night', ts: sixPm - 30 * 3600000 }];
+  const h = mkFriend('samantha');
+  h.unresolved = { ts: sixPm - 30 * 3600000, kind: 'rough' };
+  ok(API.openerDue(h, msgs, sixPm) === true, 'unresolved overrides the opener dice');
+  const h2 = mkFriend('samantha');
+  h2.state.lastSignificant = { ts: sixPm - 30 * 3600000, kind: 'x' };
+  ok(API.openerDue(h2, msgs, sixPm) === true, 'significant last night overrides the opener dice');
+  // band-drift stays silent on a young relationship
+  const young = mkFriend('kelly'); young.createdAt = Date.now() - 1 * DAY;
+  const dynY = API.buildDynamicContext(young, Date.now() - 3600000, 0, 6, null, null, [{ role: 'user', text: 'hey' }]);
+  ok(!/simply where you two live now/.test(dynY) && !/quietly pushing at the edge/.test(dynY), 'no false-history band qualifiers on day 1');
+  // burst-anchored energy: one night, one mood
+  const v1 = API.sessionVibe('x-1', new Date(2026, 7, 3, 21, 30).getTime(), 5, new Date(2026, 7, 3, 21, 30).getTime());
+  const v2 = API.sessionVibe('x-1', new Date(2026, 7, 3, 23, 10).getTime(), 5, new Date(2026, 7, 3, 21, 30).getTime());
+  ok(v1 === v2, 'energy holds across an hour boundary inside one burst');
+  // room read defers to a live opening act on charged lines
+  const act = mkFriend('samantha');
+  const dynAct = API.buildDynamicContext(act, Date.now() - 3600000, 0, 10, null, null,
+    [{ role: 'user', text: 'that image has not left my head once' }]);
+  ok(/the opening act wins/.test(dynAct), 'room read defers to the live opening act');
+  ok(/stays settled/.test(Personas.byId('samantha').opening.text), 'settled-stays-settled clause present');
+  // boundary-drawn significance
+  const b = mkFriend('samantha');
+  const out = API.applyStateDeltas(b, { comfort_delta: -1, closeness_delta: 0, attraction_delta: 0, confidence: 1, new_memories: [] },
+    { now: Date.now(), history: [{ role: 'user', text: 'cant stop thinking about you tonight' }] });
+  ok(out.state.lastSignificant && /line/.test(out.state.lastSignificant.kind), 'a held boundary on a charged line stamps significance');
 }
 
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');

@@ -483,7 +483,13 @@ const ClaudeAPI = {
      between day 1 and day 5 of a good week, which 25-point bands erase
      (pipeline audit, finding #1: five days of real play crossed zero
      boundaries — every stat read byte-identical the whole week). */
-  _bandDrift(value, bandKey) {
+  _bandDrift(value, bandKey, ageDays) {
+    // The qualifiers are TIME words ("settled", "lately") generated from
+    // band position — on a three-message-old relationship they narrate
+    // history that never happened ("this is simply where you two live now",
+    // day one). Under four days old, no qualifier: everything is new and
+    // the model already knows it from the relationship-age line.
+    if (ageDays !== undefined && ageDays < 4) return '';
     const idx = this._BANDS.findIndex(b => b.key === bandKey);
     if (idx < 0) return '';
     const lo = idx === 0 ? 0 : this._BANDS[idx - 1].max;
@@ -605,10 +611,16 @@ const ClaudeAPI = {
     return t.length <= 120 && this._SIGNOFF_LEAD_RE.test(t);
   },
 
+  /* Declarative desire — stated wanting with no joke shell. The flirt
+     detectors were keyed to joke-shaped moves, so "that image hasn't left
+     my head once" classified as ordinary talk (agent-run finding: the most
+     charged line of the night read as "easy and ordinary"). */
+  _DESIRE_RE: /can'?t stop thinking (?:about|of)|ha(?:s|ve)n'?t left my (?:head|mind)|that image|keep (?:thinking about|picturing|replaying)|the way you look(?:ed)?|what i saw|been thinking about (?:you|it|that)|stuck in my head/i,
   _classifyUserTurn(text) {
     const t = String(text || '');
     if (this._EXPLICIT_RE.test(t)) return 'explicit';
     if (this._FRAME_RE.test(t)) return 'frame';
+    if (this._DESIRE_RE.test(t)) return 'flirty';
     if (this._hasSecondReading(t)) return 'innuendo';
     if (this._isSignoff(t)) return 'signoff';
     if (this._msgCharged(t)) return 'flirty';
@@ -655,7 +667,7 @@ const ClaudeAPI = {
     return r < 22 && r < b * 0.5;
   },
 
-  readTheRoom(friend, history) {
+  readTheRoom(friend, history, actLive) {
     history = this._realHistory(history);
     const lastUser = (history || []).slice().reverse().find(m => m.role === 'user');
     if (!lastUser) return null;
@@ -694,6 +706,17 @@ const ClaudeAPI = {
       lines.push('He is ENDING the conversation, not continuing it. Let him go the way a person does: at most one short, human sign-off — or nothing at all if you have already said yours. Do NOT answer a goodbye with a well-wish that needs another reply, do NOT add a coda, and never stack a second pleasantry on top of the first. If there is genuinely nothing left to say, reply with exactly [end] and let the thread rest; a conversation that ends cleanly is worth more than one you kept alive with politeness.');
     } else if (kind === 'flat') {
       lines.push('His last message is short and flat. Notice it like a person would — don\'t perform to fill his silence, don\'t punish it either. One real line, and space for him to come back.');
+    }
+    // Assemble-time conflict resolution, not model-time. When the opening
+    // act is live, a charged line lands inside a SCENE with its own rules
+    // (the stillness mechanic, the mutual knowledge), and the band's stock
+    // advice ("let the flirt pass through unacknowledged") can directly
+    // contradict it. The precedence sentence in the final instruction
+    // resolves this only if the model reads carefully — measured in an
+    // agent run following the wrong block. So the deference is stated HERE,
+    // on the branch that conflicts.
+    if (actLive && ['explicit', 'innuendo', 'frame', 'flirty'].includes(kind)) {
+      lines.push('One override: the opening-act note elsewhere in this context governs HOW this lands tonight — where it and the guidance above disagree, the opening act wins.');
     }
     if (this._isWithdrawing(history)) {
       lines.push('And notice this: his messages have gone noticeably shorter than they were. He is pulling back — maybe from you, maybe from something else entirely. You FEEL that, because people do. What you never do is paper over it with extra warmth or chase him with more questions; that reads as not having noticed. Match his length, or name it once and lightly, or let him have the quiet — any of those is real. Pleasantness aimed at a closing door is the least human thing you could send.');
@@ -898,6 +921,13 @@ const ClaudeAPI = {
       return !isNaN(dk) && dk <= todayK && dk >= todayK - 1;
     });
     if (hasDue) return true;
+    // An unresolved ending or a significant last conversation OVERRIDES the
+    // dice: a person sitting on "are we good?" does not leave it to a 45%
+    // day-roll (agent-run finding: the die said no the morning after the
+    // most texting-worthy night of her life). Waking hours only — the need
+    // to resolve doesn't make anyone text at 4am.
+    if (hour >= 8 && hour < 22
+        && (this.unresolvedNote(friend) || this.significantNote(friend, lastMsg.ts))) return true;
     // Roll every day of the silence, not just today. The die is per-day-key,
     // but only "now" was ever rolled — so four days away collapsed to one
     // 45% chance on arrival, and a skipped-ahead week could land in total
@@ -1375,6 +1405,14 @@ const ClaudeAPI = {
     else if ((applied.attraction || 0) >= 2) sigKind = 'something real shifted between you two';
     else if (lastUserMsg && this._classifyUserTurn(lastUserMsg.text) === 'explicit') sigKind = 'a line got leaned on, maybe crossed';
     else if ((applied.comfort || 0) >= 3) sigKind = 'you let him further in than you ever have';
+    // A boundary drawn on a charged line and HELD is significant by any
+    // human measure — the old thresholds keyed on big positive movement, so
+    // a first night containing a stated boundary and a secrecy pact left no
+    // stamp, and the day-after opener had cheerful small talk available.
+    else if ((applied.comfort || 0) < 0 && lastUserMsg
+        && ['flirty', 'innuendo', 'frame'].includes(this._classifyUserTurn(lastUserMsg.text))) {
+      sigKind = 'you drew a line — and it held, and you both know a line now exists';
+    }
     next.lastSignificant = sigKind ? { ts: now, kind: sigKind } : (prev.lastSignificant || null);
 
     return {
@@ -1456,9 +1494,14 @@ const ClaudeAPI = {
     ]
   },
 
-  sessionVibe(friendId, now, seed) {
+  sessionVibe(friendId, now, seed, burstStart) {
     const t = now === undefined ? this._now() : now;
-    const d = new Date(t);
+    // The bucket is anchored to when the CONVERSATION started, not the
+    // current minute: a burst that begins at 9:40pm keeps its evening
+    // disposition past 10pm instead of rerolling mid-sentence — one night,
+    // one mood (agent-run finding: energy flipped irritable→drained inside
+    // a single continuous Wednesday conversation).
+    const d = new Date(Number(burstStart) || t);
     const h = d.getHours();
     const bucket = h < 5 ? 'night' : h < 11 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'night';
     // Local day rolled at 5am (shared _dayKey): a conversation that crosses
@@ -1545,9 +1588,9 @@ const ClaudeAPI = {
       '## Your current private state (your honest read going into this reply)',
       JSON.stringify({
         mood: this._freshMood(friend, lastMessageTs, exchangedCount),
-        comfort: this._BAND_TEXT.comfort[bands.comfort] + this._bandDrift(s.comfort, bands.comfort),
-        closeness: this._BAND_TEXT.closeness[bands.closeness] + this._bandDrift(s.closeness, bands.closeness),
-        attraction: this._BAND_TEXT.attraction[bands.attraction] + this._bandDrift(s.attraction, bands.attraction),
+        comfort: this._BAND_TEXT.comfort[bands.comfort] + this._bandDrift(s.comfort, bands.comfort, (this._now() - (friend.createdAt || this._now())) / 86400000),
+        closeness: this._BAND_TEXT.closeness[bands.closeness] + this._bandDrift(s.closeness, bands.closeness, (this._now() - (friend.createdAt || this._now())) / 86400000),
+        attraction: this._BAND_TEXT.attraction[bands.attraction] + this._bandDrift(s.attraction, bands.attraction, (this._now() - (friend.createdAt || this._now())) / 86400000),
         opinion_notes: s.opinion_notes
       }, null, 1)
     ];
@@ -1559,8 +1602,11 @@ const ClaudeAPI = {
     const snNet = (sn.comfort || 0) + (sn.closeness || 0) + (sn.attraction || 0);
     const hourNow = new Date(this._now()).getHours();
     const spanWord = hourNow >= 17 || hourNow < 3 ? 'Tonight' : 'Today';
+    const texture = this._lifeTexture(friend);
     const tonight = ['## ' + spanWord + ' (private — your side of the table)',
-      `Your energy: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed)}. Energy is not a topic — it colors pace, patience, boldness, and warmth, never announced. What you're actually doing right now is yours to invent fresh, different from last time, mentioned once at most.`];
+      `Your energy: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed, friend.burstStart)}. Energy is not a topic — it colors pace, patience, boldness, and warmth, never announced. ` + (texture
+        ? `Your actual evening so far: ${texture} That is scenery, not a topic — it colors you, gets one mention at most, and only if it fits.`
+        : `What you're actually doing right now is yours to invent fresh, different from last time, mentioned once at most.`)];
     if (snNet >= 3) {
       tonight.push('This conversation is landing on you more than you planned — let it show in real time: quicker, easier, a beat more give before any footwork.');
     } else if (snNet <= -3) {
@@ -1586,10 +1632,11 @@ const ClaudeAPI = {
     // opening deeper layers, this scaffolding is gone and the relationship
     // runs on what actually happened in it.
     const act = friend.profile && friend.profile.opening;
-    if (act && act.text && (exchangedCount || 0) < (act.until || 40)) {
+    const actLive = !!(act && act.text && (exchangedCount || 0) < (act.until || 40));
+    if (actLive) {
       parts.push('', '## The opening act (private — this early stretch, specifically)', act.text);
     }
-    const room = this.readTheRoom(friend, history);
+    const room = this.readTheRoom(friend, history, actLive);
     if (room) parts.push('', ...room);
     // Prospective memory: dated things he mentioned surface ON the right day.
     // "SO??? how'd the interview go" at 6pm on interview day is worth more
@@ -4411,25 +4458,42 @@ const ClaudeAPI = {
      per day; a rolled beat is logged on the friend so it never repeats
      within three weeks. Roughly half of days carry one — scarcity is what
      keeps it from turning her into a news ticker. */
-  _lifeBeat(friend, now) {
+  /* Shared roll for the authored banks (beats, textures): deterministic per
+     day, logged on the friend so nothing repeats inside its window, stable
+     across same-day calls. */
+  _bankPick(friend, bank, salt, pct, noRepeatDays, logKey, now) {
+    if (!bank || !bank.length) return null;
     const t = now === undefined ? this._now() : now;
-    const bank = (friend.profile && friend.profile.beats) || [];
-    if (!bank.length) return null;
     const dk = this._dayKey(t);
-    const h = this._hash32(String(friend.id) + '|beat|' + dk);
-    if (h % 100 >= 45) return null;
-    const log = friend.beatLog || [];
+    const h = this._hash32(String(friend.id) + '|' + salt + '|' + dk);
+    if (h % 100 >= pct) return null;
+    const log = friend[logKey] || [];
     // exclude today's own entry so repeat calls the same day stay identical
-    const recent = new Set(log.filter(u => u.day !== dk && dk - u.day < 21).map(u => u.idx));
+    const recent = new Set(log.filter(u => u.day !== dk && dk - u.day < noRepeatDays).map(u => u.idx));
     if (recent.size >= bank.length) return null;
     let idx = (h >>> 8) % bank.length;
     for (let i = 0; i < bank.length && recent.has(idx); i++) idx = (idx + 1) % bank.length;
     if (recent.has(idx)) return null;
     if (!log.some(u => u.day === dk && u.idx === idx)) {
       log.push({ day: dk, idx });
-      friend.beatLog = log.slice(-24);   // persisted with the friend on the next save
+      friend[logKey] = log.slice(-30);   // persisted with the friend on the next save
     }
     return bank[idx];
+  },
+  _lifeBeat(friend, now) {
+    return this._bankPick(friend, (friend.profile && friend.profile.beats) || [], 'beat', 45, 21, 'beatLog', now);
+  },
+  /* Texture is the answer to "what is she actually doing right now" — the
+     dinner-then-couch, bath-with-the-door-locked, spouse-asleep-at-9:40
+     layer that real evenings are made of. "Invent it fresh" produced generic
+     inventions; an authored texture is specific, hers, and boring in the
+     right way. Evening-gated (that's when the question exists) and scenery
+     by definition: one mention at most. */
+  _lifeTexture(friend, now) {
+    const t = now === undefined ? this._now() : now;
+    const h = new Date(t).getHours();
+    if (h < 17 && h >= 2) return null;
+    return this._bankPick(friend, (friend.profile && friend.profile.textures) || [], 'texture', 65, 8, 'textureLog', now);
   },
 
   /* She keeps score of being asked about. A month of him talking only about

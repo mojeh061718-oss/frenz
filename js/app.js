@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.7';
+const APP_JS_VERSION = '10.8';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -252,6 +252,7 @@ async function startConversation(e) {
     plist: t.plist || '',
     appearance: $('#c-appearance').value.trim() || t.appearance || '',
     beats: t.beats || [],
+    textures: t.textures || [],
     opening: t.opening || null,
     world: Personas.WORLD || '',
     photoCandor: t.photoCandor || 'guarded',
@@ -283,7 +284,11 @@ async function startConversation(e) {
       opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.',
       // the thing on her mind as the thread opens — rides depth-4 from
       // message one, then lives or expires under the normal unsaid rules
-      unsaid: t.unsaidSeed || ''
+      unsaid: t.unsaidSeed || '',
+      // scenario personas are born mid-significant-event: the walk-in / the
+      // pool IS the significant last thing between them, so days of silence
+      // after the greeting get the reckoning opener, not cheerful beats
+      lastSignificant: t.significantSeed ? { ts: ClaudeAPI._now(), kind: t.significantSeed } : null
     },
     // The relationship's origin lives in `backstory` prose, which the state
     // model never records as a memory — it is asked for facts established in
@@ -667,6 +672,7 @@ async function maybeOpener(friend, background) {
     friend.lastOpenerDay = ClaudeAPI._dayKey(ClaudeAPI._now());
     friend.lastOpenerAt = ClaudeAPI._now(); // second-surprise spacing reads this
     friend.vibeSeed = ClaudeAPI._now() % 1e9; // openers always start a fresh burst
+    friend.burstStart = ClaudeAPI._now();
     await DB.saveFriend(friend);
 
     if (!background) {
@@ -1058,8 +1064,12 @@ async function sendMessage() {
   }
 
   // a fresh conversation burst rerolls tonight's dice — same afternoon,
-  // different sit-down, different her
-  if (!lastTs || ClaudeAPI._now() - lastTs > 90 * 60000) friend.vibeSeed = ClaudeAPI._now() % 1e9;
+  // different sit-down, different her. burstStart anchors the energy's
+  // time-of-day bucket so one continuous night keeps one mood.
+  if (!lastTs || ClaudeAPI._now() - lastTs > 90 * 60000) {
+    friend.vibeSeed = ClaudeAPI._now() % 1e9;
+    friend.burstStart = ClaudeAPI._now();
+  }
 
   // show + persist the user's message
   const startHint = $('#chat-start-hint');
@@ -1756,10 +1766,18 @@ async function upgradeTemplateFriends() {
     // friends so the life-beat engine reaches them, never overwrite a bank
     // that already exists.
     if (tpl && tpl.beats && !(f.profile.beats || []).length) { f.profile.beats = tpl.beats; changed = true; }
+    if (tpl && tpl.textures && !(f.profile.textures || []).length) { f.profile.textures = tpl.textures; changed = true; }
     // Opening acts (v10.5) are new-field backfill like beats: they only do
     // anything while the relationship is still inside the opening window,
     // so reaching existing early-stage friends is the whole point.
     if (tpl && tpl.opening && !f.profile.opening) { f.profile.opening = tpl.opening; changed = true; }
+    // Significance seed: stamped at the friend's creation time, so a thread
+    // already weeks past its origin event falls outside the reckoning
+    // window and nothing changes for it.
+    if (tpl && tpl.significantSeed && f.state && !f.state.lastSignificant) {
+      f.state.lastSignificant = { ts: f.createdAt || 0, kind: tpl.significantSeed };
+      changed = true;
+    }
     // A template REVISION is a rewrite, not a tweak: when the world itself was
     // wrong — who is engaged to whom, whose best friend is whose — substring
     // upgrades cannot repair it, and the friend would keep answering from a
@@ -1773,6 +1791,7 @@ async function upgradeTemplateFriends() {
       f.profile.world = Personas.WORLD || '';
       f.profile.reveals = tpl.reveals || [];
       f.profile.beats = tpl.beats || [];
+      f.profile.textures = tpl.textures || [];
       f.profile.opening = tpl.opening || null;
       f.profile.established = !!tpl.established;
       // Seeded memories are deliberately NOT pinned (v9.1 — pinning made her
