@@ -1,5 +1,10 @@
 /* app.js — views, chat flow, and friend lifecycle. */
 
+/* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
+   with the badge, the shell is a mixed-version chimera — the failure the
+   atomic SW cache exists to prevent — and Settings will say so out loud. */
+const APP_JS_VERSION = '10.6';
+
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
 const $ = (sel) => document.querySelector(sel);
@@ -599,7 +604,19 @@ async function openRelationship() {
    screen when he opens the app, instead of materialising when he taps into a
    chat. Runs quietly in the background, one friend at a time so a provider
    never gets hammered, and never touches the friend he's currently reading. */
-async function sweepOpeners() {
+/* One sweep per quarter hour, not one per app-foregrounding. On a phone the
+   app goes visible dozens of times a day, and every sweep spends the SAME
+   per-minute provider quota the user's own sends need — sweeping on each
+   return quietly starved real messages into 429 backoff, which reads as
+   "the app just stopped responding". Explicit time-skips bypass the
+   cooldown (the user asked for that jump; silence after it would make the
+   skip pointless). */
+let lastSweepAt = 0;
+const SWEEP_COOLDOWN_MS = 15 * 60000;
+async function sweepOpeners(force) {
+  const nowT = Date.now();
+  if (!force && nowT - lastSweepAt < SWEEP_COOLDOWN_MS) return;
+  lastSweepAt = nowT;
   let friends = [];
   try { friends = await DB.listFriends(); } catch { return; }
   friends.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
@@ -1601,6 +1618,10 @@ async function refreshEntryModels(pickDefault) {
 
 function renderPoolStatus() {
   const parts = [];
+  const shellV = (document.querySelector('.app-version') || {}).textContent || '?';
+  parts.push('App v' + APP_JS_VERSION + (shellV !== APP_JS_VERSION
+    ? ' but shell v' + shellV + ' — MIXED VERSIONS. Close the app fully and reopen; if this line persists, clear site data.'
+    : '.'));
   const last = ClaudeAPI.lastServed();
   if (last) parts.push('Last message served by ' + last.label + '.');
   for (const e of poolDraft) {
@@ -1908,13 +1929,13 @@ function init() {
     ClaudeAPI.addTimeOffset(6 * 3600000);
     renderTimeStatus(); updateChatClock();
     toast('Skipped ahead 6 hours — it\'s now ' + fmtClock() + ' for everyone.');
-    setTimeout(() => { if (!sending) sweepOpeners(); }, 600);
+    setTimeout(() => { if (!sending) sweepOpeners(true); }, 600);
   });
   $('#btn-skip-1d').addEventListener('click', () => {
     ClaudeAPI.addTimeOffset(24 * 3600000);
     renderTimeStatus(); updateChatClock();
     toast('Skipped ahead a day.');
-    setTimeout(() => { if (!sending) sweepOpeners(); }, 600);
+    setTimeout(() => { if (!sending) sweepOpeners(true); }, 600);
   });
   $('#btn-time-reset').addEventListener('click', () => {
     ClaudeAPI.resetTimeOffset();
@@ -2063,7 +2084,28 @@ function init() {
   renderFriendsList();
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => { /* offline shell is a bonus, not required */ });
+    // updateViaCache 'none': the byte-diff check that discovers a new
+    // version must hit the network, not the HTTP cache — with a cache-first
+    // shell, this check is the ONLY update path.
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(reg => {
+        // check for updates on every return to the app, not just navigations
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') reg.update().catch(() => {});
+        });
+      })
+      .catch(() => { /* offline shell is a bonus, not required */ });
+    // When a NEW worker takes over, reload once so the page re-opens on the
+    // new version's atomic snapshot. Guard one: skip the very first
+    // controller (initial install — the page that registered it is already
+    // current). Guard two: never yank a live send; the stale shell is still
+    // internally consistent, and the next open completes the update.
+    let hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) { hadController = true; return; }
+      if (sending) return;
+      location.reload();
+    });
     ClaudeAPI.watchServiceWorker();
     // Returning to the app is a good moment to finish a stranded send — but
     // only for the thread already on screen. Nothing here may navigate.

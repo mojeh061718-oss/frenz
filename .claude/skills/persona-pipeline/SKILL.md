@@ -258,8 +258,13 @@ the fixtures were wrong before.
 2. The full 12-suite loop where available (providers, smoke, retry,
    gallery-check, pool-ui-check, freshinstall-check, grok404,
    iphone-ui-check, sw-check, leak-check, bedrock-check, persona-upgrade).
-3. Bump BOTH the version badge in `index.html` and `CACHE` in `sw.js` — they
-   move together, always.
+3. Bump ALL THREE version stamps together: the badge in `index.html`,
+   `CACHE` in `sw.js`, and `APP_JS_VERSION` in `app.js` (the skew tripwire —
+   Settings reports loudly if the shell ever runs mixed versions). Since
+   v10.6 the shell is an atomic cache-first snapshot and the page reloads
+   itself once on update — do NOT tell users to "restart twice" any more,
+   and never revert the SW to per-file network-first: independent fetches
+   are how flaky networks assembled a half-updated app with dead buttons.
 4. Existing friends must upgrade in place. Three mechanisms, pick the right
    one: `_UPGRADES` substring rules for text tweaks (respects hand-edits),
    boot backfills in app.js for brand-new FIELDS (`beats`, `appearance` —

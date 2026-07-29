@@ -1,13 +1,23 @@
 /* sw.js — offline app shell. API calls always go to the network.
 
-   Strategy matters here: the app's code (HTML/CSS/JS) is fetched
-   NETWORK-FIRST with a cache fallback, so every fix we ship reaches users on
-   their next open instead of being trapped behind a cache-first shell forever
-   (which is exactly what v1 of this file did). Static assets that never
-   change (icons) stay cache-first. */
+   Strategy, third iteration, and the reasoning matters:
+   - v1 was cache-first per file with no update path: fixes never reached
+     users. Bad.
+   - v2 was network-first per file: fresh when the network was good — but
+     each file raced the network INDEPENDENTLY, so a flaky connection could
+     assemble a chimera (today's index.html with last week's app.js). A
+     mixed shell fails in the worst possible way: silently, with dead
+     buttons, and force-closing doesn't help because the mix is cached.
+   - v3 (this): the shell is an ATOMIC SNAPSHOT. install pre-caches the
+     whole shell into a versioned cache (addAll is all-or-nothing; a failed
+     install leaves the old version intact and consistent). Pages are served
+     CACHE-FIRST from that one cache, so every open runs exactly one
+     version. When a new worker activates, the page reloads itself once
+     (see app.js controllerchange) and comes back on the new version —
+     which also retires the old "restart the app twice" ritual. */
 
 /* Bump CACHE and the .app-version badge in index.html together every deploy. */
-const CACHE = 'frenz-v87';
+const CACHE = 'frenz-v88';
 const SHELL = [
   './',
   './index.html',
@@ -34,18 +44,22 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-function networkFirst(req) {
-  return fetch(req).then(res => {
-    if (res.ok && req.method === 'GET') {
-      const copy = res.clone();
-      caches.open(CACHE).then(c => c.put(req, copy));
-    }
-    return res;
-  }).catch(() => caches.match(req, { ignoreSearch: req.mode === 'navigate' }));
-}
-
-function cacheFirst(req) {
-  return caches.match(req).then(cached => cached || networkFirst(req));
+/* Serve from the CURRENT versioned cache; fall back to network (and adopt
+   the response into the cache) only for anything the snapshot missed. The
+   version-consistency guarantee comes from serving one cache, filled
+   atomically at install. */
+function fromShell(req) {
+  return caches.open(CACHE).then(c =>
+    c.match(req, { ignoreSearch: req.mode === 'navigate' }).then(hit => hit ||
+      fetch(req).then(res => {
+        if (res.ok && req.method === 'GET') {
+          const copy = res.clone();
+          c.put(req, copy);
+        }
+        return res;
+      })
+    )
+  );
 }
 
 /* ---- durable transport --------------------------------------------------
@@ -135,8 +149,5 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   // Never intercept the model APIs (or any cross-origin request).
   if (url.origin !== location.origin) return;
-  const isCode = e.request.mode === 'navigate' ||
-    /\.(html|css|js|webmanifest)$/.test(url.pathname) ||
-    url.pathname.endsWith('/');
-  e.respondWith(isCode ? networkFirst(e.request) : cacheFirst(e.request));
+  e.respondWith(fromShell(e.request));
 });
