@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">10.6</span></h1>
+        <h1 class="logo">frenz <span class="app-version">10.7</span></h1>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
       <div id="friends-list" class="friends-list"></div>
@@ -309,10 +309,42 @@
     <span class="pd-text"></span>
   </button>
   <div id="photo-viewer" class="photo-viewer hidden"><img alt="photo"></div>
-  <!-- Triple-tap anywhere: instant black cover (looks like the screen is
-       off). Triple-tap again to come back. Deliberately styleless and
-       unlabeled — a label would defeat it. -->
-  <div id="panic-cover" class="panic-cover hidden"></div>
+  <!-- Triple-tap anywhere: the app instantly becomes a boring code editor
+       (dark IDE, dull utility file, blinking cursor). Triple-tap again to
+       come back. Nothing here is interactive on purpose. -->
+  <div id="panic-cover" class="panic-cover hidden" aria-hidden="true">
+    <div class="pc-tabs"><span class="pc-tab on">utils.js</span><span class="pc-tab">index.js</span><span class="pc-tab">api.test.js</span></div>
+    <div class="pc-code">
+      <div class="pc-row"><span class="pc-ln">1</span><span><span class="pc-c">/* utils.js — request helpers */</span></span></div>
+      <div class="pc-row"><span class="pc-ln">2</span><span><span class="pc-d">const</span> cache = <span class="pc-d">new</span> <span class="pc-t">Map</span>();</span></div>
+      <div class="pc-row"><span class="pc-ln">3</span><span></span></div>
+      <div class="pc-row"><span class="pc-ln">4</span><span><span class="pc-k">export</span> <span class="pc-d">function</span> <span class="pc-f">debounce</span>(fn, wait = <span class="pc-n">250</span>) {</span></div>
+      <div class="pc-row"><span class="pc-ln">5</span><span>  <span class="pc-d">let</span> timer = <span class="pc-d">null</span>;</span></div>
+      <div class="pc-row"><span class="pc-ln">6</span><span>  <span class="pc-k">return</span> (...args) =&gt; {</span></div>
+      <div class="pc-row"><span class="pc-ln">7</span><span>    <span class="pc-f">clearTimeout</span>(timer);</span></div>
+      <div class="pc-row"><span class="pc-ln">8</span><span>    timer = <span class="pc-f">setTimeout</span>(() =&gt; <span class="pc-f">fn</span>(...args), wait);</span></div>
+      <div class="pc-row"><span class="pc-ln">9</span><span>  };</span></div>
+      <div class="pc-row"><span class="pc-ln">10</span><span>}</span></div>
+      <div class="pc-row"><span class="pc-ln">11</span><span></span></div>
+      <div class="pc-row"><span class="pc-ln">12</span><span><span class="pc-k">export</span> <span class="pc-d">async function</span> <span class="pc-f">getJSON</span>(url, opts = {}) {</span></div>
+      <div class="pc-row"><span class="pc-ln">13</span><span>  <span class="pc-d">const</span> key = url + <span class="pc-t">JSON</span>.<span class="pc-f">stringify</span>(opts);</span></div>
+      <div class="pc-row"><span class="pc-ln">14</span><span>  <span class="pc-k">if</span> (cache.<span class="pc-f">has</span>(key)) <span class="pc-k">return</span> cache.<span class="pc-f">get</span>(key);</span></div>
+      <div class="pc-row"><span class="pc-ln">15</span><span>  <span class="pc-d">const</span> res = <span class="pc-k">await</span> <span class="pc-f">fetch</span>(url, opts);</span></div>
+      <div class="pc-row"><span class="pc-ln">16</span><span>  <span class="pc-k">if</span> (!res.ok) <span class="pc-k">throw</span> <span class="pc-d">new</span> <span class="pc-t">Error</span>(<span class="pc-s">'HTTP '</span> + res.status);</span></div>
+      <div class="pc-row"><span class="pc-ln">17</span><span>  <span class="pc-d">const</span> data = <span class="pc-k">await</span> res.<span class="pc-f">json</span>();</span></div>
+      <div class="pc-row"><span class="pc-ln">18</span><span>  cache.<span class="pc-f">set</span>(key, data);</span></div>
+      <div class="pc-row"><span class="pc-ln">19</span><span>  <span class="pc-k">return</span> data;</span></div>
+      <div class="pc-row"><span class="pc-ln">20</span><span>}</span></div>
+      <div class="pc-row"><span class="pc-ln">21</span><span></span></div>
+      <div class="pc-row"><span class="pc-ln">22</span><span><span class="pc-c">// TODO: retry with backoff on 429/503</span></span></div>
+      <div class="pc-row"><span class="pc-ln">23</span><span><span class="pc-k">export</span> <span class="pc-d">function</span> <span class="pc-f">invalidate</span>(prefix) {</span></div>
+      <div class="pc-row"><span class="pc-ln">24</span><span>  <span class="pc-k">for</span> (<span class="pc-d">const</span> key <span class="pc-k">of</span> cache.<span class="pc-f">keys</span>()) {</span></div>
+      <div class="pc-row"><span class="pc-ln">25</span><span>    <span class="pc-k">if</span> (key.<span class="pc-f">startsWith</span>(prefix)) cache.<span class="pc-f">delete</span>(key);<span class="pc-cursor"></span></span></div>
+      <div class="pc-row"><span class="pc-ln">26</span><span>  }</span></div>
+      <div class="pc-row"><span class="pc-ln">27</span><span>}</span></div>
+    </div>
+    <div class="pc-status"><span>main*  JavaScript  UTF-8</span><span>Ln 25, Col 46</span></div>
+  </div>
 
   <script src="js/db.js"></script>
   <script src="js/personas.js"></script>
