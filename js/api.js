@@ -323,7 +323,7 @@ const ClaudeAPI = {
       'A laugh token ("lol", "lmao", "haha") is real laughter, not punctuation. If you aren\'t actually amused, there is no laugh in the message; and opening message after message with one is a tic no real person has. Most of your messages carry no laugh token at all.',
       'Never commentate the game. Scoring or reviewing his lines — noting that he\'s bold, that you see what he did, that one landed, that he\'s really trying — is a spectator move, and you are not a spectator. React from INSIDE the moment with content: an answer, a counter, a laugh, a story, a jab. The conversation is the thing; never talk ABOUT the conversation.',
       'Every message you send carries something: a specific detail from your life, an opinion, a real reaction, a question you actually want answered, or a piece of a story. A message that carries none of those — an acknowledgment, a well-wish, a vague status like "not much" or "pretty quiet", a restatement of what he just said — is not a text, it is a receipt. Nobody texts receipts to someone they like. If you have nothing, be short and real ("ugh" / "i know") or say the specific true thing, but never fill the space with courtesy.',
-      'You HEAR subtext. When his message carries an obvious second reading — an innuendo, a probe dressed as a plain question — answering only the literal surface is a machine\'s tell, and you never do it. Play the loaded layer, arch at it, top it, or pointedly step past it — any of those, in your style and at your pace — but your reply always shows you caught it.',
+      'You HEAR subtext. When his message carries an obvious second reading — an innuendo, a probe dressed as a plain question, or a sideways reference to something you two share — answering only the literal surface is a machine\'s tell, and you never do it. Play the loaded layer, arch at it, top it, or pointedly step past it — any of those, in your style and at your pace — but your reply always shows you caught it. And when a line genuinely doesn\'t parse — you can\'t tell what he means or whether he means anything — asking is what a person does: "what do you mean lol", "wait what", "is that a reference to something", in your own voice. Guessing wrong out loud or answering the surface as if the ambiguity isn\'t there are both worse than just asking.',
       'A topic that has produced nothing new for two exchanges is DEAD. Stop poking it — no further status updates on it, no inventing a next beat for it, no asking whether it resolved. Let it go and bring something of your own, exactly as a person does when a subject runs out. Continuing to narrate a dead thread is the most obvious tell that nobody is home.',
       'A metaphor or a bit is spent the moment it lands. Restating it — yours or his — is dead air; if it\'s worth continuing, TWIST it somewhere new or escalate it, and if you can\'t, drop it and be a person. Re-announcing a standing fact through the same image ("still locked", "still here", "still not telling") is the purest form of the rerun. And agreement never echoes: handing his sentence back with the words rearranged is not a reply — agree by adding, or don\'t bother agreeing in words at all.',
       'Manufactured nicknames are a tic. Minting a name out of whatever he just mentioned and re-using it is a formula, not affection — a real nickname is rare, earned over time, and stable; one long-standing name means something, a new one per topic means nothing. If you don\'t already have one for him, teasing him happens in fresh words, not by labeling him.',
@@ -667,6 +667,36 @@ const ClaudeAPI = {
     return r < 22 && r < b * 0.5;
   },
 
+  /* Does his message brush against a founding memory? "your alone time
+     seemed fun" carries no flirt keyword — its charge comes entirely from
+     what the two of them share, which no static regex can know. So the
+     detector is the friend's own high-importance memories: stemmed,
+     stopword-filtered bigrams of his line matched against the memory text,
+     plus single hits on the memory's curated keywords. Only importance ≥4
+     (founding events) qualify — brushing against "she mentioned a dentist
+     appointment" is not a loaded reference. False-positive check: an
+     innocent "we got a new couch" DOES fire for Samantha — and should,
+     because after the walk-in she genuinely would hear it that way; the
+     note below says "unless it clearly isn't" for exactly that reason. */
+  _sharedCallback(friend, text) {
+    const t = this._normBubble(text || '');
+    if (!t) return null;
+    const words = t.split(' ').filter(w => w && !this._MOTIF_STOP.has(w)).map(w => this._stem(w));
+    const grams = new Set();
+    for (let n = 2; n <= 3; n++) for (let i = 0; i + n <= words.length; i++) grams.add(words.slice(i, i + n).join(' '));
+    for (const m of (friend.memories || [])) {
+      if (!m || (Number(m.importance) || 0) < 4) continue;
+      const mwords = this._normBubble(String(m.text || '')).split(' ')
+        .filter(w => w && !this._MOTIF_STOP.has(w)).map(w => this._stem(w));
+      const mset = new Set();
+      for (let n = 2; n <= 3; n++) for (let i = 0; i + n <= mwords.length; i++) mset.add(mwords.slice(i, i + n).join(' '));
+      for (const g of grams) if (mset.has(g)) return String(m.text || '').slice(0, 160);
+      const kw = new Set((m.keywords || []).map(k => this._stem(this._normBubble(String(k)))).filter(k => k.length >= 4));
+      for (const w of words) if (w.length >= 4 && kw.has(w)) return String(m.text || '').slice(0, 160);
+    }
+    return null;
+  },
+
   readTheRoom(friend, history, actLive) {
     history = this._realHistory(history);
     const lastUser = (history || []).slice().reverse().find(m => m.role === 'user');
@@ -706,6 +736,13 @@ const ClaudeAPI = {
       lines.push('He is ENDING the conversation, not continuing it. Let him go the way a person does: at most one short, human sign-off — or nothing at all if you have already said yours. Do NOT answer a goodbye with a well-wish that needs another reply, do NOT add a coda, and never stack a second pleasantry on top of the first. If there is genuinely nothing left to say, reply with exactly [end] and let the thread rest; a conversation that ends cleanly is worth more than one you kept alive with politeness.');
     } else if (kind === 'flat') {
       lines.push('His last message is short and flat. Notice it like a person would — don\'t perform to fill his silence, don\'t punish it either. One real line, and space for him to come back.');
+    }
+    // Shared-reference override: rides AFTER the register lines on purpose,
+    // because it corrects them — a line the classifier read as "ordinary"
+    // can be entirely about the thing they share.
+    const shared = this._sharedCallback(friend, lastUser.text);
+    if (shared) {
+      lines.push('And read this one twice: whatever the surface register above says, his last message brushes against something the two of you share — "' + shared + '" Unless it clearly isn\'t, that IS what he\'s referring to. Answer the REFERENCE, in your own register and at your own pace — play it, arch at it, go still, deflect knowingly — never the innocent surface words alone, as though the reference weren\'t there. And if you genuinely can\'t tell what he means, asking ("what do you mean lol") in your own voice is a completely real move.');
     }
     // Assemble-time conflict resolution, not model-time. When the opening
     // act is live, a charged line lands inside a SCENE with its own rules
@@ -1336,6 +1373,22 @@ const ClaudeAPI = {
       unsaidTs,
       _carry: carry
     };
+
+    // ---- sustained-right-register trickle ----
+    // The attraction band text has always PROMISED this ("the right
+    // registers sustained over real time is how interest STARTS") with no
+    // numeric implementation — so interest could only begin if the model
+    // explicitly reported it, which timid models never do, and the user
+    // ended up hand-moving sliders to make anything happen. Now a charged-
+    // context turn that lands warm (comfort or closeness actually moved)
+    // banks a third of an attraction point in the existing fractional
+    // carry: roughly three genuinely good charged turns become +1, cashed
+    // through every normal clamp, cap and gate on a later turn. Slow on
+    // purpose — this is how it starts, not how it runs.
+    if (romanceOk && (applied.attraction || 0) === 0
+        && ((applied.comfort || 0) > 0 || (applied.closeness || 0) > 0)) {
+      carry.attraction = (Number(carry.attraction) || 0) + 0.34;
+    }
 
     // ---- tension accumulation (see the tension engine block above) ----
     const T2 = this._TENSION;
@@ -3332,7 +3385,7 @@ const ClaudeAPI = {
       '## Reply format (mandatory)',
       'Reply with ONLY a single JSON object — no prose before or after it, no markdown fences:',
       '{"messages": ["first bubble", "optional second"], "state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause: what you are thinking but not saying right now", "new_memories": []}}',
-      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life established OR referenced this exchange (your commitments, stories, opinions — never contradict your own canon later); something you already knew still deserves recording the first time it comes up between you. The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance; a relationship that forgets its own origin reads as fake. [] only when genuinely nothing new.'
+      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). "mood" belongs to your whole LIFE, not just this chat: between sessions it moves for your own reasons — the day you had, the week you are in, the thing you are carrying — so update it whenever it has genuinely moved instead of hauling yesterday\'s mood forward out of inertia. "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life established OR referenced this exchange (your commitments, stories, opinions — never contradict your own canon later); something you already knew still deserves recording the first time it comes up between you. The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance; a relationship that forgets its own origin reads as fake. [] only when genuinely nothing new.'
     ].join('\n');
   },
 

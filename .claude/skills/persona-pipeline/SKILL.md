@@ -199,8 +199,8 @@ editing one link while forgetting what another link assumed.
 ## The sim harness — prove it, don't eyeball it
 
 The suite ships WITH this skill so it survives sessions: run
-`node .claude/skills/persona-pipeline/verify.js` (134 assertions as of
-v10.8). The agent-driven conversation harness (`scratchpad/simchat.js`
+`node .claude/skills/persona-pipeline/verify.js` (144 assertions as of
+v10.9). The agent-driven conversation harness (`scratchpad/simchat.js`
 pattern: an agent plays both Jon and the provider over the real engine)
 found seven shipped fixes the unit suite alone never would — rerun that
 kind of test after any large behavior change. Opening acts (`profile.opening = {text, until}`) are the pattern
@@ -303,6 +303,16 @@ the fixtures were wrong before.
 - Rut exemption liveness: exempt if he used it ≥2 times or within his last
   4-6 messages. Widening it re-opens the lifetime-pass blind spot; narrowing
   it starts flagging genuinely shared bits.
+- Shared-callback detector (`_sharedCallback`): his line's stemmed bigrams
+  + curated keywords vs importance-≥4 memories only. Lowering the
+  importance bar turns every dentist appointment into a loaded reference;
+  the "false positives" on founding-event nouns (couch, pool) are correct
+  behavior — she genuinely would hear them that way.
+- Attraction trickle: +0.34 carry per charged-context turn that lands warm
+  (comfort/closeness moved, attraction 0-reported), cashing ~every 3 turns
+  through the normal gates. This implements the band text's "how interest
+  STARTS" promise; raising it makes niceness buy attraction, removing it
+  re-freezes timid-model relationships.
 - Night norms (`_nightNorm`): closeness×1.2 + attraction×0.8 + type bonus
   (close_friend 1.2 / friend 0.6) + flirt-sport 0.4 − established 1.2;
   tiers at <1 strange / <2.5 notable / else normal. Computed from LIVE bands

@@ -525,5 +525,49 @@ console.log('\n== 19. content diet: textures, kids-as-weather, agent-run fixes =
   ok(out.state.lastSignificant && /line/.test(out.state.lastSignificant.kind), 'a held boundary on a charged line stamps significance');
 }
 
+console.log('\n== 20. signal pickup + self-motion ==');
+{
+  const f = mkFriend('samantha');
+  // the exact reported case: no flirt keyword, all shared context
+  const hit = API._sharedCallback(f, 'your alone time seemed fun');
+  ok(!!hit && /alone time/.test(hit), '"your alone time seemed fun" resolves to the walk-in memory');
+  ok(API._sharedCallback(f, 'how was your day') === null, 'a genuinely plain line stays plain');
+  ok(!!API._sharedCallback(f, 'we got a new couch for the den'), '"couch" fires for HER — after that night she would hear it');
+  const tay = mkFriend('tay');
+  ok(!!API._sharedCallback(tay, 'that pool day though'), 'tay: the pool reference lands');
+  // room read carries the override + the clarify license
+  const dyn = API.buildDynamicContext(f, API._now() - 3600000, 0, 50, null, null,
+    [{ role: 'user', text: 'your alone time seemed fun' }]);
+  ok(/read this one twice/.test(dyn) && /Answer the REFERENCE/.test(dyn), 'room read redirects to the reference');
+  ok(/what do you mean lol/.test(dyn), 'asking what he means is a licensed move');
+  ok(/what do you mean lol/.test(API.buildPersona(f, 'rich')), 'clarify license is general law in the persona');
+
+  // sustained-right-register trickle: three warm charged turns start interest
+  const g = mkFriend('tay');
+  const start = g.state.attraction;
+  const hist = [{ role: 'user', text: 'been thinking about you today, not gonna lie' }, { role: 'assistant', text: 'oh?' }];
+  let t = Date.now();
+  for (let i = 0; i < 4; i++) {
+    const out = API.applyStateDeltas(g,
+      { comfort_delta: 1, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] },
+      { now: t + i * 10 * 60000, gapMs: 10 * 60000, history: hist });
+    g.state = out.state;
+  }
+  ok(g.state.attraction > start, 'interest STARTS from sustained right register (' + start + ' -> ' + g.state.attraction + ')');
+  // ...but never from a platonic-context conversation
+  const p = mkFriend('kelly');
+  const pStart = p.state.attraction;
+  const plainHist = [{ role: 'user', text: 'the office fire alarm went off again today' }, { role: 'assistant', text: 'lol no way' }];
+  for (let i = 0; i < 4; i++) {
+    const out = API.applyStateDeltas(p,
+      { comfort_delta: 1, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] },
+      { now: t + i * 10 * 60000, gapMs: 10 * 60000, history: plainHist });
+    p.state = out.state;
+  }
+  ok(p.state.attraction === pStart, 'no trickle without charged context (' + pStart + ' -> ' + p.state.attraction + ')');
+  // mood ownership reaches the state ask
+  ok(/belongs to your whole LIFE/.test(API._jsonInstruction()), 'mood ownership in the state instruction');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
