@@ -199,8 +199,12 @@ editing one link while forgetting what another link assumed.
 ## The sim harness — prove it, don't eyeball it
 
 The suite ships WITH this skill so it survives sessions: run
-`node .claude/skills/persona-pipeline/verify.js` (110 assertions as of
-v10.4). Two out-of-band tools live beside the pipeline and must STAY out of
+`node .claude/skills/persona-pipeline/verify.js` (116 assertions as of
+v10.5). Opening acts (`profile.opening = {text, until}`) are the pattern
+for scene-premise personas: persona-scoped direction for the aftermath
+conversation, injected into the dynamic block only while `exchangedCount`
+is under the window, self-retiring before the reveal ladder takes over —
+situational loading with a built-in expiry, never a permanent rule. Two out-of-band tools live beside the pipeline and must STAY out of
 band: the composer command `testlook` (renders the persona's appearance
 sheet as a neck-down mirror shot — no history, no state, no model call, no
 acknowledgment, swept with the transient notes) and the triple-tap panic

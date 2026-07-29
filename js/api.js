@@ -1579,6 +1579,16 @@ const ClaudeAPI = {
     tonight.push(this.initiativeNote(friend));
     tonight.push('And you\'re allowed to actually end the night — a real goodnight beats a person who can never leave.');
     parts.push('', ...tonight);
+    // The opening act: persona-scoped direction for the FIRST stretch of a
+    // relationship whose premise is a live scene (the walk-in, the pool).
+    // Situationally loaded (invariant: rules ride only where they apply) and
+    // self-expiring by exchange count — by the time the reveal ladder starts
+    // opening deeper layers, this scaffolding is gone and the relationship
+    // runs on what actually happened in it.
+    const act = friend.profile && friend.profile.opening;
+    if (act && act.text && (exchangedCount || 0) < (act.until || 40)) {
+      parts.push('', '## The opening act (private — this early stretch, specifically)', act.text);
+    }
     const room = this.readTheRoom(friend, history);
     if (room) parts.push('', ...room);
     // Prospective memory: dated things he mentioned surface ON the right day.

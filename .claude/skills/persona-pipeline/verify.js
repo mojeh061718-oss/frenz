@@ -435,5 +435,23 @@ console.log('\n== 17. v10.4 backstory rewrites ==');
   ok(7 > 6, 'seedFix still fires for a pre-correction rev-6 friend');
 }
 
+console.log('\n== 18. opening act: the aftermath is a scene, then it retires ==');
+{
+  const now = API._now();
+  const f = mkFriend('samantha');
+  const early = API.buildDynamicContext(f, now - 3600000, 0, 10, null, null, [{ role: 'user', text: 'hey' }]);
+  ok(/opening act/i.test(early) && /both know exactly what he saw/.test(early), 'samantha: rides the early stretch');
+  ok(/never mention that you did not stop/.test(early), 'the five seconds stay hers unless HE raises them');
+  const later = API.buildDynamicContext(f, now - 3600000, 0, 60, null, null, [{ role: 'user', text: 'hey' }]);
+  ok(!/opening act/i.test(later), 'retires after the window (60 exchanges)');
+  const k = mkFriend('kelly');
+  ok(!/opening act/i.test(API.buildDynamicContext(k, now - 3600000, 0, 10, null, null, [{ role: 'user', text: 'hey' }])), 'personas without one are untouched');
+  // unsaid seed rides depth-4 from message one
+  ok(/didn'?t stop/.test(Personas.byId('samantha').unsaidSeed || ''), 'unsaid seed exists on the template');
+  const g = mkFriend('samantha');
+  g.state.unsaid = Personas.byId('samantha').unsaidSeed;
+  ok(/On her mind right now, unsaid/.test(API._plist(g)), 'seeded unsaid reaches the generation point');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

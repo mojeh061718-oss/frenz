@@ -247,6 +247,7 @@ async function startConversation(e) {
     plist: t.plist || '',
     appearance: $('#c-appearance').value.trim() || t.appearance || '',
     beats: t.beats || [],
+    opening: t.opening || null,
     world: Personas.WORLD || '',
     photoCandor: t.photoCandor || 'guarded',
     templateRev: t.templateRev || 0,
@@ -274,7 +275,10 @@ async function startConversation(e) {
       comfort: Math.min(88, sliders.closeness + 15),
       closeness: sliders.closeness,
       attraction: sliders.attraction || 0,
-      opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.'
+      opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.',
+      // the thing on her mind as the thread opens — rides depth-4 from
+      // message one, then lives or expires under the normal unsaid rules
+      unsaid: t.unsaidSeed || ''
     },
     // The relationship's origin lives in `backstory` prose, which the state
     // model never records as a memory — it is asked for facts established in
@@ -1731,6 +1735,10 @@ async function upgradeTemplateFriends() {
     // friends so the life-beat engine reaches them, never overwrite a bank
     // that already exists.
     if (tpl && tpl.beats && !(f.profile.beats || []).length) { f.profile.beats = tpl.beats; changed = true; }
+    // Opening acts (v10.5) are new-field backfill like beats: they only do
+    // anything while the relationship is still inside the opening window,
+    // so reaching existing early-stage friends is the whole point.
+    if (tpl && tpl.opening && !f.profile.opening) { f.profile.opening = tpl.opening; changed = true; }
     // A template REVISION is a rewrite, not a tweak: when the world itself was
     // wrong — who is engaged to whom, whose best friend is whose — substring
     // upgrades cannot repair it, and the friend would keep answering from a
@@ -1744,6 +1752,7 @@ async function upgradeTemplateFriends() {
       f.profile.world = Personas.WORLD || '';
       f.profile.reveals = tpl.reveals || [];
       f.profile.beats = tpl.beats || [];
+      f.profile.opening = tpl.opening || null;
       f.profile.established = !!tpl.established;
       // Seeded memories are deliberately NOT pinned (v9.1 — pinning made her
       // recite them every turn), so filtering on `pinned` kept the OLD seeds
