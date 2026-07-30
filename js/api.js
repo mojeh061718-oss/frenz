@@ -2284,7 +2284,11 @@ const ClaudeAPI = {
 
   // Inline avoid-clause for routes with no negativeText parameter (xAI) —
   // same intent as _IMAGE_NEGATIVE, phrased as prose.
-  _IMAGE_AVOID: ' Not an illustration or 3d render; no text, watermarks, or logos.',
+  // The grok path takes no negative-prompt parameter, so this prose suffix
+  // is its only equivalent — it must carry the face rule too (measured:
+  // one pov couch shot in five rendered a mostly-visible face before the
+  // clause was here; the Bedrock negativeText already had it since v10.2).
+  _IMAGE_AVOID: ' Her face stays out of the picture or out of focus past the frame edge — cropped above the mouth at most. Not an illustration or 3d render; no text, watermarks, or logos.',
 
   /* Face-out-of-frame is the consistency mechanism: these models roll a new
      person every generation, so the one identity anchor we can actually hold
