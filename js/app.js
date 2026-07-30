@@ -8,7 +8,7 @@ const APP_JS_VERSION = '10.23';
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
 const $ = (sel) => document.querySelector(sel);
-const views = ['view-friends', 'view-gallery', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
+const views = ['view-friends', 'view-gallery', 'view-builder', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
 
 let currentFriend = null;       // friend object while chatting/editing
 let editingId = null;           // friend id being edited, null = creating
@@ -147,6 +147,20 @@ function openGallery() {
     card.addEventListener('click', () => openCustomize(t));
     grid.appendChild(card);
   }
+  // The guided builder sits beside "Blank / custom": same dashed card
+  // language (both are build-your-own doors), different promise — the
+  // interview compiles a full persona from the user's answers.
+  const guided = document.createElement('div');
+  guided.className = 'template-card blank';
+  guided.id = 'tpl-builder';
+  guided.innerHTML = `
+    <div class="avatar" style="background:var(--bg3)">✎</div>
+    <div class="tpl-meta">
+      <div class="tpl-name">Guided builder</div>
+      <div class="tpl-hook">Answer questions about her — everything she knows comes from your answers, nothing invented.</div>
+    </div>`;
+  guided.addEventListener('click', openBuilder);
+  grid.appendChild(guided);
   const blank = document.createElement('div');
   blank.className = 'template-card blank';
   blank.id = 'tpl-blank';
@@ -254,13 +268,22 @@ async function startConversation(e) {
     beats: t.beats || [],
     textures: t.textures || [],
     opening: t.opening || null,
-    world: Personas.WORLD || '',
+    // A template may opt out of the shared world map: the guided builder
+    // compiles world:'' because her world is exactly what the user's answers
+    // gave — inheriting Jon's family would be a hallucinated backstory.
+    // Shipped templates carry no world field, so they keep WORLD as before.
+    world: t.world !== undefined ? t.world : (Personas.WORLD || ''),
     photoCandor: t.photoCandor || 'guarded',
     templateRev: t.templateRev || 0,
     reveals: t.reveals || [],
     established: !!t.established,
     sliders,
-    color: t.color
+    color: t.color,
+    // Builder-made personas keep their interview (re-editing can reopen it
+    // prefilled) and a template id that marks them as user-authored, so
+    // name-matched _UPGRADES rules never rewrite a person the user built.
+    template: t.template || null,
+    builder: t.builder || null
   };
   // Only remember a REAL answer. This used to store whatever was in the box,
   // so creating one friend with the name left blank wiped the remembered
@@ -311,8 +334,272 @@ async function startConversation(e) {
     await DB.addMessage({ friendId: friend.id, role: 'assistant', text: g, ts: ClaudeAPI._now() });
   }
   await renderFriendsList();
+  // she exists now — the builder draft has served its purpose
+  if (t.template === 'builder') localStorage.removeItem(BUILDER_DRAFT_KEY);
   customizeTemplate = null;
   openChat(friend.id);
+}
+
+/* ---------------- guided builder ---------------- */
+
+/* An interview that builds a maximally specific persona: ~50 questions, one
+   section per screen, every one skippable. The compiler (Personas.compileBuilder)
+   is deterministic and never invents a fact — a skipped question just leaves
+   that part of her unwritten, which is the entire anti-hallucination bargain.
+   Answers autosave to localStorage on every keystroke; reopening the builder
+   resumes the draft. */
+
+const BUILDER_DRAFT_KEY = 'frenz-builder-draft';
+
+const BUILDER_SECTIONS = [
+  { title: 'Basics', blurb: 'Who she is and where you two stand. Skip anything — a skipped answer is left out, never made up.', questions: [
+    { id: 'b_name', label: 'Her name', type: 'text', ph: 'e.g. Maya' },
+    { id: 'b_age', label: 'Her age', type: 'number' },
+    { id: 'b_rel', label: 'What is she to you?', type: 'choice', options: [['friend', 'Friend'], ['close_friend', 'Close friend'], ['romantic', 'Romantic interest']] },
+    { id: 'b_met', label: 'How did you two meet? The actual incident, in your own words', type: 'textarea', ph: 'e.g. She rear-ended my car in the gym parking lot and left a note that was 80% apology, 20% joke.' },
+    { id: 'b_known', label: 'How long have you known each other?', type: 'text', ph: 'e.g. about three years' },
+    { id: 'b_freq', label: 'How often do you two talk?', type: 'text', ph: 'e.g. most days, in bursts' },
+    { id: 'b_first', label: 'Who usually texts first?', type: 'choice', options: [['her', 'Usually her'], ['you', 'Usually you'], ['even', 'About even']] }
+  ] },
+  { title: 'Looks', blurb: 'Used only for the photos she sends. Her face is never shown — describe her neck-down (build, hair, body markers), and it stays the same person every photo.', questions: [
+    { id: 'l_build', label: 'Height and build', type: 'text', ph: 'e.g. tall and soft-curvy' },
+    { id: 'l_hair', label: 'Her hair', type: 'text', ph: 'e.g. long dark brown, usually in a claw clip' },
+    { id: 'l_marks', label: 'Body identity markers — tattoos, freckles on her shoulders, scars, jewelry she never takes off', type: 'textarea' },
+    { id: 'l_home', label: 'What she wears around the house', type: 'text' },
+    { id: 'l_out', label: 'What she wears going out', type: 'text' },
+    { id: 'l_proud', label: "One thing about her look she's proud of — or self-conscious about", type: 'text' }
+  ] },
+  { title: 'Texting voice', blurb: 'How her messages actually read. This is the strongest anti-clone signal she has.', questions: [
+    { id: 'v_caps', label: 'Capitalization and punctuation', type: 'choice', options: [['lowercase', 'all lowercase, punctuation optional'], ['sentence', 'Sentence case, casual punctuation'], ['punctuated', 'Properly punctuated and capitalized']] },
+    { id: 'v_rhythm', label: 'Bubble rhythm', type: 'choice', options: [['one', 'One-liners'], ['burst', 'Bursts of 2-3 bubbles'], ['para', 'Paragraphs']] },
+    { id: 'v_sig', label: 'Her ONE signature marker', type: 'text', ph: 'e.g. keysmashes, rates things out of ten, parenthetical asides (like this), a specific emoji' },
+    { id: 'v_laugh', label: 'Her laugh, in text', type: 'text', ph: 'e.g. "LMAOOO", a single "lol", 😭, dead silence then "im crying"' },
+    { id: 'v_night', label: 'How she says goodnight', type: 'text' },
+    { id: 'v_drunk', label: "How her texting changes when she's been drinking", type: 'text' },
+    { id: 'v_sincere', label: 'Her sincere-tell — how you can tell she actually means it', type: 'text', ph: 'e.g. the jokes stop and she types full sentences' },
+    { id: 'v_typos', label: 'Typo habits', type: 'text', ph: 'e.g. never fixes them / corrects with * a message late' }
+  ] },
+  { title: 'Personality & moods', blurb: 'Who she is on a good day, a bad day, and lately.', questions: [
+    { id: 'p_traits', label: 'Three traits that define her', type: 'text', ph: 'e.g. dry, loyal, stubborn' },
+    { id: 'p_happy', label: "What she's like when she's happy", type: 'text' },
+    { id: 'p_stress', label: "What she's like stressed", type: 'text' },
+    { id: 'p_annoyed', label: "What she does when she's annoyed with YOU", type: 'text', ph: 'e.g. one-word replies until you notice' },
+    { id: 'p_mood', label: 'Her mood lately — and why', type: 'text' },
+    { id: 'p_cheer', label: 'What reliably cheers her up', type: 'text' },
+    { id: 'p_peeve', label: 'A pet peeve', type: 'text' },
+    { id: 'p_never', label: "Something she'd never admit publicly", type: 'textarea' }
+  ] },
+  { title: 'Her world', blurb: 'The life that keeps running when you two are not texting. Names matter — she will never contradict them.', questions: [
+    { id: 'w_people', label: 'People in her life, by name — family, roommates, pets', type: 'textarea', ph: 'e.g. her sister Ro, roommate Dana, an ancient cat named Bug' },
+    { id: 'w_job', label: 'Her job or school — and how she feels about it', type: 'textarea' },
+    { id: 'w_place', label: 'Her place', type: 'text', ph: 'e.g. a third-floor walkup with a fire-escape garden' },
+    { id: 'w_bff', label: 'Her best friend', type: 'text' },
+    { id: 'w_anchors', label: 'Weekly anchors — shifts, practices, classes, standing plans', type: 'textarea', ph: 'e.g. Tuesday closing shifts, Sunday dinner at her mom\'s' },
+    { id: 'w_story', label: 'An ongoing storyline in her life right now', type: 'textarea', ph: 'e.g. slowly losing the war with her landlord over the broken heater' },
+    { id: 'w_logi', label: 'Everyday logistics color — car, money, commute', type: 'text' }
+  ] },
+  { title: 'Interests', blurb: 'What she actually cares about, not a dating-profile list.', questions: [
+    { id: 'i_three', label: "Three things she's genuinely into", type: 'text' },
+    { id: 'i_over', label: 'The one she overshares about', type: 'text' },
+    { id: 'i_media', label: 'What she watches / reads / listens to', type: 'text' },
+    { id: 'i_evening', label: 'How she spends a free evening', type: 'textarea', ph: 'e.g. wine and trash TV, sometimes baking at midnight' },
+    { id: 'i_bad', label: 'Something she loves but is bad at', type: 'text' }
+  ] },
+  { title: 'Your history together', blurb: 'Shared memories become durable from message one — she will treat them as things you both lived, never recap them at you.', questions: [
+    { id: 'h_mem1', label: 'A favorite memory of you two — what happened, roughly when', type: 'textarea' },
+    { id: 'h_mem2', label: 'A second memory', type: 'textarea' },
+    { id: 'h_joke', label: 'An inside joke or phrase you two use', type: 'text' },
+    { id: 'h_last', label: 'The last thing you did together', type: 'text' },
+    { id: 'h_open', label: 'Anything unresolved or charged between you right now?', type: 'textarea' }
+  ] },
+  { title: 'Under the surface', blurb: 'The private layer. She acts shaped by these — she never announces them.', questions: [
+    { id: 'u_noticed', label: "Things you've noticed about her that she doesn't know you've noticed", type: 'textarea' },
+    { id: 'u_feels', label: 'What you think she secretly feels about you but would never say', type: 'textarea', hint: "This becomes her private unspoken side — it colors her tone and choices; she will never state it outright." },
+    { id: 'u_avoid', label: 'A topic she avoids', type: 'text' },
+    { id: 'u_gone', label: "How she'd react if you disappeared for a week", type: 'text' }
+  ] }
+];
+
+/* The review step shows every compiled field editable; hand-edits are final. */
+const BUILDER_REVIEW_FIELDS = [
+  ['plist', 'Core traits — the binding short list', 2, 'text'],
+  ['style', 'Texting style — the FIRST sentence is the one that binds her voice', 3, 'text'],
+  ['personality', 'Personality', 4, 'text'],
+  ['interests', 'Life & interests', 4, 'text'],
+  ['appearance', 'Appearance — photos only, her face is never shown', 3, 'text'],
+  ['backstory', 'How you know each other', 3, 'text'],
+  ['greeting', 'Her opening texts — one bubble per line', 2, 'lines'],
+  ['beats', 'Life beats — things that happen in her world, one per line', 5, 'lines'],
+  ['textures', 'Her evenings — scenery lines, one per line', 3, 'lines'],
+  ['mood', 'Her mood as the thread opens', 1, 'text'],
+  ['unsaidSeed', 'On her mind, unsaid — shapes her, never spoken', 2, 'text'],
+  ['significantSeed', 'The charged thing between you (leave empty for none)', 1, 'text']
+];
+
+let builderStep = 0;           // 0..7 = sections, 8 = review
+let builderAnswers = {};
+let builderCompiled = null;    // the compiled template while the review is open
+
+function builderSaveDraft() {
+  try { localStorage.setItem(BUILDER_DRAFT_KEY, JSON.stringify({ answers: builderAnswers, step: builderStep })); } catch (e) { /* storage full: the session copy still works */ }
+}
+
+function builderLoadDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(BUILDER_DRAFT_KEY) || 'null');
+    if (d && d.answers && typeof d.answers === 'object') {
+      builderAnswers = d.answers;
+      builderStep = Math.min(Number(d.step) || 0, BUILDER_SECTIONS.length - 1);
+      return true;
+    }
+  } catch (e) { /* corrupt draft: start clean */ }
+  return false;
+}
+
+function openBuilder() {
+  builderAnswers = {};
+  builderStep = 0;
+  builderCompiled = null;
+  if (builderLoadDraft()) toast('Draft restored — pick up where you left off.');
+  renderBuilderStep();
+  showView('view-builder');
+}
+
+function renderBuilderStep() {
+  builderCompiled = null;
+  const total = BUILDER_SECTIONS.length;
+  const sec = BUILDER_SECTIONS[builderStep];
+  $('#builder-step').textContent = 'Section ' + (builderStep + 1) + ' of ' + total + ' — ' + sec.title;
+  $('#builder-bar-fill').style.width = Math.round(((builderStep) / (total + 1)) * 100) + '%';
+  $('#builder-blurb').textContent = sec.blurb;
+  const body = $('#builder-body');
+  body.innerHTML = '';
+  for (const q of sec.questions) {
+    const label = document.createElement('label');
+    label.textContent = q.label;
+    let input;
+    if (q.type === 'choice') {
+      input = document.createElement('select');
+      const skip = document.createElement('option');
+      skip.value = ''; skip.textContent = '— skip —';
+      input.appendChild(skip);
+      for (const [val, text] of q.options) {
+        const o = document.createElement('option');
+        o.value = val; o.textContent = text;
+        input.appendChild(o);
+      }
+    } else if (q.type === 'textarea') {
+      input = document.createElement('textarea');
+      input.rows = 3;
+    } else {
+      input = document.createElement('input');
+      input.type = q.type === 'number' ? 'number' : 'text';
+      if (q.type === 'number') { input.min = 18; input.max = 99; }
+    }
+    if (q.ph) input.placeholder = q.ph;
+    input.value = builderAnswers[q.id] != null ? builderAnswers[q.id] : '';
+    input.addEventListener('input', () => {
+      builderAnswers[q.id] = input.value;
+      builderSaveDraft();
+    });
+    label.appendChild(input);
+    if (q.hint) {
+      const s = document.createElement('small');
+      s.textContent = q.hint;
+      label.appendChild(s);
+    }
+    body.appendChild(label);
+  }
+  $('#btn-builder-prev').textContent = builderStep === 0 ? '← Gallery' : '← Back';
+  $('#btn-builder-next').textContent = builderStep === total - 1 ? 'Review her →' : 'Next →';
+  $('#builder-form').scrollTop = 0;
+}
+
+function renderBuilderReview() {
+  const tpl = Personas.compileBuilder(builderAnswers);
+  builderCompiled = tpl;
+  $('#builder-step').textContent = 'Review — your words, compiled';
+  $('#builder-bar-fill').style.width = Math.round((BUILDER_SECTIONS.length / (BUILDER_SECTIONS.length + 1)) * 100) + '%';
+  $('#builder-blurb').textContent = 'Everything below was compiled from your answers and nothing else. Edit any field — your edits are final. Sliders come next.';
+  const body = $('#builder-body');
+  body.innerHTML = '';
+  // sanitizer + dedupe notes first, so the user sees WHY a phrase moved
+  for (const w of tpl.warnings || []) {
+    const div = document.createElement('div');
+    div.className = 'builder-warn';
+    div.textContent = w;
+    body.appendChild(div);
+  }
+  for (const [field, labelText, rows, kind] of BUILDER_REVIEW_FIELDS) {
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    const ta = document.createElement('textarea');
+    ta.rows = rows;
+    ta.dataset.field = field;
+    ta.dataset.kind = kind;
+    const v = tpl[field];
+    ta.value = kind === 'lines' ? (Array.isArray(v) ? v.join('\n') : '') : (v || '');
+    label.appendChild(ta);
+    body.appendChild(label);
+  }
+  $('#btn-builder-prev').textContent = '← Back to questions';
+  $('#btn-builder-next').textContent = 'Looks right — set her sliders';
+  $('#builder-form').scrollTop = 0;
+}
+
+/* Hand-edits from the review textareas are the final say. */
+function builderApplyReviewEdits() {
+  const tpl = builderCompiled;
+  document.querySelectorAll('#builder-body textarea[data-field]').forEach(ta => {
+    const field = ta.dataset.field;
+    if (ta.dataset.kind === 'lines') {
+      tpl[field] = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    } else {
+      tpl[field] = ta.value.trim();
+    }
+  });
+  if (!tpl.significantSeed) tpl.significantSeed = null;
+  if (!tpl.mood) tpl.mood = '';
+  return tpl;
+}
+
+function builderNext() {
+  if (builderStep < BUILDER_SECTIONS.length - 1) {
+    builderStep++;
+    builderSaveDraft();
+    renderBuilderStep();
+  } else if (builderStep === BUILDER_SECTIONS.length - 1) {
+    builderStep = BUILDER_SECTIONS.length;
+    renderBuilderReview();
+  } else {
+    // review accepted: hand the compiled template to the EXISTING customize
+    // flow — sliders show the derived defaults, and Start conversation runs
+    // the same startConversation as every other template. The draft stays
+    // until she is actually created, so backing out loses nothing.
+    const tpl = builderApplyReviewEdits();
+    openCustomize(tpl);
+  }
+}
+
+function builderPrev() {
+  if (builderStep === 0) { showView('view-gallery'); return; }
+  if (builderStep >= BUILDER_SECTIONS.length) {
+    builderStep = BUILDER_SECTIONS.length - 1;
+    renderBuilderStep();
+    return;
+  }
+  builderStep--;
+  builderSaveDraft();
+  renderBuilderStep();
+}
+
+function builderRestart() {
+  if (!confirm('Clear the whole draft and start the interview over?')) return;
+  localStorage.removeItem(BUILDER_DRAFT_KEY);
+  builderAnswers = {};
+  builderStep = 0;
+  builderCompiled = null;
+  renderBuilderStep();
 }
 
 /* ---------------- friend editor ---------------- */
@@ -1953,6 +2240,10 @@ function init() {
   $('#btn-gallery-back').addEventListener('click', () => showView('view-friends'));
   $('#btn-customize-back').addEventListener('click', () => showView('view-gallery'));
   $('#customize-form').addEventListener('submit', startConversation);
+  $('#btn-builder-back').addEventListener('click', () => showView('view-gallery'));
+  $('#btn-builder-prev').addEventListener('click', builderPrev);
+  $('#btn-builder-next').addEventListener('click', builderNext);
+  $('#btn-builder-restart').addEventListener('click', builderRestart);
   $('#btn-editor-back').addEventListener('click', () => {
     if (editingId && currentFriend) { openChat(currentFriend.id); }
     else showView('view-friends');
