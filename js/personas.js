@@ -433,6 +433,57 @@ const Personas = {
     return this.templates.find(t => t.id === id) || null;
   },
 
+  /* THE fresh-friend state seed. app.js calls this at friend creation and
+     the verify harness calls it for its fixtures, so the suite always
+     measures the states shipped friends actually start in — a fixture that
+     hardcodes its own numbers tests a friend nobody has (v10.24 audit).
+     `sliders` is the possibly user-adjusted set the friend is created with;
+     callers without one get the template defaults. */
+  seedState(t, sliders, now) {
+    const sl = sliders || (t && t.sliders) || {};
+    return {
+      mood: t.mood || 'curious, easygoing',
+      // capped at 88, not 95: a friend seeded AT the ceiling (Bre) had a
+      // comfort axis that could never visibly move again — 'deep' should be
+      // reachable in play, not pre-arrived (pipeline audit, finding #1)
+      comfort: Math.min(88, sl.closeness + 15),
+      closeness: sl.closeness,
+      attraction: sl.attraction || 0,
+      opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.',
+      // the thing on her mind as the thread opens — rides depth-4 from
+      // message one, then lives or expires under the normal unsaid rules
+      unsaid: t.unsaidSeed || '',
+      // scenario personas are born mid-significant-event: the walk-in / the
+      // pool IS the significant last thing between them, so days of silence
+      // after the greeting get the reckoning opener, not cheerful beats
+      lastSignificant: t.significantSeed ? { ts: now || Date.now(), kind: t.significantSeed } : null
+    };
+  },
+
+  /* When a template's SEED was wrong, existing friends keep running on it
+     forever — Samantha and Tay were seeded as though Jon were close to
+     them, and he is not related to either. `seedFix` is the correction
+     stated outright by the template rather than inferred from a slider
+     the user may have set themselves: shift live state by exactly that
+     much, so everything earned on top of the bad seed survives.
+     The guard is "the friend's rev is still below the fix's rev" — not
+     "the fix rev equals the template's". The old equality check meant a
+     template that moved past the fix's revision (rev 8) silently skipped
+     the rev-7 state correction for any install upgrading across both at
+     once. Called from app.js upgradeFriends; lives here so the headless
+     harness can exercise it (v10.24 audit). */
+  applySeedFix(f, tpl) {
+    const fix = tpl && tpl.seedFix;
+    if (!fix || !f || !f.state) return false;
+    if ((fix.rev || 0) <= ((f.profile && f.profile.templateRev) || 0)) return false;
+    ['closeness', 'comfort', 'attraction'].forEach(k => {
+      if (typeof fix[k] === 'number') {
+        f.state[k] = Math.max(0, Math.min(100, (Number(f.state[k]) || 0) + fix[k]));
+      }
+    });
+    return true;
+  },
+
   /* ---- in-place template upgrades for EXISTING friends ----
      A friend is a snapshot of the template at creation time, so template
      improvements never reach friends already made — and deleting a friend to

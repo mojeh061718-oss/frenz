@@ -67,7 +67,10 @@ editing one link while forgetting what another link assumed.
 6. **Rule mass is itself a failure mode.** Every rule here was added for a
    real past failure, so each is individually defensible — but the model has
    finite attention, and the character is competing with the rulebook for it.
-   Measured at v8.0: ~21k chars of rules against ~4k of character. When
+   Measured at the v10.24 audit (rich tier): the assembled persona block runs
+   26-29k chars per template, of which authored character (personality,
+   interests, style, backstory, plus the shared world map) is ~4.0-6.7k —
+   the remaining ~22k is rules, 77-85% of the block. When
    adding a rule, ask what it should REPLACE, and prefer positive
    specification ("do Y") over another prohibition — the prompt already
    carries ~60 "never"s, and prohibition-heavy prompts produce cautious,
@@ -199,25 +202,15 @@ editing one link while forgetting what another link assumed.
 ## The sim harness — prove it, don't eyeball it
 
 The suite ships WITH this skill so it survives sessions: run
-`node .claude/skills/persona-pipeline/verify.js` (144 assertions as of
-v10.9). The agent-driven conversation harness (`scratchpad/simchat.js`
-pattern: an agent plays both Jon and the provider over the real engine)
-found seven shipped fixes the unit suite alone never would — rerun that
-kind of test after any large behavior change. Opening acts (`profile.opening = {text, until}`) are the pattern
-for scene-premise personas: persona-scoped direction for the aftermath
-conversation, injected into the dynamic block only while `exchangedCount`
-is under the window, self-retiring before the reveal ladder takes over —
-situational loading with a built-in expiry, never a permanent rule. Two out-of-band tools live beside the pipeline and must STAY out of
-band: the composer command `testlook` (bare: the persona's appearance sheet
-as the byte-stable neck-down mirror check; `testlook <action> [normal|spicy]`,
-brackets optional: the action through the REAL photo pipeline via
-`testLookScenePrompt` — garnish + framing re-roll per invocation off the
-time salt, spicy = heat-2 implication register; either way no history, no
-state, no chat-model call, no acknowledgment, swept with the transient
-notes) and the triple-tap panic cover (pure UI). Neither may ever leak
-into anything the model reads. It loads `js/personas.js` then `js/api.js` into a `vm` context with
-stub `localStorage` and drives the REAL engine headlessly — extend it there,
-and add assertions for any new behavior before shipping. Use it to:
+`node .claude/skills/persona-pipeline/verify.js` (220+ assertions as of the
+v10.24 audit — the run prints the live count, so trust the printout over
+this sentence). It loads `js/personas.js` then `js/api.js` into a `vm`
+context with stub `localStorage` and drives the REAL engine headlessly —
+extend it there, and add assertions for any new behavior before shipping.
+The agent-driven conversation harness (`scratchpad/simchat.js` pattern: an
+agent plays both Jon and the provider over the real engine) found seven
+shipped fixes the unit suite alone never would — rerun that kind of test
+after any large behavior change. Use the headless suite to:
 
 - print the exact assembled prompt per persona per tier (`buildPersona` +
   `buildDynamicContext` + `_plist` + `_phi`), grep it for contradictions and
@@ -228,6 +221,22 @@ and add assertions for any new behavior before shipping. Use it to:
 - run 30-day loops over `applyStateDeltas` and the per-day dice (`_plist`
   slice, `_lifeBeat`, openers) via `addTimeOffset`, checking movement,
   rotation, frequency, and no-repeat windows.
+
+Opening acts (`profile.opening = {text, until}`) are the pattern for
+scene-premise personas: persona-scoped direction for the aftermath
+conversation, injected into the dynamic block only while `exchangedCount`
+is under the window, self-retiring before the reveal ladder takes over —
+situational loading with a built-in expiry, never a permanent rule.
+
+Two out-of-band tools live beside the pipeline and must STAY out of band:
+the composer command `testlook` (bare: the persona's appearance sheet as
+the byte-stable neck-down mirror check; `testlook <action> [normal|spicy]`,
+brackets optional: the action through the REAL photo pipeline via
+`testLookScenePrompt` — garnish + framing re-roll per invocation off the
+time salt, spicy = heat-2 implication register; either way no history, no
+state, no chat-model call, no acknowledgment, swept with the transient
+notes) and the triple-tap panic cover (pure UI). Neither may ever leak
+into anything the model reads.
 
 The analysis archive (Settings → Download analysis archive) is the other
 half: it runs the detectors over real conversations and reports worn phrases,
@@ -278,8 +287,9 @@ the fixtures were wrong before.
    substring rules can't create a field), `templateRev` bump only for full
    rewrites (it wholesale-replaces defining text). A change that only works
    for fresh installs is half a change.
-5. Commit and push to the designated branch. Tell the user to restart the
-   app twice (the SW picks up the new cache on the second launch).
+5. Commit and push to the designated branch. No restart instructions are
+   needed: the atomic snapshot SW (step 3) reloads the page itself once on
+   update.
 
 ## Known balance dials (don't retune casually)
 
