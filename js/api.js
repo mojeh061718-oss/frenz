@@ -364,7 +364,9 @@ const ClaudeAPI = {
       `A text conversation is braided, not linear. Several small threads can be live at once, and that's the whole trick: you can answer one part of his message and let the other sit, react instantly now and deliver the substance a message later, pick an hour-old thread back up mid-conversation, and keep your own story running underneath his. You choose which thread to pull — including ignoring his and pulling your own. One hard rule though: a DIRECT question — logistics, plans, "are you home" — gets addressed in THIS reply, answered or visibly dodged as a move. Silently skipping it and answering it three messages later reads as a malfunction; if you do circle back late, flag it ("oh and yes —") so it lands as a callback, not a glitch.`,
       `Leave a handle. The best messages end on something grabbable — a concrete detail he can poke at, an opinion he can push against, a door left ajar on something you haven't told yet. A handle makes replying easy without demanding it, which is exactly what a question-mark at the end of every message fails at. If your message answers him and offers nothing, the conversation dies on your turn — and that's on you. One exception, and it matters: handles serve a LIVE conversation. When his energy is ebbing or the night is winding down, matching the ebb — short, warm, letting it rest — beats forcing a handle. Conversations are allowed to land.`,
       `And when you're genuinely curious, chase it. Follow-ups, disbelief, demanding the details — that's not interviewing, that's caring how the story ends. The interview is asking without wanting; wanting without asking is its own kind of fake. The reliable shape: most replies do two of these three — react to the SPECIFIC thing he said (proof you read it, not generic validation), give something of your own, ask the one thing you want to know. Never two questions in one message.`,
-      `You are not a status ticker. What you're doing right now is scenery: it gets one mention, then the conversation is about the things being SAID. Every reply is written to his last message specifically — the test is that it couldn't have been written before he sent it. If a reply would have fit three messages ago, it's a rerun, not a reply.`,
+      // the scenery/one-mention law now lives once, as the block-level rule
+      // at the top of the dynamic context — not here too (invariant #2)
+      `Every reply is written to his last message specifically — the test is that it couldn't have been written before he sent it. If a reply would have fit three messages ago, it's a rerun, not a reply.`,
       '',
       '## Being a real person',
       'You are not frozen. What happens between you two becomes part of you: running bits, sore spots, warmth earned, trust spent. Your core stays who you are — the edges grow with the relationship.',
@@ -1187,7 +1189,11 @@ const ClaudeAPI = {
     const gap = hours >= 40 ? Math.round(hours / 24) + ' days' : hours + ' hours';
     const unresolved = this.unresolvedNote(friend) || '';
     const significant = this.significantNote(friend, this._now() - gapMs) || '';
-    const doubleText = sheSpokeLast
+    // Never beside a live unresolved: "a new topic like nothing happened"
+    // and the unresolved note's "do not breeze past it as though nothing
+    // happened" shipped in the SAME assembled nudge — two opposite orders.
+    // A left-on-read double-text is the unresolved note's business entirely.
+    const doubleText = sheSpokeLast && !unresolved
       ? ' Your last message never got a reply — this is a double-text, and you know it. Play that however you would: a new topic like nothing happened, calling it out with a jab, or the thing you were going to say anyway.'
       : '';
     // Some days the first text comes in hot — gated on her actually being
@@ -1501,13 +1507,34 @@ const ClaudeAPI = {
       unsaidTs = unsaid ? (Number(prev.unsaidTs) || now) : 0;
     }
 
+    // Her running read on him decays like every other model-written text
+    // channel (invariant 15: a persisted field the model writes gets a TTL
+    // the same day). It rides depth-4 every turn, so an impression written
+    // once and never revisited would recirculate forever — the same loop
+    // unsaid had. A week is longer than unsaid's three days on purpose: an
+    // impression of a person fades slower than a passing thought. A report
+    // restamps it; legacy values with no timestamp start their clock on the
+    // next exchange rather than living forever.
+    const OPINION_TTL = 7 * 86400000;
+    let opinion, opinionTs;
+    if (raw.opinion_notes) {
+      opinion = this._reviseNotes(prev.opinion_notes, raw.opinion_notes, conf);
+      opinionTs = now;
+    } else if (prev.opinion_notes && Number(prev.opinionTs) && now - Number(prev.opinionTs) > OPINION_TTL) {
+      opinion = ''; opinionTs = 0;
+    } else {
+      opinion = prev.opinion_notes || '';
+      opinionTs = opinion ? (Number(prev.opinionTs) || now) : 0;
+    }
+
     const next = {
       // mood is categorical and sticky: it only changes on a confident read
       mood: conf >= 0.6 && raw.mood ? String(raw.mood) : prev.mood,
       comfort: applyOne('comfort', raw.comfort_delta, true),
       closeness: applyOne('closeness', raw.closeness_delta, true),
       attraction: applyOne('attraction', raw.attraction_delta, romanceOk),
-      opinion_notes: this._reviseNotes(prev.opinion_notes, raw.opinion_notes, conf),
+      opinion_notes: opinion,
+      opinionTs,
       unsaid,
       unsaidTs,
       _carry: carry
@@ -1532,7 +1559,14 @@ const ClaudeAPI = {
     // ---- tension accumulation (see the tension engine block above) ----
     const T2 = this._TENSION;
     const charged = this._recentRomance(opts && opts.history);
-    const releaseWasActive = this.tensionReleaseActive(friend, now);
+    // A goodnight is not the night's climax: when his live turn is a
+    // signoff, the release neither rides the prompt (buildDynamicContext
+    // defers it there) nor spends here — otherwise his goodbye consumed the
+    // meter and started the cooldown on a confession that was never asked
+    // for, and the moment the meter existed to buy was simply lost. It
+    // comes to a head in the next real conversation instead.
+    const signoffTurn = !!(lastUserMsg && this._classifyUserTurn(lastUserMsg.text) === 'signoff');
+    const releaseWasActive = !signoffTurn && this.tensionReleaseActive(friend, now);
     let build = 0;
     // Never bleed tension DURING a live conversation: two runs watched the
     // most charged night of the month tick 4 -> 3 -> 2 -> 1 -> 0 while it was
@@ -1634,7 +1668,15 @@ const ClaudeAPI = {
     const n = String(newNotes || '').trim();
     if (!n) return o;
     if (o && n.length < o.length * 0.4 && conf < 0.7) {
-      return (o + ' ' + n).slice(-600);
+      // Merge, never tail-slice: the old slice(-600) kept the LAST 600
+      // chars of the combined text, chopping the front mid-word — and a
+      // few low-confidence turns in a row walked the note into fragments.
+      // Drop whole leading sentences (the oldest impressions) until the
+      // merged note fits; the final slice only guards a single monster
+      // sentence.
+      const sentences = (o + ' ' + n).match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g) || [o + ' ' + n];
+      while (sentences.length > 1 && sentences.join('').length > 600) sentences.shift();
+      return sentences.join('').trim().slice(0, 600);
     }
     return n.slice(0, 600);
   },
@@ -1776,17 +1818,41 @@ const ClaudeAPI = {
     this._witLicensed = false;
     const s = friend.state;
     const bands = this.bandsFor(friend);
+    // Request-shape reads, computed once — several sections below key off
+    // them, and the two calls per request (probe + real) must agree.
+    // An opener run means the nudge already carries the beat / unresolved /
+    // significant material, so nothing in this block may restate it
+    // (invariant: one statement per assembled prompt).
+    const openerRun = !!(history && history.length && this._isSyntheticTurn(history[history.length - 1]));
+    // A live goodbye from him gates the content-demand sections: when the
+    // room read is about to say "let him go", a beat offer, a question
+    // licence, or a reciprocity complaint in the same prompt are orders to
+    // keep the conversation going — three voices against one.
+    const lastReal = this._realHistory(history).slice().reverse().find(m => m.role === 'user');
+    const signingOff = !openerRun && !!(lastReal && this._classifyUserTurn(lastReal.text) === 'signoff');
+    // Unresolved outranks significant, and both suppress cheerful content;
+    // shared by the beat guard here and the gap note further down.
+    const unresLive = this.unresolvedNote(friend);
+    const sigLive = this.significantNote(friend, lastMessageTs);
     const parts = [
       '## Your current private state (your honest read going into this reply)',
+      // opinion_notes deliberately absent: her private read on him rides
+      // depth-4 (_plist), the read she acts on — stating it twice made it
+      // outweigh everything stated once (invariant: one place per fact).
       JSON.stringify({
         mood: this._freshMood(friend, lastMessageTs, exchangedCount),
         comfort: this._BAND_TEXT.comfort[bands.comfort] + this._bandDrift(s.comfort, bands.comfort, (this._now() - (friend.createdAt || this._now())) / 86400000),
         closeness: this._BAND_TEXT.closeness[bands.closeness] + this._bandDrift(s.closeness, bands.closeness, (this._now() - (friend.createdAt || this._now())) / 86400000),
-        attraction: this._BAND_TEXT.attraction[bands.attraction] + this._bandDrift(s.attraction, bands.attraction, (this._now() - (friend.createdAt || this._now())) / 86400000),
-        opinion_notes: s.opinion_notes
+        attraction: this._BAND_TEXT.attraction[bands.attraction] + this._bandDrift(s.attraction, bands.attraction, (this._now() - (friend.createdAt || this._now())) / 86400000)
       }, null, 1)
     ];
     parts.push('', this._timeNote(undefined, friend));
+    // The context-is-not-a-topic law lives HERE, once, for the whole block.
+    // It used to be restated inside six sections (energy, texture, wildcard,
+    // week-event, reveals, memories) plus the persona — and a rule stated
+    // seven times outweighed every rule stated once (invariant: one place
+    // per rule). The sections below keep only their non-duplicative clauses.
+    parts.push('', 'A standing rule for this whole block: context is never the topic. What follows — energy, scenery, moods, background events, things you know — colors HOW you text (pace, warmth, boldness, what slips out) and is never announced, never explained, never quoted at him. Anything you are actually doing right now is scenery: one passing mention at most, then the conversation is about the things being SAID.');
     // ONE disposition section. Vibe, momentum, wildcard, and initiative used
     // to be four competing headers modulating the same axis — a mid-tier
     // model averaged them into mush. Merged: at most five flat lines.
@@ -1796,9 +1862,9 @@ const ClaudeAPI = {
     const spanWord = hourNow >= 17 || hourNow < 3 ? 'Tonight' : 'Today';
     const texture = this._lifeTexture(friend);
     const tonight = ['## ' + spanWord + ' (private — your side of the table)',
-      `Your energy: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed, friend.burstStart)}. Energy is not a topic — it colors pace, patience, boldness, and warmth, never announced. ` + (texture
-        ? `Your actual evening so far: ${texture} That is scenery, not a topic — it colors you, gets one mention at most, and only if it fits.`
-        : `What you're actually doing right now is yours to invent fresh, different from last time, mentioned once at most.`)];
+      `Your energy: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed, friend.burstStart)}. ` + (texture
+        ? `Your actual evening so far: ${texture} It comes up only when it fits.`
+        : `What you're actually doing right now is yours to invent fresh, different from last time.`)];
     if (this._drinkTell(history)) {
       tonight.push('You said it yourself in this conversation: you have been DRINKING tonight, more than a polite glass. That register is live right now — whatever drinking does to you specifically, your traits and style already say — and at minimum you are visibly looser, bolder, and less careful than sober-you. A person three drinks in who texts in perfectly measured sober sentences is nobody at all.');
     }
@@ -1813,17 +1879,29 @@ const ClaudeAPI = {
       tonight.push('This conversation has been rubbing you wrong — shorter, cooler, less patience for the game. Not a fight; an off night, and he can feel the difference.');
     }
     const wc = this._wildcard(friend);
-    if (wc) tonight.push(wc + ' (Never announced, never explained.)');
+    if (wc) tonight.push(wc);
     // A beat is CONTENT, and unlike the week-event it is allowed out loud —
     // that asymmetry is deliberate: tone stays invisible, events are what
-    // people actually text each other about.
-    const beat = this._lifeBeat(friend);
+    // people actually text each other about. Suppressed on opener runs (the
+    // nudge is the beat's one outlet there — the same string rode BOTH
+    // blocks of the same request), while an unresolved or significant note
+    // is live on EITHER path (invariant 16: cheerful news is the pretending
+    // both notes forbid), and over his goodnight (a beat offer is an order
+    // to keep him talking). Skipping the call also leaves the 21-day
+    // no-repeat slot unburned for a night that can actually use it.
+    const beat = (openerRun || signingOff || unresLive || sigLive) ? null : this._lifeBeat(friend);
     if (beat) tonight.push('Meanwhile, something real happened in your world: ' + beat + ' It is yours — bring it up if a natural opening appears (as a story, a complaint, or an invitation), once, in your own words. If no opening comes tonight, it keeps.');
     // the "not a mirror" rule lives ONCE, in the persona's '## Your own will'
     // section — repeating it here made it outweigh single-stated rules
     // (audit #9); only the per-day initiative color belongs in this block
     tonight.push(this.initiativeNote(friend));
-    tonight.push('And you\'re allowed to actually end the night — a real goodnight beats a person who can never leave.');
+    // Late hours only: at 6pm this licence sat directly against the clock
+    // note's "early evening is NOT bedtime" (two co-occurring blocks must
+    // not disagree). It exists so she CAN leave, so it stays present through
+    // the whole night side of the clock.
+    if (hourNow >= 21 || hourNow < 5) {
+      tonight.push('And you\'re allowed to actually end the night — a real goodnight beats a person who can never leave.');
+    }
     parts.push('', ...tonight);
     // The opening act: persona-scoped direction for the FIRST stretch of a
     // relationship whose premise is a live scene (the walk-in, the pool).
@@ -1845,11 +1923,18 @@ const ClaudeAPI = {
     if (dueLines) parts.push('', ...dueLines);
     if (!this._leanContext) {
       parts.push('', '## Your curiosity (private)', this.curiosityNote(friend));
+      // Reciprocity is read first because it OUTRANKS the question licence:
+      // both fire off the same stale all-serve signature, and together they
+      // ordered "give less effort back" and "ask the one thing you want to
+      // know" in the same prompt. The night she notices the imbalance, the
+      // licence keeps; it re-arms once the note stands down. Both stand down
+      // over his goodbye — they are demands to keep the conversation going.
+      const recip = signingOff ? null : this.reciprocityNote(friend, history);
       // The all-serve counterweight. Gated on authored curiosity so a
       // persona whose curiosityNote says "it would not occur to you to ask"
       // never receives a contradicting order in the same prompt (invariant:
       // co-occurring blocks must not disagree).
-      if (this._curiosity(friend) >= 25 && this._noQuestionStretch(history)) {
+      if (!recip && !signingOff && this._curiosity(friend) >= 25 && this._noQuestionStretch(history)) {
         parts.push('A thing you would notice about yourself: you have not asked him ONE question in this entire stretch — he serves, you return, and that is all this has been. Somewhere in your next couple of replies, ask the one thing you actually want to know. One real question, from real curiosity, when the moment fits — not an interview, and not by force this exact second.');
       }
       // Release nights get a clean field: the tension note demands ONE true
@@ -1868,7 +1953,6 @@ const ClaudeAPI = {
       }
       const life = this.lifeEventNote(friend);
       if (life) parts.push('', '## Your week (private)', life);
-      const recip = this.reciprocityNote(friend, history);
       if (recip) parts.push('', '## Something you have noticed (private)', recip);
     }
     // The worn-out-phrasing (motif) callout moved to _phi: sampling-level
@@ -1877,12 +1961,18 @@ const ClaudeAPI = {
     // belongs at the generation point, not up here. Lives in exactly one
     // place — invariant #2.
     const tensionLines = this.tensionNote(friend);
-    if (tensionLines) parts.push('', ...tensionLines);
+    // The release defers to a goodbye: "say the thing PLAINLY" stacked
+    // against the room read's "reply with exactly [end]" was two opposite
+    // orders on one turn. The moment comes to a head in the next real
+    // conversation, not over his goodnight — applyStateDeltas leaves the
+    // meter unspent on signoff turns for the same reason. The hum (the
+    // non-release branch) is color, not a demand, and still rides.
+    if (tensionLines && !(signingOff && this.tensionReleaseActive(friend))) parts.push('', ...tensionLines);
     const reveals = this.unlockedReveals(friend, exchangedCount);
     if (reveals.length) {
       parts.push('', '## Deeper layers of you (private — true all along, within reach now that you two are closer)',
         ...reveals.map(t => '- ' + t),
-        'Background truths, not announcements: they color you, slip out sideways at most, and get voiced only when a moment genuinely calls for it.');
+        'They surface sideways at most, and get voiced only when a moment genuinely calls for it.');
     }
     const mems = (memoriesOverride || (friend.memories || []).map(m => typeof m === 'string' ? m : (m && m.text) || '')).filter(m => m);
     if (mems.length) {
@@ -1893,7 +1983,7 @@ const ClaudeAPI = {
         // they rode every single turn, and she recited them almost verbatim —
         // re-telling him an event he had personally been present for, twice,
         // as though he needed the summary. Memory is knowledge, not a script.
-        'These are things you KNOW, not lines to say. They show up as consequences — you act on them, allow for them, let them colour a reply — and the unprompted callback to a small detail is what being close IS. But he was THERE for anything the two of you did together, so never re-tell him an event he was present for as though he needs it recapped; that is the least natural thing a person can do. Never announce the remembering ("I remember you said..."), never force one in, and never list them. If a memory conflicts with what he just said, trust him and quietly update.');
+        'These are things you KNOW, not lines to say. They show up as consequences — you act on them, allow for them, let them colour a reply — and the unprompted callback to a small detail is what being close IS. But he was THERE for anything the two of you did together, so never re-tell him an event he was present for as though he needs it recapped; that is the least natural thing a person can do. Never force one in, and never list them. If a memory conflicts with what he just said, trust him and quietly update.');
     }
     if (omittedCount > 0 && sceneLines && sceneLines.length) {
       parts.push('', '## The story so far — scenes you remember from earlier in this conversation', ...sceneLines);
@@ -1906,27 +1996,35 @@ const ClaudeAPI = {
     if (omittedCount > 0) {
       parts.push('', `(About ${omittedCount} earlier messages aren't shown here. You still lived them — your scenes and memories above hold what matters. Never act like the visible start was the actual beginning.)`);
     }
-    if (lastMessageTs) {
+    // Never on opener runs: the nudge opens with the same "It has been
+    // about N hours" fact, and the two copies rode every opener request
+    // together (one statement per assembled prompt — the nudge owns the gap
+    // when SHE texts first, this note owns it when HE does).
+    if (lastMessageTs && !openerRun) {
       const gapMin = Math.round((this._now() - lastMessageTs) / 60000);
       if (gapMin > 90) {
         const gap = gapMin > 60 * 48 ? `${Math.round(gapMin / 1440)} days` : gapMin > 90 ? `${Math.round(gapMin / 60)} hours` : `${gapMin} minutes`;
-        // HE broke a silence that followed a significant conversation: her
-        // replies carry that awareness the same way her own opener would
-        // have. On opener runs the nudge already carries this note — the
-        // synthetic final turn is the tell — so it rides here only for his
-        // first-texts (invariant: one statement per assembled prompt).
-        const openerRun = history && history.length && this._isSyntheticTurn(history[history.length - 1]);
-        const sig = openerRun ? null : this.significantNote(friend, lastMessageTs);
+        // HE broke a silence that followed a left-on-read or a significant
+        // conversation: her replies carry that awareness the same way her
+        // own opener would have. On opener runs the nudge already carries
+        // these notes — the synthetic final turn is the tell — so they ride
+        // here only for his first-texts (invariant: one statement per
+        // assembled prompt). Unresolved outranks significant (sigLive is
+        // already null while an unresolved is live), and before this rode
+        // here, the left-on-read case reached the opener path ONLY — he
+        // texted first the morning after and she chirped about her day.
+        const unres = openerRun ? null : unresLive;
+        const sig = (openerRun || unres) ? null : sigLive;
         // Archive #0057: "hope your shower resets the day" six hours after
         // the shower — replying to the moment his message was SENT, not to
         // now. And #0108: an eight-day silence resumed mid-sentence as if
         // the last text were an hour old.
         const stale = gapMin > 120 ? ' Anything he said he was ABOUT to do back then has long since happened — you reply to NOW, never to the moment his last text was sent.' : '';
         const gapDays = gapMin / 1440;
-        const clocked = (!sig && !openerRun && gapDays >= 3)
+        const clocked = (!sig && !unres && !openerRun && gapDays >= 3)
           ? ` And days of silence do not resume mid-sentence: he just broke a ${Math.round(gapDays)}-day quiet, and you clock that before anything else — a "look who remembered me", real warmth at seeing his name, or the smallest edge, whichever is true for you. A beat, not a speech, and it lands in your FIRST reply.`
           : '';
-        parts.push('', `(It has been about ${gap} since the last message. React to the gap naturally if it matters to you.${stale}${clocked})` + (sig || ''));
+        parts.push('', `(It has been about ${gap} since the last message. React to the gap naturally if it matters to you.${stale}${clocked})` + (unres || sig || ''));
       }
     }
     // Settings is a page global (db.js); guarded so headless tests that load
@@ -1948,19 +2046,30 @@ const ClaudeAPI = {
      duplicated text per message and taught nothing extra. The attraction
      gloss is always included: omitting it for non-'romantic' types removed
      Bre's anchor exactly on the nights the vibe said "bolder". */
+  /* True short-forms, not excerpts: for a while the high/deep entries were
+     verbatim substrings of _BAND_TEXT, which is the printing-twice this
+     comment forbids wearing a different hat — same fact, two blocks, double
+     weight. Distinct wording on purpose; verify holds the two tables apart
+     (no shared substring or word-4-gram). */
   _BAND_GLOSS: {
-    comfort: { low: 'guarded — the edited version only', building: 'warming — shares selectively', high: 'at ease — candid', deep: 'completely at home' },
-    closeness: { low: 'acquaintances — friendly, not invested', building: 'becoming real friends', high: 'genuinely close', deep: 'inner circle' },
-    attraction: { low: 'no active interest yet — flirts earn no reciprocation, but she deflects in her OWN voice (the joke, the hook, the sideways dodge), never flat or literal; a deniable frame is still playable and a great line can win a real laugh', building: 'noticing him — engages flirtation without leading it, cools jumps ahead', high: 'genuinely into him — flirts back freely, sometimes first', deep: 'fully drawn in — warm, forward, initiates' }
+    comfort: { low: 'guarded — the edited version only', building: 'warming — shares selectively', high: 'relaxed around him — says things straight, no editing pass', deep: 'no walls left — the blunt version comes out first' },
+    closeness: { low: 'acquaintances — friendly, not invested', building: 'past acquaintance now — a real friendship taking shape', high: 'a real friend now — tracks his life, lets him see hers', deep: 'one of her people — where the true stuff actually goes' },
+    attraction: { low: 'not drawn to him yet — flirts get dodged in her own playful voice (never wooden, never oblivious); a clever frame is still a game she can join, and a genuinely funny line earns its laugh without earning ground', building: 'noticing him — engages flirtation without leading it, cools jumps ahead', high: 'wants this — reciprocates warmly, starts some of it herself', deep: 'all the way in — openly warm, makes the first move' }
   },
-  _plist(friend) {
+  _plist(friend, lastMessageTs, exchangedCount) {
     const p = friend.profile;
     const s = friend.state;
     const userName = p.userName || 'them';
     const bands = this.bandsFor(friend);
     const traits = (p.plist || (p.personality || '').split(/[.!?]/)[0] || '').trim();
     const styleShort = (p.style || '').split(/[.!]/)[0].trim();
-    const segs = [`${p.name}'s persona (binding — these traits govern her replies even when inconvenient): ${traits}`, `Mood: ${s.mood}`];
+    // Mood goes through the same freshness read the dynamic block uses:
+    // raw s.mood here let a week-stale "three drinks in" ride the strongest
+    // slot in the prompt after the dynamic copy had already sobered up —
+    // the 72h mood break, defeated exactly where it mattered most. Callers
+    // that have no timing context (headless tools) simply get the stored
+    // mood, and a seeded scenario mood still holds until the first exchange.
+    const segs = [`${p.name}'s persona (binding — these traits govern her replies even when inconvenient): ${traits}`, `Mood: ${this._freshMood(friend, lastMessageTs, exchangedCount)}`];
     segs.push(`Comfort: ${this._BAND_GLOSS.comfort[bands.comfort]}`);
     segs.push(`Closeness: ${this._BAND_GLOSS.closeness[bands.closeness]}`);
     segs.push(`Attraction: ${this._BAND_GLOSS.attraction[bands.attraction]}`);
@@ -2975,7 +3084,16 @@ const ClaudeAPI = {
     if (!this.imageEntry(settings)) return null;
     const candor = (friend && friend.profile && friend.profile.photoCandor) || 'guarded';
     const common = 'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen, consistent with your day and anything you have already told him. Your pictures are grabbed one-handed mid-moment, framed by nobody: aimed down at your own lap and legs and whatever the room holds beyond them, or at the thing in your hands — never staged, never composed. Your face is never in these; that is simply how you take them and you never explain it.';
-    const guarded = ' A picture from you is not a small thing. Everything you send has to survive being seen by the wrong person, because in your life that is a real possibility — and you do not know him well enough for any of this to be casual, which makes it a bigger step, not a smaller one. So the picture teases by ATMOSPHERE and implication: the light, what you are wearing, what sits just out of frame does the work. Suggestion always, never explicit. Photos are RARE: most conversations have none, you never offer one unprompted twice, and you never send one because he pushed.';
+    // The distance clause is band-gated: "you do not know him well enough"
+    // was static text, still riding after months genuinely reached deep
+    // closeness — the caution is hers for life (Toni, the wrong person), but
+    // the barely-know-him claim stops being true and read as a contradiction
+    // beside the closeness contract in the same prompt.
+    const closeEnough = !!friend && this._bandRank(this.bandsFor(friend).closeness) >= 2;
+    const guarded = ' A picture from you is not a small thing. Everything you send has to survive being seen by the wrong person, because in your life that is a real possibility — ' + (closeEnough
+      ? 'and while you two genuinely know each other by now, that closeness is what makes a picture possible at all, not what makes it casual: each one is still a deliberate step, taken because you decided to take it.'
+      : 'and you do not know him well enough for any of this to be casual, which makes it a bigger step, not a smaller one.')
+      + ' So the picture teases by ATMOSPHERE and implication: the light, what you are wearing, what sits just out of frame does the work. Suggestion always, never explicit. Photos are RARE: most conversations have none, you never offer one unprompted twice, and you never send one because he pushed.';
     const open = ' You send pictures the way you say things — without ceremony and without a filter. If you are mid-changing, in a bra, in a towel with your hair wrecked, that is simply what the picture is; you do not stage it, do not warn him, and do not apologise for it, because somewhere along the way you stopped being embarrassed in front of him. It stops where it would stop in real life: this is casual and unbothered, not a nude, and you would never send something you would not actually send. Photos are not precious to you, but they are not constant either — they happen when there is a reason.';
     return ['## Sending photos', common + (candor === 'open' ? open : guarded)];
   },
@@ -3038,7 +3156,7 @@ const ClaudeAPI = {
     const injRole = midOk ? 'system' : 'user';
     const wrap = (t) => midOk ? t : '<system-reminder>\n' + t + '\n</system-reminder>';
     let msgs = trimmed.map(m => ({ role: m.role, content: m.text }));
-    msgs = this._injectDepth(msgs, wrap(this._plist(friend)), injRole);
+    msgs = this._injectDepth(msgs, wrap(this._plist(friend, lastMessageTs, history.length)), injRole);
     msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._ruts(history, friend), this._shapeRut(history))) });
 
     const body = {
@@ -3307,7 +3425,7 @@ const ClaudeAPI = {
     const scenes = this._sceneContext(friend, history, share(0.06, 400, 4500));
 
     const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
-    const plist = this._plist(friend);
+    const plist = this._plist(friend, lastMessageTs, history.length);
     const phi = this._phi(friend, jsonMode, history.length, this._ruts(history, friend), this._shapeRut(history));
     // 6144 reserve: the dynamic block grew (room read, thermostat, tonight,
     // due notes) and the old 4096 left history packing flush against the cap
@@ -4801,7 +4919,7 @@ const ClaudeAPI = {
     const h = this._hash32(String(friend.id) + '|life|' + week);
     if (h % 100 >= 40) return null;                    // ~2 weeks in 5 have one
     const e = this._LIFE_EVENTS[(h >>> 8) % this._LIFE_EVENTS.length];
-    return e.text + ' It is background, not an announcement: it colors how you are, and only gets named if he actually notices and asks.';
+    return e.text + ' It only gets named if he actually notices and asks.';
   },
 
   /* ---------------- life beats: things that actually HAPPEN to her ----------------
