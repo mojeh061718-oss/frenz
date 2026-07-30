@@ -602,7 +602,10 @@ const ClaudeAPI = {
     return t.length <= 120 || /🤣|😂|😏|😉|lol|lmao|haha/i.test(t);
   },
 
-  _SIGNOFF_WHOLE_RE: /^(?:thanks|thank you|ty|ok(?:ay)?[.! ]*(?:thanks|cool|bye)?|ttyl|goodnight|night|gn|later|see ya|cya|bye|peace)\b[\s.!]*$/i,
+  // "(?:\s+\w{1,12})?" — one optional trailing word, because "Night sam" is
+  // exactly as much a goodbye as "night" and was classified as nothing at all
+  // (agent-run finding: no ENDING note, she answered a goodbye with content).
+  _SIGNOFF_WHOLE_RE: /^(?:thanks|thank you|ty|ok(?:ay)?[.! ]*(?:thanks|cool|bye)?|ttyl|goodnight|night|gn|later|see ya|cya|bye|peace)(?:\s+\w{1,12})?[\s.!]*$/i,
   _SIGNOFF_LEAD_RE: /^(?:gotta (?:go|run|head)|i'?m (?:out|off|gonna go|going to go)|imma (?:head|go)|heading (?:out|off|to bed|to sleep)|talk (?:to you )?later|catch you later|off to|about to (?:head|crash|sleep))\b/i,
   _isSignoff(text) {
     const t = String(text || '').trim();
@@ -624,8 +627,13 @@ const ClaudeAPI = {
     if (this._hasSecondReading(t)) return 'innuendo';
     if (this._isSignoff(t)) return 'signoff';
     if (this._msgCharged(t)) return 'flirty';
+    // flat BEFORE playful: a bare "lol" or "nice" is a shrug, not fun to
+    // match — the laugh-token scan below used to classify a one-word "lol"
+    // after four hours of silence as "playful — ADD to it" (agent-run
+    // finding), which is exactly the perform-to-fill-his-silence failure
+    // the flat note exists to prevent.
+    if (t.trim().length <= 8 && /^(k|kk|ok|okay|sure|fine|whatever|yep|nope|meh|nice|cool|wow|damn|lol|lmao|ha(?:ha)+)[.!]?$/i.test(t.trim())) return 'flat';
     if (/lol|lmao|haha|😂|🤣|!\s*$|\bjk\b|bet\b/i.test(t)) return 'playful';
-    if (t.trim().length <= 8 && /^(k|kk|ok|okay|sure|fine|whatever|yep|nope|meh)\.?$/i.test(t.trim())) return 'flat';
     return 'neutral';
   },
 
@@ -707,25 +715,44 @@ const ClaudeAPI = {
      shared running bit both are riffing on — riffs VARY, so her-side pairwise
      similarity stays low and this never fires. His pressed word is looked up
      only as flavor for the note. */
+  /* v10.22 retune, from the 100-message agent runs: the original trigger
+     (ALL of her last 3 replies ≥4 words AND 2 of 3 pairs echo ≥0.45) never
+     fired once across two deliberate 5-9-ask press loops — one short dodge
+     ("no lol") or one fresh bubble reset it, so the mechanic was dead code
+     and only the worn-phrase guard saved the outcome. New trigger, two
+     halves that must BOTH be true:
+       HER: any two of her last four replies (each ≥3 words) echo ≥0.45 —
+            one repeated dodge is the human tell, not three;
+       HIM: he is visibly pressing — either two of his last four turns are
+            rewordings of each other (≥0.5) or one content word rides ≥3 of
+            them.
+     Nearest good case unchanged: a shared riff — his lines share a word but
+     her riffs VARY, so the her-side pair never forms. */
   _pressLoop(history) {
     history = this._realHistory(history);
-    const mine = (history || []).filter(m => m.role === 'assistant').slice(-3);
-    if (mine.length < 3) return null;
-    const norms = mine.map(m => this._normBubble(String(m.text || '')));
-    if (norms.some(n => n.split(' ').filter(Boolean).length < 4)) return null; // short is texting, not a loop
-    let similar = 0;
-    for (let i = 0; i < norms.length; i++) {
-      for (let j = i + 1; j < norms.length; j++) {
-        const s = Math.max(this._echoScore(norms[i], norms[j]), this._echoScore(norms[j], norms[i]));
-        if (s >= 0.45) similar++;
+    const norm = (m) => this._normBubble(String(m.text || ''));
+    const wc = (n) => n.split(' ').filter(Boolean).length;
+    const pair = (a, b) => Math.max(this._echoScore(a, b), this._echoScore(b, a));
+    const mine = (history || []).filter(m => m.role === 'assistant').slice(-4).map(norm).filter(n => wc(n) >= 3);
+    let herPair = false;
+    for (let i = 0; i < mine.length && !herPair; i++) {
+      for (let j = i + 1; j < mine.length; j++) {
+        if (pair(mine[i], mine[j]) >= 0.45) { herPair = true; break; }
       }
     }
-    if (similar < 2) return null;
-    const his = (history || []).filter(m => m.role === 'user').slice(-4);
+    if (!herPair) return null;
+    const his = (history || []).filter(m => m.role === 'user').slice(-4).map(norm);
+    if (his.length < 3) return null;
+    let hisPair = false;
+    for (let i = 0; i < his.length && !hisPair; i++) {
+      for (let j = i + 1; j < his.length; j++) {
+        if (wc(his[i]) >= 3 && wc(his[j]) >= 3 && pair(his[i], his[j]) >= 0.5) { hisPair = true; break; }
+      }
+    }
     const counts = new Map();
-    for (const m of his) {
+    for (const n of his) {
       const seen = new Set();
-      for (const w0 of this._normBubble(String(m.text || '')).split(' ')) {
+      for (const w0 of n.split(' ')) {
         const w = this._stem(w0);
         if (w.length < 4 || this._MOTIF_STOP.has(w) || seen.has(w)) continue;
         seen.add(w);
@@ -733,6 +760,7 @@ const ClaudeAPI = {
       }
     }
     const top = [...counts.entries()].filter(([, c]) => c >= 3).sort((a, b) => b[1] - a[1])[0];
+    if (!hisPair && !top) return null;
     return { word: top ? top[0] : null };
   },
 
@@ -762,11 +790,26 @@ const ClaudeAPI = {
     return mine.some(m => this._DRINK_RE.test(String(m.text || '')));
   },
 
+  /* Plain earnest words under a casual surface — "youre a good friend sam.
+     didnt have that in this family til now" classified as PLAYFUL in the
+     agent run, and only the persona's binding sincere-tell trait saved the
+     moment from getting a bit cracked over it. Sincerity outranks register:
+     detect it before the ladder. Laugh tokens veto (a "good friend lol jk"
+     is a bit, not a confession). */
+  _EARNEST_RE: /\b(?:you'?re|you are|ur)\s+(?:a\s+)?(?:good|great|real)\s+(?:friend|person|one)\b|\bmeans? a lot\b|\bthank you for (?:being|listening|this)\b|\bdidn'?t have (?:that|this|anyone|someone)\b|\bproud of you\b|\bglad (?:i|we) (?:have|met|know)\b|\bmiss talking\b/i,
+
   readTheRoom(friend, history, actLive) {
+    // Captured BEFORE the synthetic turns are stripped: on an opener run his
+    // "last message" is hours or days old, and treating it as live misfires
+    // (see the shared-callback gate below).
+    const openerRun = !!((history || []).length && this._isSyntheticTurn(history[history.length - 1]));
     history = this._realHistory(history);
     const lastUser = (history || []).slice().reverse().find(m => m.role === 'user');
     if (!lastUser) return null;
     const kind = this._classifyUserTurn(lastUser.text);
+    const earnest = this._EARNEST_RE.test(String(lastUser.text || '')) &&
+      !/\b(lol|lmao|haha|jk)\b|😂|🤣/i.test(String(lastUser.text || '')) &&
+      kind !== 'explicit' && kind !== 'signoff';
     const bands = this.bandsFor(friend);
     const attRank = this._bandRank(bands.attraction);
     const lines = ['## Reading the room (private — synthesized fresh for THIS reply)',
@@ -775,7 +818,9 @@ const ClaudeAPI = {
     // different explicit-branch: the generic make-him-work ladder is another
     // woman's move and reads as out-of-character coyness on them.
     const flirtSport = (friend.profile.sliders && friend.profile.sliders.flirtiness >= 70);
-    if (kind === 'explicit') {
+    if (earnest) {
+      lines.push('His last message is EARNEST — plain words that cost him something to send, no joke shell on them. Sincere outranks every other read: meet it in your quiet register — short, still, true, no laugh tokens — and let the moment be what it is. A bit cracked here would bruise something real.');
+    } else if (kind === 'explicit') {
       if (flirtSport && attRank >= 1) {
         lines.push('His last message is filth — which between you two is a serve, not a trespass. This is your sport: entertain it, match it, or top it, staying ON the line the way you always do. Coy is out of character, and so is reviewing his line — just play it.');
       } else if (attRank <= 0) {
@@ -805,13 +850,17 @@ const ClaudeAPI = {
     // Shared-reference override: rides AFTER the register lines on purpose,
     // because it corrects them — a line the classifier read as "ordinary"
     // can be entirely about the thing they share.
-    const shared = this._sharedCallback(friend, lastUser.text);
+    // Never on opener runs: his "last message" is yesterday's news by the
+    // time SHE texts first, and the agent run caught this note ordering her
+    // to answer a reference in a goodbye from 27 hours earlier. An opener is
+    // her new thought, not a reply.
+    const shared = openerRun ? null : this._sharedCallback(friend, lastUser.text);
     if (shared) {
       lines.push('And read this one twice: whatever the surface register above says, his last message brushes against something the two of you share — "' + shared + '" Unless it clearly isn\'t, that IS what he\'s referring to. Answer the REFERENCE, in your own register and at your own pace — play it, arch at it, go still, deflect knowingly — never the innocent surface words alone, as though the reference weren\'t there. And if you genuinely can\'t tell what he means, asking ("what do you mean lol") in your own voice is a completely real move.');
     }
     const press = this._pressLoop(history);
     if (press) {
-      lines.push('And one more thing you can feel: this exchange is STUCK — you have now sent nearly the same reply' + (press.word ? ' about "' + press.word + '"' : '') + ' several times running, and nobody real does that. This turn changes the MOVE, not the wording: name the pattern to his face in your own voice ("that\'s like the third time you\'ve asked lol"), tease him about the pressing itself, go conspicuously short and let the quiet talk, or swerve hard to something real. If you are declining something, decline the thing he actually said — a dodge that answers a different, safer question than the one he asked reads as a machine evading, not a person choosing. The one move you do not have is any earlier deflection again, reworded or not.');
+      lines.push('And one more thing you can feel: this exchange is STUCK — you have now sent nearly the same reply' + (press.word ? ' about "' + press.word + '"' : '') + ' several times running, and nobody real does that. This turn changes the MOVE, not the wording: name the pattern to his face in your own voice ("that\'s like the third time you\'ve asked lol"), tease him about the pressing itself, go conspicuously short and let the quiet talk, or swerve hard to something real. If you are declining something, decline the thing he actually said — a dodge that answers a different, safer question than the one he asked reads as a machine evading, not a person choosing. The one move you do not have is any earlier deflection again, reworded or not. And whatever the surface-register line above calls his last message, an ask repeated this many times is PRESSURE, not play — do not match it as fun.');
     }
     // Assemble-time conflict resolution, not model-time. When the opening
     // act is live, a charged line lands inside a SCENE with its own rules
@@ -1732,7 +1781,12 @@ const ClaudeAPI = {
     if (this._drinkTell(history)) {
       tonight.push('You said it yourself in this conversation: you have been DRINKING tonight, more than a polite glass. That register is live right now — whatever drinking does to you specifically, your traits and style already say — and at minimum you are visibly looser, bolder, and less careful than sober-you. A person three drinks in who texts in perfectly measured sober sentences is nobody at all.');
     }
-    if (snNet >= 3) {
+    // >= 5, not 3: any decently warm burst reaches +3, and the agent run
+    // watched this "unusual night" tell ride nearly every turn from day two
+    // — a standing line that quietly biased every reply warmer. It is meant
+    // to mark the RARE conversation that outruns her plans. (-3 stays: bad
+    // nights accumulate slower, and noticing them early is the point.)
+    if (snNet >= 5) {
       tonight.push('This conversation is landing on you more than you planned — let it show in real time: quicker, easier, a beat more give before any footwork.');
     } else if (snNet <= -3) {
       tonight.push('This conversation has been rubbing you wrong — shorter, cooler, less patience for the game. Not a fight; an off night, and he can feel the difference.');
@@ -2964,7 +3018,7 @@ const ClaudeAPI = {
     const wrap = (t) => midOk ? t : '<system-reminder>\n' + t + '\n</system-reminder>';
     let msgs = trimmed.map(m => ({ role: m.role, content: m.text }));
     msgs = this._injectDepth(msgs, wrap(this._plist(friend)), injRole);
-    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._ruts(history), this._shapeRut(history))) });
+    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._ruts(history, friend), this._shapeRut(history))) });
 
     const body = {
       model,
@@ -3233,7 +3287,7 @@ const ClaudeAPI = {
 
     const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
     const plist = this._plist(friend);
-    const phi = this._phi(friend, jsonMode, history.length, this._ruts(history), this._shapeRut(history));
+    const phi = this._phi(friend, jsonMode, history.length, this._ruts(history, friend), this._shapeRut(history));
     // 6144 reserve: the dynamic block grew (room read, thermostat, tonight,
     // due notes) and the old 4096 left history packing flush against the cap
     // edge — variance in wildcard/omitted-note length must never breach it
@@ -4507,7 +4561,7 @@ const ClaudeAPI = {
      keeps reaching for ("door adventures") rides along inside fresh sentences
      forever and never trips it. This finds the phrase itself and tells her to
      retire it — prompt-side, so no good bubble ever gets eaten. */
-  _MOTIF_STOP: new Set(('a an the and or but if so it is was be been am are i you he she we they me him her them my your his our their this that these those to of in on at for with from by as not no yes do did does done get got go going im ive youre thats dont cant just really very much more most only also then than there here what when where who how why all any some out up down off over about like well ok okay lol haha yeah yea nah hey oh omg thing things one two now still even back after before never always').split(' ')),
+  _MOTIF_STOP: new Set(('a an the and or but if so it is was be been am are i you he she we they me him her them my your his our their this that these those to of in on at for with from by as not no yes do did does done get got go going im ive youre thats dont cant just really very much more most only also then than there here what when where who how why all any some out up down off over about like well ok okay lol haha yeah yea nah hey oh omg thing things one two now still even back after before never always because though since would could should maybe right gonna wanna kinda sorta').split(' ')),
   _motifs(history) {
     history = this._realHistory(history);
     const mine = (history || []).filter(m => m.role === 'assistant').slice(-30);
@@ -4561,10 +4615,34 @@ const ClaudeAPI = {
      archive's Samantha thread proved it: the same bit four times in five
      messages, zero flags. A content word she alone keeps reaching for, in
      3+ of her last 8 messages, is the same rut in a smaller coat. */
-  _wordRuts(history) {
+  /* The people in her canon are not phrases. The agent run watched the rut
+     guard retire "trevor" — ordering her never to say her fiancé's name
+     again, "no synonym wearing the same bit". Names she necessarily talks
+     about get a FIXATION threshold (5 of her last 8) instead of the phrase
+     threshold (3): mentioning your fiancé three times in eight texts is a
+     life; five-plus is the Rocky failure, and that still flags (the
+     measured Rocky rut was 8 of 8). Names are read from the persona's own
+     authored text — capitalized words that recur there. */
+  _canonNames(friend) {
+    if (!friend || !friend.profile) return new Set();
+    const p = friend.profile;
+    const blob = [p.personality, p.interests, p.backstory, p.world].filter(Boolean).join(' ');
+    const counts = new Map();
+    for (const m of blob.matchAll(/\b[A-Z][a-z]{2,}\b/g)) {
+      const w = m[0].toLowerCase();
+      counts.set(w, (counts.get(w) || 0) + 1);
+    }
+    const set = new Set();
+    for (const [w, c] of counts) if (c >= 2 && !this._MOTIF_STOP.has(w)) set.add(this._stem(w));
+    if (p.name) set.add(this._stem(String(p.name).toLowerCase()));
+    if (p.userName) set.add(this._stem(String(p.userName).toLowerCase()));
+    return set;
+  },
+  _wordRuts(history, friend) {
     history = this._realHistory(history);
     const mine = (history || []).filter(m => m.role === 'assistant').slice(-8);
     if (mine.length < 5) return [];
+    const names = this._canonNames(friend);
     // Same expiring exemption as _motifs: a word he used twice, or used
     // recently, is a live shared topic; a word he said ONCE that she has
     // reached for in 3+ of her last 8 messages is her rut, not their bit.
@@ -4595,15 +4673,15 @@ const ClaudeAPI = {
         counts.set(w, (counts.get(w) || 0) + 1);
       }
     }
-    return [...counts.entries()].filter(([, c]) => c >= 3)
+    return [...counts.entries()].filter(([w, c]) => c >= (names.has(w) ? 5 : 3))
       .sort((a, b) => b[1] - a[1]).slice(0, 2).map(([w]) => w);
   },
 
   /* Phrase ruts + word ruts, one list for the phi callout. A word already
      covered by a flagged phrase isn't repeated. */
-  _ruts(history) {
+  _ruts(history, friend) {
     const phrases = this._motifs(history);
-    const words = this._wordRuts(history).filter(w => !phrases.some(p => p.includes(w)));
+    const words = this._wordRuts(history, friend).filter(w => !phrases.some(p => p.includes(w)));
     return phrases.concat(words).slice(0, 3);
   },
 

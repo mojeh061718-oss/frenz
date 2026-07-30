@@ -345,10 +345,23 @@ the fixtures were wrong before.
   the camera register and heat tone; verify guards the full chain per
   persona now. The cap is a runaway guard, not an xAI limit.
 - July-archive guards (all situational — they speak only when their failure
-  is live, per invariant 7): `_pressLoop` (her last 3 real replies mutually
-  echo-similar ≥0.45 on 2 pairs → room note demands a strategy CHANGE — name
-  it, tease the pressing, go short, swerve — never a reworded dodge; varied
-  riffs on a shared bit stay clean); `_shapeRut` (3 of last 5 replies open
+  is live, per invariant 7): `_pressLoop` (v10.22 retune after two agent-run
+  press loops never tripped the original: now ONE her-side repeated-dodge
+  pair — any two of her last 4 replies, each ≥3 words, echo ≥0.45 — AND
+  visible pressing from him — his turns reword each other ≥0.5 or share a
+  content word in ≥3 of 4 → room note demands a strategy CHANGE and
+  overrides the surface register: "pressure, not play"; varied riffs on a
+  shared bit stay clean because the her-side pair never forms); earnest
+  detection (`_EARNEST_RE`, laugh-token veto) outranks the register ladder —
+  a plain confession was reading as "playful"; shared-callback never fires
+  on opener runs (his last message is stale by then); bare laugh tokens
+  ("lol", "nice") classify flat not playful, and "Night sam" is a signoff
+  (one optional trailing word); rut words: canon NAMES (from the persona's
+  own capitalized recurring words) flag at 5-of-8 not 3-of-8 — retiring
+  "trevor" was ordering her not to name her fiancé, while Rocky-grade
+  fixation (8/8) still flags; "because"-class function words joined
+  `_MOTIF_STOP`; the "landing on you" tell needs sessionNet ≥5 (at ≥3 it
+  rode nearly every good burst); `_shapeRut` (3 of last 5 replies open
   on an agreement token → phi callout bans the opener position only);
   `_noQuestionStretch` (8+ replies, zero '?', authored curiosity ≥25 → ONE
   question licensed; incurious personas exempt so curiosityNote is never

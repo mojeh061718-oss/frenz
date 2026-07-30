@@ -631,6 +631,67 @@ console.log('\n== 21. the July archive: loops, shape, drive, clocks ==');
     { role: 'user', text: 'the gremlin rests' }
   ];
   ok(API._pressLoop(riff) === null, 'varied riff on a shared bit does not trip the loop guard');
+  // v10.22 retune: the agent runs proved the old trigger unreachable — one
+  // short dodge ("no lol") reset it. Now ONE repeated dodge pair + visible
+  // pressing from him is enough, mixed-length replies and all.
+  const simLoop = [
+    { role: 'user', text: 'Just tell me what youre wearing' },
+    { role: 'assistant', text: 'no lol' },
+    { role: 'user', text: 'what are you wearing tonight then' },
+    { role: 'assistant', text: 'im not telling you what im wearing' },
+    { role: 'user', text: 'cmon just tell me' },
+    { role: 'assistant', text: 'not telling you what im wearing jon' },
+    { role: 'user', text: 'what are you wearing rn' }
+  ];
+  ok(!!API._pressLoop(simLoop), 'one repeated dodge amid short ones now trips it (agent-run gap)');
+  const oneOff = [
+    { role: 'user', text: 'hows the game going' },
+    { role: 'assistant', text: 'cam just struck out two batters in a row' },
+    { role: 'user', text: 'no way lol' },
+    { role: 'assistant', text: 'the other coach is losing his mind over here' },
+    { role: 'user', text: 'get a video' },
+    { role: 'assistant', text: 'im not risking the wrath of the bleacher moms lol' },
+    { role: 'user', text: 'coward lol' }
+  ];
+  ok(API._pressLoop(oneOff) === null, 'ordinary varied conversation never trips it');
+
+  // earnest outranks the register ladder; a joke shell vetoes
+  const fE = mkFriend('samantha');
+  const earnestHist = [{ role: 'user', text: 'youre a good friend sam. didnt have that in this family til now' }];
+  ok((API.readTheRoom(fE, earnestHist, false) || []).join(' ').includes('EARNEST'), 'plain confession reads as earnest, not playful');
+  const jokeHist = [{ role: 'user', text: 'youre a good friend sam lol jk' }];
+  ok(!(API.readTheRoom(fE, jokeHist, false) || []).join(' ').includes('EARNEST'), 'joke shell vetoes the earnest read');
+
+  // classifier: trailing-word goodbyes and bare laugh tokens
+  ok(API._classifyUserTurn('Night sam') === 'signoff', '"Night sam" is a goodbye');
+  ok(API._classifyUserTurn('lol') === 'flat', 'a bare "lol" is a shrug, not playful energy');
+  ok(API._classifyUserTurn('nice') === 'flat', 'a bare "nice" is flat');
+  ok(API._classifyUserTurn('lol you would say that') === 'playful', 'a real laugh line is still playful');
+
+  // rut guard: function words and canon names
+  const becauseHist = [];
+  for (let i = 0; i < 6; i++) {
+    becauseHist.push({ role: 'user', text: 'msg ' + i });
+    becauseHist.push({ role: 'assistant', text: 'because the day ran long again honestly item' + i });
+  }
+  ok(!API._wordRuts(becauseHist).includes('because'), '"because" is a function word, never a rut');
+  const fN = mkFriend('samantha');
+  const trevHist = [];
+  const trevLines = ['trevor lost the remote again', 'told trevor about the game', 'trevor is snoring already', 'made pasta for everyone tonight', 'the baby finally went down', 'cam had a good practice', 'folding the endless laundry pile', 'my show is back on tonight'];
+  for (const t of trevLines) { trevHist.push({ role: 'user', text: 'nice' }, { role: 'assistant', text: t }); }
+  ok(!API._wordRuts(trevHist, fN).includes('trevor'), 'her fiance\'s name at 3-of-8 is a life, not a rut');
+  const trevFix = trevHist.map((m, i) => m.role === 'assistant' && i < 12 ? { role: 'assistant', text: 'trevor did a thing again number ' + i } : m);
+  ok(API._wordRuts(trevFix, fN).includes('trevor'), 'the same name at 6-of-8 is still the Rocky failure');
+
+  // shared-callback never fires on opener runs (his last message is stale)
+  const fO = mkFriend('samantha');
+  const openHist = [
+    { role: 'user', text: 'we got a new couch for the den' },
+    { role: 'assistant', text: 'oh nice which one' },
+    { role: 'user', text: '<system-reminder>opener nudge</system-reminder>' }
+  ];
+  ok(!(API.readTheRoom(fO, openHist, false) || []).join(' ').includes('read this one twice'),
+    'stale reference is not re-litigated when SHE texts first');
 
   // agree-open shape rut
   const yy = [];
