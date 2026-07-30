@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.20';
+const APP_JS_VERSION = '10.21';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 

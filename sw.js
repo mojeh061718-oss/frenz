@@ -17,7 +17,7 @@
      which also retires the old "restart the app twice" ritual. */
 
 /* Bump CACHE and the .app-version badge in index.html together every deploy. */
-const CACHE = 'frenz-v102';
+const CACHE = 'frenz-v103';
 const SHELL = [
   './',
   './index.html',
@@ -33,7 +33,21 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // NOT addAll(SHELL): addAll reads through the browser's HTTP cache, and
+  // GitHub Pages serves everything with max-age=600 — so a freshly
+  // discovered worker could snapshot files up to ten minutes stale and
+  // install a mixed shell (the skew tripwire firing, the badge stuck on
+  // the old version). 'no-cache' forces revalidation per file (a cheap 304
+  // when unchanged); Promise.all keeps the install all-or-nothing, so a
+  // failed fetch leaves the old version intact and consistent.
+  e.waitUntil(caches.open(CACHE).then(c =>
+    Promise.all(SHELL.map(u =>
+      fetch(new Request(u, { cache: 'no-cache' })).then(r => {
+        if (!r.ok) throw new Error('shell fetch failed: ' + u + ' ' + r.status);
+        return c.put(u, r);
+      })
+    ))
+  ).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
