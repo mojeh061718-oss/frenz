@@ -308,7 +308,7 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   const app = Personas.byId('samantha').appearance;
   const pov = API._imagePrompt('my legs stretched out on the couch, tv on', 'pov', app, 0);
   ok(/head|collarbone|shoulders|torso/.test(pov) && !/her face is visible/i.test(pov), 'pov framing keeps the head out of frame');
-  ok(pov.includes('amateur snapshot') && pov.includes('one-handed'), 'amateur cues present');
+  ok(pov.includes('quick snap') && pov.includes('grainy'), 'snapchat-register cues present');
   ok(/redhead/i.test(pov), 'body-type fidelity: appearance sheet rides as the phone-holder');
   const mirror = API._imagePrompt('new dress, fit check', 'mirror', app, 0);
   ok(/covers her face completely|where her head would be/.test(mirror), 'mirror framing: phone over face');

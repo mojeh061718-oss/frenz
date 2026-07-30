@@ -17,7 +17,7 @@
      which also retires the old "restart the app twice" ritual. */
 
 /* Bump CACHE and the .app-version badge in index.html together every deploy. */
-const CACHE = 'frenz-v98';
+const CACHE = 'frenz-v99';
 const SHELL = [
   './',
   './index.html',

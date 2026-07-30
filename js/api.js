@@ -2429,12 +2429,17 @@ const ClaudeAPI = {
      actual phone photo looks like in 2026. Keep the cues that say "nobody
      staged this" (unlevel horizon, real clutter, no retouching) and drop the
      ones that only destroy detail. */
-  _CAMERA: ' Shot on a recent phone camera in whatever light is actually in the room, the flash only if it is dark.' +
-    ' Real photographic detail: crisp where the focus falls, natural depth of field, true skin and fabric texture,' +
-    ' faint sensor noise in the shadows. Handheld and one-handed, so the horizon sits slightly off level and the framing is the' +
-    ' casual, imperfect crop of a picture taken in two seconds mid-moment — an amateur snapshot, composed by nobody.' +
-    ' Ordinary clutter left exactly where it is.' +
-    ' Flat unedited colour straight out of the camera, no filter, no retouching, no beauty smoothing, no captions or app overlay.',
+  /* Snapchat register, not photography. The previous cues described a NICE
+     phone photo (crisp focus, natural depth of field) and renders kept
+     drifting polished. What sells "she just sent this" is artlessness:
+     careless framing, slight grain, flat colour, harsh direct flash when
+     it's dark. Degradation stays MILD on purpose — the v8.2-era lesson
+     holds that stacking blur+noise+artifacts produces mush, not candor. */
+  _CAMERA: ' Shot like a quick snap to a friend: grabbed one-handed in two seconds mid-moment, framing careless and a little off —' +
+    ' tilted, awkwardly cropped, slightly too close or too far, composed by nobody.' +
+    ' Real cheap phone-camera texture: slightly grainy, flat unedited colour, uneven ordinary room light —' +
+    ' harsh direct flash with hard shadows if the room is dark — true skin and fabric texture, a touch of softness where the camera missed.' +
+    ' Ordinary clutter left exactly where it is. No filter, no retouching, no beauty smoothing, no captions or app overlay.',
 
   _imagePrompt(desc, mode, appearance, heat) {
     const m = this._FRAMING[mode] ? mode : this._modeFor(desc);
@@ -2505,7 +2510,7 @@ const ClaudeAPI = {
     // face. The face region is occupied (no junk to invent) and hidden.
     return 'A full-length mirror photo she took on her phone, standing square to a tall wall mirror, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet exactly as she is, relaxed at home in simple everyday clothes that show her true build.' +
       ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.') +
-      ' Shot on a phone in real room light, handheld and slightly off level, true skin and fabric texture, flat unedited colour, no filter, no retouching, no beauty smoothing, no text or overlay.';
+      ' Shot like a quick snap: careless tilted framing, slightly grainy, flat unedited colour, ordinary room light, true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.';
   },
 
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
