@@ -272,24 +272,10 @@ async function startConversation(e) {
   const friend = {
     id: uid(),
     profile,
-    // closeness/attraction seed the private state directly from the sliders
-    state: {
-      mood: t.mood || 'curious, easygoing',
-      // capped at 88, not 95: a friend seeded AT the ceiling (Bre) had a
-      // comfort axis that could never visibly move again — 'deep' should be
-      // reachable in play, not pre-arrived (pipeline audit, finding #1)
-      comfort: Math.min(88, sliders.closeness + 15),
-      closeness: sliders.closeness,
-      attraction: sliders.attraction || 0,
-      opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.',
-      // the thing on her mind as the thread opens — rides depth-4 from
-      // message one, then lives or expires under the normal unsaid rules
-      unsaid: t.unsaidSeed || '',
-      // scenario personas are born mid-significant-event: the walk-in / the
-      // pool IS the significant last thing between them, so days of silence
-      // after the greeting get the reckoning opener, not cheerful beats
-      lastSignificant: t.significantSeed ? { ts: ClaudeAPI._now(), kind: t.significantSeed } : null
-    },
+    // closeness/attraction seed the private state directly from the sliders.
+    // The derivation lives in Personas.seedState — shared with the verify
+    // harness so the suite tests the exact states friends are created in.
+    state: Personas.seedState(t, sliders, ClaudeAPI._now()),
     // The relationship's origin lives in `backstory` prose, which the state
     // model never records as a memory — it is asked for facts established in
     // THIS exchange, and the walk-in/lake/desk-lunch all predate message one.
@@ -1853,24 +1839,11 @@ async function upgradeTemplateFriends() {
       const earned = (f.memories || []).filter(m => m && !m.pinned && (m.ts || 0) > born + 60000);
       f.memories = (tpl.seedMemories || []).map(m => ClaudeAPI._normMemory(
         Object.assign({ ts: born || ClaudeAPI._now(), lastAccessed: ClaudeAPI._now() }, m))).concat(earned);
-      // When a template's SEED was wrong, existing friends keep running on it
-      // forever — Samantha and Tay were seeded as though Jon were close to
-      // them, and he is not related to either. `seedFix` is the correction
-      // stated outright by the template rather than inferred from a slider
-      // the user may have set themselves: shift live state by exactly that
-      // much, so everything earned on top of the bad seed survives.
-      const fix = tpl.seedFix;
-      // "The friend's rev is still below the fix's rev" — not "the fix rev
-      // equals the template's". The old equality check meant a template that
-      // moved past the fix's revision (rev 8) silently skipped the rev-7
-      // state correction for any install upgrading across both at once.
-      if (fix && f.state && (fix.rev || 0) > (f.profile.templateRev || 0)) {
-        ['closeness', 'comfort', 'attraction'].forEach(k => {
-          if (typeof fix[k] === 'number') {
-            f.state[k] = Math.max(0, Math.min(100, (Number(f.state[k]) || 0) + fix[k]));
-          }
-        });
-      }
+      // A wrong template SEED gets corrected in live state exactly once —
+      // the logic (and its rev-comparison story) lives in
+      // Personas.applySeedFix, shared with the verify harness. Must run
+      // BEFORE templateRev is stamped below, or the fix never fires.
+      Personas.applySeedFix(f, tpl);
       f.profile.templateRev = tpl.templateRev;
       changed = true;
     }
