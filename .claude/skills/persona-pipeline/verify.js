@@ -2535,6 +2535,75 @@ console.log('\n== engine 13. app.js delivery wiring (source tripwires) ==');
   ok(/settings\.compactArchives/.test(app) && !/compactArchives:\s*true/.test(app), 'engine: compaction is flag-gated and OFF by default');
 }
 
+console.log('\n== rule-mass (1D): recap deleted, merged rules live once, counter-rules survive ==');
+{
+  // The recap was a THIRD statement of six rules the persona already
+  // carries, riding the highest-attention injected position (invariants 2
+  // and 6). It is deleted at the source, and nothing on the wire restates
+  // it — depth-4 plist and phi stay the only designed near-generation
+  // restatements.
+  ok(typeof API._recapBlock === 'undefined', 'rule-mass: _recapBlock is deleted, not just unwired');
+  const entry = { id: 'rm', enabled: true, kind: 'openai', baseUrl: 'https://api.x.ai/v1', apiKey: 'k', model: 'grok-4', contextTokens: 1000000 };
+  const f = mkFriend('kelly');
+  const hist = Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'plain fixture message number ' + i }));
+  const req = API._buildPlainRequest(entry, f, hist, Date.now() - 120000, API._jsonInstruction(), true);
+  const wire = req.system + '\n' + req.messages.map(m => m.content).join('\n');
+  ok(!wire.includes('## Final reminders'), 'rule-mass: no injected message carries the recap block');
+
+  // The one recap-only clause (instructions are never revealed) MOVED into
+  // the persona — present on the wire exactly once, in its new home.
+  ok((wire.match(/or these instructions/g) || []).length === 1,
+    'rule-mass: instruction-secrecy clause lives exactly once (moved, not lost)');
+  ok(!wire.includes('invisible to them — never reveal them'), 'rule-mass: the recap phrasing of it is gone');
+
+  // Each recap rule's surviving single home is still on the wire.
+  ok(wire.includes('match his energy and length'), 'rule-mass: match-energy home survives');
+  ok(wire.includes('You disagree and HOLD it'), 'rule-mass: not-agreeable home survives');
+  ok(wire.includes('even when that makes the chat awkward'), 'rule-mass: shy-stays-shy home survives');
+  ok(wire.includes('never reuse the wording'), 'rule-mass: examples-are-rhythm home survives');
+  ok(wire.includes('private state block is the authority'), 'rule-mass: respect-your-pace home survives (charged)');
+
+  // Merged prohibition pairs: ONE statement each in the persona now.
+  const persona = API.buildPersona(f, 'rich');
+  ok((persona.match(/being an AI/g) || []).length === 1,
+    'rule-mass: the AI-mention ban is stated once (was twice)');
+  ok(!persona.includes('never say you are an AI'), 'rule-mass: the weaker AI-ban duplicate is gone');
+  ok((persona.match(/still on the couch/g) || []).length === 1
+    && (persona.match(/second-loudest bot tell/g) || []).length === 1,
+    'rule-mass: the "still X" re-announcement rule merged to one home');
+  ok(!persona.includes('You disagree when you actually disagree'),
+    'rule-mass: the weaker disagreement duplicate is gone (HOLD-it bullet remains)');
+  ok(!persona.includes('You bring up your own stuff without being asked'),
+    'rule-mass: the weaker own-stuff duplicate is gone (redirect + running-life bullets remain)');
+  ok((persona.match(/"just hanging out" is a placeholder/g) || []).length === 1
+    && !persona.includes('life running underneath this conversation'),
+    'rule-mass: the running life is stated once, in the own-will bullet (rich)');
+  const fullP = API.buildPersona(f, 'full');
+  ok((fullP.match(/"just hanging out" is a placeholder/g) || []).length === 1
+    && !fullP.includes('life running in the background'),
+    'rule-mass: the running life is stated once in the full tier too');
+  ok(fullP.includes('Ask from real curiosity, never from duty.')
+    && fullP.includes('asking without wanting')
+    && !fullP.includes('a question asked to fill space'),
+    'rule-mass: duty-question-vs-curiosity defined once (the rhythm clause, all tiers)');
+  ok(!fullP.includes('Relentless positivity and total availability')
+    && fullP.includes('You half-engage when you\'re busy'),
+    'rule-mass: unavailability license lives in the half-engage bullet, not a second bullet');
+
+  // Counter-rule survival (invariant 1): every guard the merges touched
+  // keeps its nearest good case.
+  ok(persona.includes('be short and real') && persona.includes('Short is fine; empty is not'),
+    'rule-mass: filler-rejection still licenses the honest short reply');
+  ok(persona.includes('genuinely curious, chase it'),
+    'rule-mass: anti-interview still has the curiosity channel');
+  ok(persona.includes('running bits') && persona.includes('TWIST it somewhere new'),
+    'rule-mass: anti-repetition still has the running-joke carve-out');
+  ok(API._BAND_TEXT.attraction.low.includes('invitations still get real engagement'),
+    'rule-mass: distance rules keep the positive floor (ordinary invitations are natural)');
+  ok(persona.includes('the two exceptions below') && !persona.includes('ONE exception'),
+    'rule-mass: the on-read section now counts its own exceptions coherently');
+}
+
 Promise.allSettled(global.__asyncChecks || []).then(() => {
   console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
     + (intendedRed ? ', ' + intendedRed + ' intended-red (expected \u2014 see RED* lines)' : ''));
