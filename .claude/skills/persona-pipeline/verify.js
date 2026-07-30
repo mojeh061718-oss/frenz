@@ -712,6 +712,16 @@ console.log('\n== 21. the July archive: loops, shape, drive, clocks ==');
   ok(API._noQuestionStretch(dry), 'nine replies with zero questions is a drought');
   const wet = dry.slice(0, -1).concat([{ role: 'assistant', text: 'wait what did he say?' }]);
   ok(!API._noQuestionStretch(wet), 'one real question resets the drought');
+  // v10.23: questions by SHAPE — her in-character unpunctuated ask must
+  // reset the drought too, and the window counts REPLIES, not bubbles.
+  const unmarked = dry.slice(0, -1).concat([{ role: 'assistant', text: 'what do you even do monday to friday' }]);
+  ok(!API._noQuestionStretch(unmarked), 'a question without the "?" still resets the drought');
+  const twoBubble = [];
+  for (let i = 0; i < 6; i++) {
+    twoBubble.push({ role: 'user', text: 'thing ' + i },
+      { role: 'assistant', text: 'first bubble about ' + i }, { role: 'assistant', text: 'second bubble ' + i });
+  }
+  ok(!API._noQuestionStretch(twoBubble), 'six two-bubble replies are six exchanges, not twelve — no drought yet');
   const now = API._now();
   const cq = mkFriend('samantha'); cq.profile.sliders = Object.assign({}, cq.profile.sliders, { curiosity: 60 });
   ok(API.buildDynamicContext(cq, now - 10 * 60000, 0, 40, null, null, dry).includes('not asked him ONE question'),

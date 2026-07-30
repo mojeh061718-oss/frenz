@@ -770,11 +770,32 @@ const ClaudeAPI = {
      "ask more" rule would just recreate the interview): it speaks only after
      a long all-serve stretch, licenses ONE question, and stands down for
      personas whose authored curiosity is genuinely low. */
+  /* Question by SHAPE, not just punctuation: "what do you even do monday to
+     friday" is a question a lowercase-casual persona sends without the mark,
+     and the "?"-only check nagged her to ask what she had just asked
+     (agent-run finding). The asymmetry favors false positives: mistaking a
+     statement for a question only delays the license, while missing a real
+     question repeats the nag. */
+  _QUESTION_SHAPED: /\?|^(?:ok |so |wait |but |and )?(?:what|who|whose|how|why|when|where|which)\b|^(?:do|does|did|are|is|was|were|can|could|would|will|have|has|am) (?:you|u|i|we|he|she|they|it)\b/i,
   _noQuestionStretch(history) {
     history = this._realHistory(history);
-    const mine = (history || []).filter(m => m.role === 'assistant').slice(-10);
-    if (mine.length < 8) return false;
-    return mine.every(m => !/\?/.test(String(m.text || '')));
+    // Grouped into REPLIES, not bubbles: 10 bubbles is ~5 exchanges for a
+    // two-bubble texter, which re-armed the license far faster than
+    // "entire stretch" implies (agent-run finding: re-fired every ~5
+    // question-free turns).
+    const bursts = [];
+    let cur = null;
+    for (const m of (history || [])) {
+      if (m.role === 'assistant') {
+        if (!cur) { cur = []; bursts.push(cur); }
+        cur.push(String(m.text || ''));
+      } else {
+        cur = null;
+      }
+    }
+    const last = bursts.slice(-10);
+    if (last.length < 8) return false;
+    return last.every(b => !b.some(t => this._QUESTION_SHAPED.test(t)));
   },
 
   /* Bre announced "three drinks in" and then typed like a sober archivist —
