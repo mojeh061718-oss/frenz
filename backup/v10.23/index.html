@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0d0f14">
+  <meta name="description" content="frenz — your private companion messenger. Build virtual friends who talk, adapt, and remember.">
+  <title>frenz</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ============ FRIENDS LIST ============ -->
+    <section id="view-friends" class="view">
+      <header class="topbar">
+        <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
+             at a glance whether the update reached their phone. -->
+        <h1 class="logo">frenz <span class="app-version">10.23</span></h1>
+        <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
+      </header>
+      <div id="friends-list" class="friends-list"></div>
+      <div id="friends-empty" class="empty-state hidden">
+        <div class="empty-art">💬</div>
+        <h2>No friends yet</h2>
+        <p>Create your first companion. They'll text like a real person, remember your conversations, and grow closer (or not) depending on how things go between you.</p>
+      </div>
+      <button id="btn-new-friend" class="fab" title="New friend">+</button>
+    </section>
+
+    <!-- ============ NEW MESSAGE: TEMPLATE GALLERY ============ -->
+    <section id="view-gallery" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-gallery-back">←</button>
+        <h1>New message</h1>
+        <span></span>
+      </header>
+      <div id="template-gallery" class="template-gallery scroll-area"></div>
+    </section>
+
+    <!-- ============ NEW MESSAGE: CUSTOMIZE ============ -->
+    <section id="view-customize" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-customize-back">←</button>
+        <h1 id="customize-title">Customize</h1>
+        <span></span>
+      </header>
+      <form id="customize-form" class="form scroll-area">
+        <div class="customize-hero">
+          <div class="avatar" id="c-avatar">?</div>
+          <div class="customize-hook" id="c-hook"></div>
+        </div>
+        <label>Her name
+          <input type="text" id="c-name" required maxlength="40">
+        </label>
+        <div class="row">
+          <label>Her age
+            <input type="number" id="c-age" min="18" max="99">
+          </label>
+          <label>Your name
+            <input type="text" id="c-username" maxlength="40" placeholder="e.g. Jay" required>
+          </label>
+        </div>
+        <label>You are
+          <select id="c-usergender">
+            <option value="male">A man</option>
+            <option value="female">A woman</option>
+            <option value="nonbinary">Nonbinary</option>
+          </select>
+        </label>
+        <div id="c-sliders" class="sliders"></div>
+        <details class="tune">
+          <summary>Fine-tune her details</summary>
+          <label>Personality
+            <textarea id="c-personality" rows="5"></textarea>
+          </label>
+          <label>Life &amp; interests
+            <textarea id="c-interests" rows="5"></textarea>
+          </label>
+          <label>Appearance — used only for her photos
+            <textarea id="c-appearance" rows="3" placeholder="e.g. curvy redhead, fair freckled skin, tattoos down both legs"></textarea>
+            <small>How she looks in the pictures she sends. Her face is never shown either way — this keeps her body, hair and colouring the same person every time instead of a new one per photo.</small>
+          </label>
+          <label>Texting style
+            <textarea id="c-style" rows="4"></textarea>
+          </label>
+          <label>How you know each other
+            <textarea id="c-backstory" rows="3"></textarea>
+          </label>
+        </details>
+        <button type="submit" class="btn-primary" id="btn-start-convo">Start conversation</button>
+      </form>
+    </section>
+
+    <!-- ============ FRIEND EDITOR ============ -->
+    <section id="view-editor" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-editor-back">←</button>
+        <h1 id="editor-title">New friend</h1>
+        <span></span>
+      </header>
+      <form id="friend-form" class="form scroll-area">
+        <label>Name
+          <input type="text" id="f-name" required maxlength="40" placeholder="e.g. Maya">
+        </label>
+        <label>Relationship
+          <select id="f-type">
+            <option value="friend">Friend</option>
+            <option value="close_friend">Close friend</option>
+            <option value="romantic">Potential romance</option>
+          </select>
+        </label>
+        <div class="row">
+          <label>Age
+            <input type="number" id="f-age" min="18" max="99" value="25">
+          </label>
+          <label>Gender
+            <input type="text" id="f-gender" maxlength="30" placeholder="e.g. woman">
+          </label>
+        </div>
+        <label>Personality
+          <textarea id="f-personality" rows="3" placeholder="Warm but sarcastic, fiercely loyal, a bit of an overthinker, loves to tease..."></textarea>
+        </label>
+        <label>Core traits — the binding short list
+          <textarea id="f-plist" rows="2" placeholder="warm, sarcastic, loyal, teases when nervous, deflects compliments..."></textarea>
+          <small>The strongest signal she follows on every single reply. When you change her personality, change this to match — an old trait list here will overrule your edits. Leave empty to let the personality text lead.</small>
+        </label>
+        <label>Interests &amp; life
+          <textarea id="f-interests" rows="3" placeholder="Nurse who works nights, plays indie games, obsessed with houseplants, training for a half-marathon..."></textarea>
+        </label>
+        <label>Texting style
+          <textarea id="f-style" rows="2" placeholder="lowercase, quick short texts, lots of 'lol', rarely uses emoji..."></textarea>
+        </label>
+        <label>Appearance — used only for her photos
+          <textarea id="f-appearance" rows="2" placeholder="curvy redhead, fair freckled skin, tattoos down both legs..."></textarea>
+          <small>How she looks in the pictures she sends. Her face is never shown either way; this keeps her the same person from photo to photo.</small>
+        </label>
+        <label>How you met / backstory
+          <textarea id="f-backstory" rows="2" placeholder="Met at a mutual friend's party last month, hit it off talking about music..."></textarea>
+        </label>
+        <label>Your name (what they call you)
+          <input type="text" id="f-username" maxlength="40" placeholder="e.g. Jay">
+        </label>
+        <label>You are
+          <select id="f-usergender">
+            <option value="male">A man</option>
+            <option value="female">A woman</option>
+            <option value="nonbinary">Nonbinary</option>
+          </select>
+        </label>
+        <label class="avatar-picker">Avatar color
+          <div id="f-colors" class="color-row"></div>
+        </label>
+        <button type="submit" class="btn-primary" id="btn-save-friend">Create friend</button>
+        <button type="button" class="btn-danger hidden" id="btn-delete-friend">Delete friend</button>
+      </form>
+    </section>
+
+    <!-- ============ CHAT (iMessage-style) ============ -->
+    <section id="view-chat" class="view hidden">
+      <header class="topbar chat-topbar">
+        <button class="icon-btn chat-back" id="btn-chat-back" title="Back">‹</button>
+        <div class="chat-title" id="chat-title-wrap">
+          <div class="avatar" id="chat-avatar">M</div>
+          <div class="chat-title-text">
+            <div id="chat-name" class="chat-name">Maya</div>
+            <div id="chat-status" class="chat-status">online</div>
+          </div>
+        </div>
+        <button class="icon-btn chat-info" id="btn-chat-edit" title="Details">ⓘ</button>
+      </header>
+      <div id="chat-messages" class="chat-messages scroll-area"></div>
+      <div id="typing" class="typing hidden"><span></span><span></span><span></span></div>
+      <form id="composer" class="composer">
+        <div class="input-pill">
+          <textarea id="composer-input" rows="1" placeholder="Message" autocomplete="off"></textarea>
+          <button type="submit" id="btn-send" class="send-btn" title="Send">↑</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ============ RELATIONSHIP (tap her name in chat) ============ -->
+    <section id="view-relationship" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-rel-back" title="Back">‹</button>
+        <h1 id="rel-title">Relationship</h1>
+        <span></span>
+      </header>
+      <div class="scroll-area rel-body">
+        <div class="rel-chart-wrap">
+          <svg id="rel-chart" preserveAspectRatio="none"></svg>
+        </div>
+        <div id="rel-cards" class="rel-cards"></div>
+        <p id="rel-empty" class="muted small hidden">No history yet — the graph starts recording from your next conversation.</p>
+        <p class="muted small">Lines show where each element has been. The scale zooms to the action, so even small days are visible. Tap a line or a card to focus one element and see exact numbers.</p>
+      </div>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section id="view-settings" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-settings-back">←</button>
+        <h1>Settings</h1>
+        <span></span>
+      </header>
+      <div class="form scroll-area">
+        <h3>Provider — Grok</h3>
+        <p class="muted small">One model, two routes: paste an xAI key, or an AWS Bedrock key if that's where your credits are. Whichever one is keyed is the one that answers. There is no failover behind it on purpose — a pool used to swap in a weaker model whenever Grok hiccuped, and the only thing you'd notice was that she started writing badly. If Grok can't be reached now, you get a plain error in the corner instead.</p>
+        <div id="pool-list" class="pool-list"></div>
+        <div class="preset-row">
+          <button type="button" class="btn-secondary btn-preset" data-preset="grok">+ Grok (xAI)</button>
+          <button type="button" class="btn-secondary btn-preset" data-preset="bedrock">+ Grok (AWS Bedrock)</button>
+        </div>
+
+        <div id="entry-editor" class="entry-editor hidden">
+          <label>Name
+            <input type="text" id="e-label" maxlength="30">
+          </label>
+          <label>Base URL
+            <input type="text" id="e-url" placeholder="https://…/v1">
+          </label>
+          <label id="e-region-label" class="hidden">AWS region
+            <input type="text" id="e-region" placeholder="us-east-1">
+            <small>Must match the region your Bedrock API key was created in.</small>
+          </label>
+          <label id="e-key-label">API key
+            <input type="password" id="e-key" placeholder="paste your key">
+            <small id="e-keyhint"></small>
+          </label>
+          <label>Model
+            <input type="text" id="e-model" list="e-models" placeholder="pick or type a model id">
+            <datalist id="e-models"></datalist>
+            <small id="e-modelhint">Fetched live from the provider, so the list is never stale.</small>
+          </label>
+          <label>Context budget (tokens)
+            <input type="number" id="e-ctx" min="2000" step="1000">
+            <small>A safety ceiling, not a dial worth moving. Since v7.3 the app decides how much conversation to send (a bounded recent window — older history rides along as her memories and scene summaries, which keeps her writing fresh), so this number no longer changes what a normal message costs or contains. Lowering it below 10k puts her into a stripped-down mode that noticeably flattens her, so don't unless you have to.</small>
+          </label>
+          <div id="e-image-wrap" class="hidden">
+            <label>Image model — lets her send photos (optional)
+              <input type="text" id="e-img-model" list="e-img-models" placeholder="grok-imagine-image-quality">
+              <datalist id="e-img-models"></datalist>
+              <small id="e-imghint">Pick from the list — it's loaded live from your key, so it shows exactly what your account can use. Clear the field to turn photos off.</small>
+            </label>
+            <label>Image API key — only if photos use a different provider than chat
+              <input type="password" id="e-img-key" placeholder="xai-…" autocomplete="off">
+              <small>Photos from grok-imagine can only be fetched from xAI, so a setup that chats through Bedrock needs an xAI key here. Chat keeps using this entry's own key and never touches this one. Leave empty when the same key covers both.</small>
+            </label>
+            <label>Image region
+              <input type="text" id="e-img-region" placeholder="us-east-1">
+              <small>Image models often live in a different region than your chat model — Nova Canvas is us-east-1 on most accounts. Your API key usually works across regions.</small>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" id="e-photos-only"> Use this provider for photos only — never for chat
+              <small>Turn this on when you've added a small prepaid key just for pictures. Your conversations keep running on whichever other provider is enabled, so the image credit is never spent on chat.</small>
+            </label>
+          </div>
+          <div class="row">
+            <button type="button" class="btn-secondary" id="btn-test-entry">Test connection</button>
+            <button type="button" class="btn-secondary hidden" id="btn-test-image">Test image</button>
+            <button type="button" class="btn-danger" id="btn-remove-entry">Remove</button>
+          </div>
+          <small id="e-test-result" class="muted"></small>
+          <img id="e-img-preview" class="img-preview hidden" alt="test image">
+        </div>
+
+        <small id="pool-status" class="muted"></small>
+
+        <button class="btn-primary" id="btn-save-settings">Save settings</button>
+        <hr>
+        <h3>Time</h3>
+        <p class="muted small">The app runs on real time — her clock, night looseness, openers, and due-date follow-ups all track it. Skip ahead when you don't want to wait for tonight. Time only moves forward.</p>
+        <div class="row">
+          <button type="button" class="btn-secondary" id="btn-skip-6h">Skip 6 hours</button>
+          <button type="button" class="btn-secondary" id="btn-skip-1d">Skip a day</button>
+          <button type="button" class="btn-secondary" id="btn-time-reset">Real time</button>
+        </div>
+        <small id="time-status" class="muted"></small>
+        <hr>
+        <h3>Your data</h3>
+        <p class="muted">All friends, conversations, and each friend's private impressions of you are saved automatically on this device.</p>
+        <div class="row">
+          <button class="btn-secondary" id="btn-export">Export backup</button>
+          <button class="btn-secondary" id="btn-import">Import backup</button>
+        </div>
+        <div class="row">
+          <button class="btn-secondary" id="btn-archive">Download analysis archive</button>
+        </div>
+        <p class="muted">The archive is one readable document: full transcripts with reference numbers, each friend's private state changes inline, and automatic quality checks. When a conversation feels off, download this and share it when asking for help — no API usage.</p>
+        <input type="file" id="import-file" accept="application/json" class="hidden">
+        <button class="btn-danger" id="btn-wipe">Erase all data</button>
+        <p class="muted small">frenz is a private, local-first app. Nothing is uploaded anywhere except your messages to the Claude API using your own key.</p>
+      </div>
+    </section>
+
+  </div>
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- Grok is the only provider, so an outage has nowhere to fail over to.
+       It gets its own corner badge instead of a toast that scrolls away:
+       it stays up until a message actually goes through. Tap it for why. -->
+  <button type="button" id="provider-down" class="provider-down hidden" title="Grok is unreachable">
+    <span class="pd-code">404</span>
+    <span class="pd-text"></span>
+  </button>
+  <div id="photo-viewer" class="photo-viewer hidden"><img alt="photo"></div>
+  <!-- Triple-tap anywhere: the app instantly becomes a boring code editor
+       (dark IDE, dull utility file, blinking cursor). Triple-tap again to
+       come back. Nothing here is interactive on purpose. -->
+  <div id="panic-cover" class="panic-cover hidden" aria-hidden="true">
+    <div class="pc-tabs"><span class="pc-tab on">utils.js</span><span class="pc-tab">index.js</span><span class="pc-tab">api.test.js</span></div>
+    <div class="pc-code">
+      <div class="pc-row"><span class="pc-ln">1</span><span><span class="pc-c">/* utils.js — request helpers */</span></span></div>
+      <div class="pc-row"><span class="pc-ln">2</span><span><span class="pc-d">const</span> cache = <span class="pc-d">new</span> <span class="pc-t">Map</span>();</span></div>
+      <div class="pc-row"><span class="pc-ln">3</span><span></span></div>
+      <div class="pc-row"><span class="pc-ln">4</span><span><span class="pc-k">export</span> <span class="pc-d">function</span> <span class="pc-f">debounce</span>(fn, wait = <span class="pc-n">250</span>) {</span></div>
+      <div class="pc-row"><span class="pc-ln">5</span><span>  <span class="pc-d">let</span> timer = <span class="pc-d">null</span>;</span></div>
+      <div class="pc-row"><span class="pc-ln">6</span><span>  <span class="pc-k">return</span> (...args) =&gt; {</span></div>
+      <div class="pc-row"><span class="pc-ln">7</span><span>    <span class="pc-f">clearTimeout</span>(timer);</span></div>
+      <div class="pc-row"><span class="pc-ln">8</span><span>    timer = <span class="pc-f">setTimeout</span>(() =&gt; <span class="pc-f">fn</span>(...args), wait);</span></div>
+      <div class="pc-row"><span class="pc-ln">9</span><span>  };</span></div>
+      <div class="pc-row"><span class="pc-ln">10</span><span>}</span></div>
+      <div class="pc-row"><span class="pc-ln">11</span><span></span></div>
+      <div class="pc-row"><span class="pc-ln">12</span><span><span class="pc-k">export</span> <span class="pc-d">async function</span> <span class="pc-f">getJSON</span>(url, opts = {}) {</span></div>
+      <div class="pc-row"><span class="pc-ln">13</span><span>  <span class="pc-d">const</span> key = url + <span class="pc-t">JSON</span>.<span class="pc-f">stringify</span>(opts);</span></div>
+      <div class="pc-row"><span class="pc-ln">14</span><span>  <span class="pc-k">if</span> (cache.<span class="pc-f">has</span>(key)) <span class="pc-k">return</span> cache.<span class="pc-f">get</span>(key);</span></div>
+      <div class="pc-row"><span class="pc-ln">15</span><span>  <span class="pc-d">const</span> res = <span class="pc-k">await</span> <span class="pc-f">fetch</span>(url, opts);</span></div>
+      <div class="pc-row"><span class="pc-ln">16</span><span>  <span class="pc-k">if</span> (!res.ok) <span class="pc-k">throw</span> <span class="pc-d">new</span> <span class="pc-t">Error</span>(<span class="pc-s">'HTTP '</span> + res.status);</span></div>
+      <div class="pc-row"><span class="pc-ln">17</span><span>  <span class="pc-d">const</span> data = <span class="pc-k">await</span> res.<span class="pc-f">json</span>();</span></div>
+      <div class="pc-row"><span class="pc-ln">18</span><span>  cache.<span class="pc-f">set</span>(key, data);</span></div>
+      <div class="pc-row"><span class="pc-ln">19</span><span>  <span class="pc-k">return</span> data;</span></div>
+      <div class="pc-row"><span class="pc-ln">20</span><span>}</span></div>
+      <div class="pc-row"><span class="pc-ln">21</span><span></span></div>
+      <div class="pc-row"><span class="pc-ln">22</span><span><span class="pc-c">// TODO: retry with backoff on 429/503</span></span></div>
+      <div class="pc-row"><span class="pc-ln">23</span><span><span class="pc-k">export</span> <span class="pc-d">function</span> <span class="pc-f">invalidate</span>(prefix) {</span></div>
+      <div class="pc-row"><span class="pc-ln">24</span><span>  <span class="pc-k">for</span> (<span class="pc-d">const</span> key <span class="pc-k">of</span> cache.<span class="pc-f">keys</span>()) {</span></div>
+      <div class="pc-row"><span class="pc-ln">25</span><span>    <span class="pc-k">if</span> (key.<span class="pc-f">startsWith</span>(prefix)) cache.<span class="pc-f">delete</span>(key);<span class="pc-cursor"></span></span></div>
+      <div class="pc-row"><span class="pc-ln">26</span><span>  }</span></div>
+      <div class="pc-row"><span class="pc-ln">27</span><span>}</span></div>
+    </div>
+    <div class="pc-status"><span>main*  JavaScript  UTF-8</span><span>Ln 25, Col 46</span></div>
+  </div>
+
+  <script src="js/db.js"></script>
+  <script src="js/personas.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
