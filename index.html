@@ -43,6 +43,26 @@
       <div id="template-gallery" class="template-gallery scroll-area"></div>
     </section>
 
+    <!-- ============ NEW MESSAGE: GUIDED BUILDER ============ -->
+    <section id="view-builder" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-builder-back">←</button>
+        <h1>Guided builder</h1>
+        <span class="builder-step" id="builder-step"></span>
+      </header>
+      <div class="builder-bar"><div class="builder-bar-fill" id="builder-bar-fill"></div></div>
+      <form id="builder-form" class="form scroll-area">
+        <p class="muted small" id="builder-blurb"></p>
+        <div id="builder-body"></div>
+        <div class="row">
+          <button type="button" class="btn-secondary" id="btn-builder-prev">← Back</button>
+          <button type="button" class="btn-primary" id="btn-builder-next">Next →</button>
+        </div>
+        <small class="muted">Every question is skippable — whatever you skip is simply left out of her, never made up. Your answers save as a draft on this device as you type.</small>
+        <button type="button" class="btn-danger" id="btn-builder-restart">Start over — clear the draft</button>
+      </form>
+    </section>
+
     <!-- ============ NEW MESSAGE: CUSTOMIZE ============ -->
     <section id="view-customize" class="view hidden">
       <header class="topbar">

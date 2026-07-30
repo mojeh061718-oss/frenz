@@ -484,6 +484,350 @@ const Personas = {
     return true;
   },
 
+  /* ---- guided-builder compiler ----
+     Turns the guided interview's answers into a template-schema object the
+     EXISTING customize/start flow consumes unchanged. DETERMINISTIC — no API
+     calls, no randomness — and it never invents a fact: a skipped question
+     simply omits its material, because the whole point of the builder is
+     that everything the model knows about her was authored by the user.
+
+     Routing is the design. Every answer lands in exactly ONE field (the
+     fact-one-place invariant — a fact stated twice becomes a priority system
+     nobody designed):
+       plist            p_traits, v_sincere, p_annoyed, u_avoid  (≤4 binding facts)
+       style            v_caps + v_rhythm + v_sig compose sentence 1 (the only
+                        sentence that reaches depth-4), then laugh/goodnight/
+                        drunk/typo habits as later sentences
+       personality      p_happy, p_stress, p_cheer, p_peeve, u_noticed, u_gone
+       interests        w_job, w_place, w_people, w_bff, w_logi, i_three,
+                        i_over, i_media, i_bad
+       appearance       l_* (sanitized: face features dropped, moderation
+                        words calmed — the photo model renders what the sheet
+                        says, and a named face feature makes every render a
+                        portrait)
+       backstory        b_met, b_known, b_freq, b_first, h_last
+       beats            w_story, w_anchors, w_people names — authored facts
+                        framed as today's mundane occurrence, never padded
+       textures         i_evening fragments (scenery, not topics)
+       seedMemories     h_mem1, h_mem2, h_joke (importance 4, never pinned —
+                        pinned bypasses the theme cap)
+       mood             p_mood        unsaidSeed  u_feels
+       significantSeed  h_open        reveals     p_never
+     A mechanical dedupe pass then guarantees the invariant even when the
+     user typed the same fact into two questions. */
+
+  _bClean(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); },
+  _bSent(v) {
+    const s = this._bClean(v);
+    if (!s) return '';
+    return /[.!?]$/.test(s) ? s : s + '.';
+  },
+  /* A fragment safe to sit INSIDE a sentence: internal sentence-enders would
+     hand _plist a false first-sentence boundary, so they become commas. */
+  _bInline(v) {
+    return this._bClean(v).replace(/[.!]+$/, '').replace(/[.!]+\s*/g, ', ').replace(/\s+,/g, ',');
+  },
+  _bSplit(v) { return this._bClean(v).split(/[,;\n]+/).map(s => s.trim()).filter(Boolean); },
+  _B_STOP: ['the','and','that','with','this','from','when','what','your','you','she','her','him','his','was','were','are','for','had','have','has','about','into','over','then','them','they','out','our','we','it','its','one','two','got','get','just','like','really','very','so','but','not','a','an','of','in','on','at','to','me','my','i','us','both','all','still','ever','never'],
+  _bKeywords(text) {
+    const stop = new Set(this._B_STOP);
+    const words = String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+      .filter(w => w.length >= 3 && !stop.has(w));
+    const seen = [];
+    for (const w of words) if (!seen.includes(w)) seen.push(w);
+    return seen.slice(0, 6);
+  },
+  /* Photo-rule sanitizer. Face features may never be NAMED in an appearance
+     sheet ("freckles across her nose" made every Anna render a portrait);
+     the measured Grok moderation triggers get the same anatomy in calmer
+     words. Both edits are reported so the review step can show them. */
+  _B_FACE: /\b(face|facial|eyes?|nose|lips?|mouth|smiles?|grin|cheeks?|cheekbones?|chin|jaw|jawline|dimples?|eyebrows?|eyelash(?:es)?|lashes|forehead)\b/i,
+  _B_MODERATION: [
+    [/\bbreasts?\b/gi, 'chest'],
+    [/\bbraless\b/gi, 'with no bra'],
+    [/\bboy shorts\b/gi, 'little cotton shorts'],
+    [/\bhangs?\b/gi, 'shape']
+  ],
+  _bSanitizeLook(v, warnings) {
+    let s = this._bClean(v);
+    if (!s) return '';
+    const kept = [];
+    for (const clause of s.split(/,/)) {
+      const c = clause.trim();
+      if (!c) continue;
+      if (this._B_FACE.test(c)) {
+        warnings.push('Look: dropped "' + c + '" — her photos never show her face, and a face feature written into the sheet turns every photo into a portrait. Keep identity markers on the body and hair.');
+      } else kept.push(c);
+    }
+    s = kept.join(', ');
+    for (const [re, calm] of this._B_MODERATION) {
+      const m = s.match(re);
+      if (m) {
+        warnings.push('Look: softened "' + m[0] + '" to "' + calm + '" — the original wording is a measured photo-moderation trigger; the same anatomy in calmer words renders fine.');
+        s = s.replace(re, calm);
+      }
+    }
+    return s.replace(/[.!]+$/, '');
+  },
+  /* Normalized 4-grams — the same unit the fact-one-place audits grep for. */
+  _bGrams(text) {
+    const words = String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+    const grams = new Set();
+    for (let i = 0; i + 4 <= words.length; i++) grams.add(words.slice(i, i + 4).join(' '));
+    return grams;
+  },
+  /* Enforces fact-one-place mechanically: any sentence that shares a 4-gram
+     with material already placed upstream is dropped, with a warning, and a
+     kept sentence's grams join the used set so later fields can't re-emit it
+     either. Runs plist -> style -> interests -> appearance. */
+  _bStripUsed(text, used, fieldName, warnings) {
+    const parts = String(text || '').split(/(?<=[.!?])\s+/).filter(Boolean);
+    const kept = [];
+    for (const s of parts) {
+      const grams = this._bGrams(s);
+      let dup = false;
+      for (const gm of grams) if (used.has(gm)) { dup = true; break; }
+      if (dup) {
+        warnings.push('Dropped from ' + fieldName + ' — the same fact is already carried elsewhere, and a fact lives in exactly one place: "' + s + '"');
+      } else {
+        kept.push(s);
+        for (const gm of grams) used.add(gm);
+      }
+    }
+    return kept.join(' ');
+  },
+
+  compileBuilder(a) {
+    a = a || {};
+    const g = (k) => this._bClean(a[k]);
+    const warnings = [];
+    const name = g('b_name') || 'Her';
+    const type = ['friend', 'close_friend', 'romantic'].indexOf(a.b_rel) >= 0 ? a.b_rel : 'friend';
+    const age = parseInt(a.b_age, 10) || null;
+
+    /* plist: her binding short list — the strongest signal at depth-4.
+       Name/age/type ride separately; this carries at most FOUR binding
+       facts, because a long trait list dilutes every entry in it. */
+    const plist = [
+      this._bInline(g('p_traits')),
+      g('v_sincere') ? 'sincere = ' + this._bInline(g('v_sincere')) : '',
+      g('p_annoyed') ? 'annoyed with him = ' + this._bInline(g('p_annoyed')) : '',
+      g('u_avoid') ? 'steers wide of ' + this._bInline(g('u_avoid')) : ''
+    ].filter(Boolean).join(', ');
+
+    /* style sentence 1: register + rhythm + signature, one sentence, ending
+       at its first '.', because _plist truncates there and that sentence is
+       the only voice signal at the generation point. */
+    const regText = {
+      lowercase: 'Lowercase with punctuation mostly dropped',
+      sentence: 'Sentence case, easy and casual',
+      punctuated: 'Properly punctuated and capitalized'
+    }[a.v_caps] || '';
+    const rhyText = {
+      one: 'one short bubble at a time',
+      burst: 'quick bursts of two or three bubbles',
+      para: 'longer messages in full paragraphs'
+    }[a.v_rhythm] || '';
+    const sig = this._bInline(g('v_sig'));
+    let s1 = [regText, rhyText].filter(Boolean).join(', ');
+    if (sig) s1 += (s1 ? ', ' : '') + 'her signature: ' + sig;
+    const styleParts = [];
+    if (s1) styleParts.push(s1 + '.');
+    if (g('v_laugh')) styleParts.push('When something is actually funny: ' + this._bSent(g('v_laugh')));
+    if (g('v_night')) styleParts.push('Her goodnights: ' + this._bSent(g('v_night')));
+    if (g('v_drunk')) styleParts.push('When she has been drinking: ' + this._bSent(g('v_drunk')));
+    if (g('v_typos')) styleParts.push('Typos: ' + this._bSent(g('v_typos')));
+
+    /* personality: her moods and private tells, in the user's words with
+       neutral connective framing (framing invents nothing). */
+    const pparts = [];
+    if (g('p_happy')) pparts.push("When she's happy: " + this._bSent(g('p_happy')));
+    if (g('p_stress')) pparts.push('Stressed: ' + this._bSent(g('p_stress')));
+    if (g('p_cheer')) pparts.push('What reliably cheers her up: ' + this._bSent(g('p_cheer')));
+    if (g('p_peeve')) pparts.push('Pet peeve: ' + this._bSent(g('p_peeve')));
+    if (g('u_noticed')) pparts.push('Small tells of hers, true whether or not she knows they show: ' + this._bSent(g('u_noticed')));
+    if (g('u_gone')) pparts.push('If he vanished for a week: ' + this._bSent(g('u_gone')));
+
+    /* interests: her world — the field the depth-4 life slice rotates over,
+       so each answer becomes its own sentence and gets its own day. */
+    const iparts = [];
+    if (g('w_job')) iparts.push(this._bSent(g('w_job')));
+    if (g('w_place')) iparts.push('Her place: ' + this._bSent(g('w_place')));
+    if (g('w_people')) iparts.push('The people in her life: ' + this._bSent(g('w_people')));
+    if (g('w_bff')) iparts.push('Her best friend: ' + this._bSent(g('w_bff')));
+    if (g('w_logi')) iparts.push('Day to day: ' + this._bSent(g('w_logi')));
+    if (g('i_three')) iparts.push('Genuinely into ' + this._bSent(g('i_three')));
+    if (g('i_over')) iparts.push('The one she overshares about: ' + this._bSent(g('i_over')));
+    if (g('i_media')) iparts.push('On rotation: ' + this._bSent(g('i_media')));
+    if (g('i_bad')) iparts.push('Loves but is honestly bad at: ' + this._bSent(g('i_bad')));
+
+    /* appearance: looks only, sanitized. */
+    const lookBits = [];
+    const body = [g('l_build'), g('l_hair'), g('l_marks')]
+      .map(v => this._bSanitizeLook(v, warnings)).filter(Boolean);
+    if (body.length) lookBits.push(body.join(', ') + '.');
+    const homeWear = this._bSanitizeLook(g('l_home'), warnings);
+    if (homeWear) lookBits.push('Around the house: ' + homeWear + '.');
+    const outWear = this._bSanitizeLook(g('l_out'), warnings);
+    if (outWear) lookBits.push('Going out: ' + outWear + '.');
+    const lookFeel = this._bSanitizeLook(g('l_proud'), warnings);
+    if (lookFeel) lookBits.push('About her look: ' + lookFeel + '.');
+
+    /* backstory: the relationship's own facts, addressed to the user the way
+       every shipped template writes it. */
+    const bparts = [];
+    if (g('b_met')) bparts.push(this._bSent(g('b_met')));
+    if (g('b_known')) bparts.push("You've known each other " + this._bInline(g('b_known')) + '.');
+    if (g('b_freq')) bparts.push('You talk ' + this._bInline(g('b_freq')) + '.');
+    if (a.b_first === 'her') bparts.push("She's usually the one who texts first.");
+    else if (a.b_first === 'you') bparts.push("You're usually the one who texts first.");
+    else if (a.b_first === 'even') bparts.push('Neither of you is always the one who texts first — it goes both ways.');
+    if (g('h_last')) bparts.push('The last thing you did together: ' + this._bSent(g('h_last')));
+
+    /* beats: authored facts framed as today's mundane occurrence. Compiled
+       ONLY from what the user gave — fewer than 8 answers means a smaller
+       bank, never invented events. Kid/dependent-led entries stay a minority
+       (≤1/3), same dial as every shipped bank. */
+    const kidRe = /\b(kids?|sons?|daughters?|bab(?:y|ies)|toddlers?|child|children|school|daycare|nursery|diapers?)\b/i;
+    const beatCands = [];
+    if (g('w_story')) beatCands.push({
+      text: 'The ongoing thing in your life — ' + this._bInline(g('w_story')) + ' — had another small development today.',
+      kid: kidRe.test(g('w_story'))
+    });
+    for (const anchor of this._bSplit(a.w_anchors).slice(0, 6)) {
+      const t = anchor.replace(/[.!]+$/, '');
+      beatCands.push({ text: t.charAt(0).toUpperCase() + t.slice(1) + ' came around again today.', kid: kidRe.test(anchor) });
+    }
+    for (const person of this._bSplit(a.w_people).slice(0, 5)) {
+      const capm = person.match(/\b[A-Z][a-z]+\b/);
+      const who = capm ? capm[0] : person.split(/\s+/).slice(0, 2).join(' ');
+      beatCands.push({ text: 'Today had a lot of ' + who + ' in it.', kid: kidRe.test(person) });
+    }
+    const beats = beatCands.filter(c => !c.kid).slice(0, 12).map(c => c.text);
+    let kidCount = 0;
+    for (const c of beatCands.filter(c => c.kid)) {
+      if (beats.length >= 12) break;
+      if (kidCount + 1 <= Math.floor((beats.length + 1) / 3)) { beats.push(c.text); kidCount++; }
+      else warnings.push('Beats: kept a kid/dependent entry out of the rotation so her life reads as more than that: "' + c.text + '"');
+    }
+
+    /* textures: the dinner-then-couch layer, straight from her free-evening
+       answer — scenery, one mention at most, never a topic. */
+    const textures = this._bSplit(a.i_evening).slice(0, 6)
+      .map(t => t.replace(/[.!]+$/, '') + '.')
+      .map(t => t.charAt(0).toLowerCase() + t.slice(1));
+
+    /* seed memories: the shared history, durable from message one. The
+       inside joke is deliberately NOT pinned — pinned bypasses the theme
+       cap, and a joke that rides every prompt stops being a joke. */
+    const seedMemories = [];
+    if (g('h_mem1')) seedMemories.push({ text: this._bSent(g('h_mem1')), keywords: this._bKeywords(g('h_mem1')), importance: 4 });
+    if (g('h_mem2')) seedMemories.push({ text: this._bSent(g('h_mem2')), keywords: this._bKeywords(g('h_mem2')), importance: 4 });
+    if (g('h_joke')) seedMemories.push({
+      text: 'You two have an inside joke: "' + this._bClean(g('h_joke')).replace(/"/g, "'") + '".',
+      keywords: this._bKeywords(g('h_joke')), importance: 4
+    });
+
+    /* the mechanical fact-one-place pass: plist wins, then style, interests,
+       appearance in that order; beats and textures are checked against all
+       of it (their shared framing is exempt from each other on purpose). */
+    const used = this._bGrams(plist);
+    const style = this._bStripUsed(styleParts.join(' '), used, 'her texting style', warnings);
+    const interests = this._bStripUsed(iparts.join(' '), used, 'her life & interests', warnings);
+    const appearance = this._bStripUsed(lookBits.join(' '), used, 'her look', warnings);
+    const dedupBank = (bank, label) => bank.filter(t => {
+      for (const gm of this._bGrams(t)) if (used.has(gm)) {
+        warnings.push('Dropped from ' + label + ' — already carried elsewhere: "' + t + '"');
+        return false;
+      }
+      return true;
+    });
+    const beatsOut = dedupBank(beats, 'her beats');
+    const texturesOut = dedupBank(textures, 'her evenings');
+
+    /* greeting: register + rhythm only — content-free on purpose, because
+       the first message seeds her VOICE while the facts stay in the fields. */
+    const capFirst = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+    const opener = type === 'romantic' ? 'hey you' : 'hey';
+    const ask = 'what are you up to';
+    let bubbles;
+    if (a.v_caps === 'punctuated') bubbles = [capFirst(opener) + '!', capFirst(ask) + '?'];
+    else if (a.v_caps === 'sentence') bubbles = [capFirst(opener) + '.', capFirst(ask) + '?'];
+    else bubbles = [opener, ask];
+    const greeting = a.v_rhythm === 'burst' ? bubbles : [bubbles.join(' ')];
+
+    /* sliders: defaults derived from the answers; the customize screen shows
+       them next, so these are a starting position, not a verdict. */
+    const known = g('b_known');
+    const longKnown = /year/i.test(known);
+    let closeness = type === 'close_friend' ? 70 : type === 'romantic' ? 40 : 35;
+    if (longKnown) closeness = Math.min(90, closeness + 10);
+    let flirtiness = type === 'romantic' ? 60 : type === 'close_friend' ? 40 : 25;
+    if (g('u_feels')) flirtiness = Math.min(95, flirtiness + 10);
+    if (/flirt/i.test(g('v_drunk'))) flirtiness = Math.min(95, flirtiness + 10);
+    const traitBlob = (g('p_traits') + ' ' + g('p_happy')).toLowerCase();
+    const warmth = /warm|sweet|kind|caring|soft|affection/.test(traitBlob) ? 70
+      : /dry|sarcas|blunt|prickly|cold|reserved/.test(traitBlob) ? 45 : 55;
+    const confidence = /shy|anxious|insecure|nervous|timid/.test(traitBlob) ? 35
+      : /confident|bold|fearless|assured|brash/.test(traitBlob) ? 75 : 55;
+    let curiosity = a.b_first === 'her' ? 65 : a.b_first === 'you' ? 40 : 55;
+    if (/curious|nosy|asks/.test(traitBlob)) curiosity = Math.min(90, curiosity + 10);
+    const attraction = type === 'romantic' ? (g('u_feels') ? 25 : 15) : 0;
+
+    /* avatar color: deterministic off her name, from the app's palette. */
+    const palette = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+
+    const met = g('b_met');
+    return {
+      id: null,
+      /* the builder's fingerprints: `template` keeps name-matched _UPGRADES
+         rules off a user-authored person; `builder` lets a later edit reopen
+         the interview prefilled. Both ride onto the profile at creation. */
+      template: 'builder',
+      builder: Object.assign({}, a),
+      name,
+      age,
+      gender: 'woman',
+      type,
+      tag: 'built from your answers',
+      color: palette[h % palette.length],
+      hook: met ? (met.length > 90 ? met.slice(0, 87) + '…' : met) : 'Built from your answers, nothing invented.',
+      photoCandor: 'guarded',
+      templateRev: 0,
+      /* 'established' only matters for romantic types: it swaps the opening
+         line to "her place in your life predates this thread", which is only
+         true when the history says years. */
+      established: type === 'romantic' && longKnown,
+      personality: pparts.join(' '),
+      plist,
+      interests,
+      style,
+      appearance,
+      backstory: bparts.join(' '),
+      beats: beatsOut,
+      textures: texturesOut,
+      seedMemories,
+      reveals: g('p_never') ? [{
+        after: 40, bands: { closeness: 'high' },
+        text: 'Something she would never admit publicly: ' + this._bSent(g('p_never')) + ' It colors her; it never gets said outright.'
+      }] : [],
+      greeting,
+      mood: this._bInline(g('p_mood')),
+      opinion: '',                              // the generic just-getting-started default applies
+      unsaidSeed: this._bClean(g('u_feels')),   // her private unspoken side — shapes tone, never spoken
+      significantSeed: this._bClean(g('h_open')) || null, // the charged thing rides the reckoning machinery
+      opening: null,
+      /* No shared world map: her world is exactly what the answers gave and
+         nothing else — inheriting Jon's family would BE the hallucination
+         this feature exists to prevent. */
+      world: '',
+      sliders: { closeness, flirtiness, warmth, confidence, curiosity, attraction },
+      warnings
+    };
+  },
+
   /* ---- in-place template upgrades for EXISTING friends ----
      A friend is a snapshot of the template at creation time, so template
      improvements never reach friends already made — and deleting a friend to

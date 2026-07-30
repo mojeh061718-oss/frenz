@@ -908,6 +908,235 @@ console.log('\n== instruments: kid content measured by CONTENT, not first word =
   }
 }
 
+console.log('\n== builder: the guided interview compiles to authored fact, nothing else ==');
+{
+  // ---- shared helpers for this block ----
+  const grams = (text) => {
+    const words = String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+    const g = new Set();
+    for (let i = 0; i + 4 <= words.length; i++) g.add(words.slice(i, i + 4).join(' '));
+    return g;
+  };
+  const overlap = (a, b) => { const hits = []; for (const x of a) if (b.has(x)) hits.push(x); return hits; };
+  // Mirrors startConversation's profile/state assembly exactly (app.js is a
+  // browser file; the seeding logic is small enough to replicate 1:1 here).
+  const mkBuilderFriend = (tpl) => {
+    const notes = Personas.sliderText(tpl.sliders, tpl.name, tpl.sliders);
+    const profile = {
+      name: tpl.name, type: tpl.type, age: tpl.age, gender: tpl.gender,
+      personality: (tpl.personality ? tpl.personality + ' ' : '') + notes.personality,
+      interests: tpl.interests,
+      style: (tpl.style ? tpl.style + ' ' : '') + notes.style,
+      backstory: tpl.backstory, userName: 'Jon', userGender: 'male',
+      plist: tpl.plist, appearance: tpl.appearance,
+      beats: tpl.beats, textures: tpl.textures, opening: tpl.opening,
+      world: tpl.world, photoCandor: tpl.photoCandor, templateRev: tpl.templateRev,
+      reveals: tpl.reveals, established: tpl.established, sliders: tpl.sliders,
+      color: tpl.color, template: tpl.template, builder: tpl.builder
+    };
+    return {
+      id: 'builder-1', profile,
+      createdAt: Date.now() - 5 * DAY,
+      state: {
+        mood: tpl.mood || 'curious, easygoing',
+        comfort: Math.min(88, tpl.sliders.closeness + 15),
+        closeness: tpl.sliders.closeness,
+        attraction: tpl.sliders.attraction || 0,
+        opinion_notes: tpl.opinion || 'Just starting to get to know them. No strong impressions yet.',
+        unsaid: tpl.unsaidSeed || '',
+        lastSignificant: tpl.significantSeed ? { ts: API._now(), kind: tpl.significantSeed } : null,
+        _carry: {}
+      },
+      memories: (tpl.seedMemories || []).map(m => API._normMemory(
+        Object.assign({ ts: API._now(), lastAccessed: API._now() }, m))),
+      vibeSeed: 3
+    };
+  };
+
+  const FULL = {
+    b_name: 'Maya', b_age: '31', b_rel: 'close_friend',
+    b_met: 'She rear-ended my car in the gym parking lot and left a note that was mostly a joke',
+    b_known: 'about six years', b_freq: 'most days in bursts', b_first: 'her',
+    l_build: 'tall and soft-curvy', l_hair: 'long dark brown hair usually in a claw clip',
+    l_marks: 'a fern tattoo down her left forearm, freckles across her shoulders, pretty face with green eyes',
+    l_home: 'a worn thin tank, sleeps braless in boy shorts',
+    l_out: 'sundresses that flatter her big breasts with a natural hang',
+    l_proud: 'proud of her strong shoulders from climbing',
+    v_caps: 'lowercase', v_rhythm: 'burst', v_sig: 'rates everything out of ten',
+    v_laugh: 'a single "lmaooo" with an extra o per funny',
+    v_night: 'says "ok sleep" and vanishes mid-thread',
+    v_drunk: 'typos multiply and she gets weirdly flirty and honest',
+    v_sincere: 'the jokes stop and punctuation appears',
+    v_typos: 'never fixes them, owns them',
+    p_traits: 'dry, loyal, stubborn', p_happy: 'loud and generous, sends memes in stacks',
+    p_stress: 'goes quiet and cleans the whole apartment',
+    p_annoyed: 'one-word replies until you notice',
+    p_mood: 'worn thin lately because of the landlord war', p_cheer: 'gas station slushies',
+    p_peeve: 'people who talk during movies', p_never: 'she still sleeps with the hall light on',
+    w_people: "her sister Ro, her nephew Theo who is four, roommate Dana, an ancient cat named Bug",
+    w_job: 'an ER intake nurse on rotating shifts and she loves the chaos more than she admits',
+    w_place: 'a third-floor walkup with a fire-escape garden',
+    w_bff: 'Priya from nursing school',
+    w_anchors: "Tuesday closing shifts, Thursday climbing gym, Sunday dinner at her mom's, school pickup for Theo on Fridays",
+    w_story: 'slowly losing the war with her landlord over the broken heater',
+    w_logi: 'a rusting Corolla she refuses to replace and street parking drama',
+    i_three: 'bouldering, horror movies, true crime podcasts',
+    i_over: 'true crime podcasts', i_media: 'horror everything and one prestige drama at a time',
+    i_evening: 'wine and a horror movie, texting through the whole thing, sometimes baking at midnight',
+    i_bad: 'baking, catastrophically',
+    h_mem1: 'The night we got locked out of the cabin in a storm and played twenty questions in the car until 3am',
+    h_mem2: 'Her birthday karaoke where we did a duet so bad the bar comped a round',
+    h_joke: 'solid four out of ten',
+    h_last: 'coffee two weekends ago that turned into a four hour walk',
+    h_open: 'she said something on the last walk that we both pretended was a joke',
+    u_noticed: 'she rereads texts before sending the important ones and always drinks exactly half her coffee',
+    u_feels: 'she likes me more than she will ever say and it scares her',
+    u_avoid: 'her dad', u_gone: 'she would show up at my door pretending to be annoyed'
+  };
+  const tpl = Personas.compileBuilder(FULL);
+
+  // -- schema completeness: every field the pipeline reads exists --
+  ok(tpl.name === 'Maya' && tpl.age === 31 && tpl.type === 'close_friend' && tpl.gender === 'woman',
+    'identity fields compile');
+  ok(['personality', 'plist', 'interests', 'style', 'appearance', 'backstory', 'mood', 'hook', 'color', 'tag']
+    .every(k => typeof tpl[k] === 'string' && tpl[k].length > 0), 'all prose fields present and non-empty');
+  ok(Array.isArray(tpl.beats) && Array.isArray(tpl.textures) && Array.isArray(tpl.seedMemories)
+    && Array.isArray(tpl.greeting) && Array.isArray(tpl.reveals), 'all bank fields are arrays');
+  ok(['closeness', 'flirtiness', 'warmth', 'confidence', 'curiosity', 'attraction']
+    .every(k => typeof tpl.sliders[k] === 'number'), 'all six sliders derived');
+  ok(tpl.template === 'builder' && tpl.builder && tpl.builder.b_name === 'Maya',
+    'builder fingerprint set (guards name-matched upgrades; enables re-editing)');
+  ok(tpl.world === '', 'no inherited world map — her world is only what the answers gave');
+
+  // -- deterministic: same answers, same persona, every time --
+  const again = Personas.compileBuilder(FULL);
+  ok(JSON.stringify(tpl) === JSON.stringify(again), 'compiler is deterministic');
+
+  // -- fact-one-place: no normalized 4-gram shared between plist and
+  //    interests/style/appearance --
+  const plistGrams = grams(tpl.plist);
+  ok(overlap(plistGrams, grams(tpl.interests)).length === 0, 'plist shares no 4-gram with interests');
+  ok(overlap(plistGrams, grams(tpl.style)).length === 0, 'plist shares no 4-gram with style');
+  ok(overlap(plistGrams, grams(tpl.appearance)).length === 0, 'plist shares no 4-gram with appearance');
+  ok(tpl.plist.includes('dry, loyal, stubborn') && tpl.plist.includes('sincere ='), 'plist carries traits + sincere-tell');
+  ok(tpl.plist.split(',').length <= 12 && !tpl.style.includes('jokes stop'),
+    'sincere-tell lives in plist ONLY (not restated in style)');
+
+  // -- style sentence 1: register + rhythm + signature, and it survives the
+  //    _plist truncation intact --
+  const s1 = tpl.style.split(/[.!]/)[0];
+  ok(/Lowercase/.test(s1), 'S1 carries the register keyword');
+  ok(/bursts of two or three/.test(s1), 'S1 carries the bubble rhythm');
+  ok(/rates everything out of ten/.test(s1), 'S1 carries the signature marker');
+  ok(tpl.style.length > s1.length + 1, 'style continues past S1 (laugh/goodnight/drunk/typos)');
+
+  // -- beats: authored facts only, ≤12, kid-led a minority --
+  ok(tpl.beats.length >= 8 && tpl.beats.length <= 12, 'full answers yield a real bank (' + tpl.beats.length + ')');
+  ok(tpl.beats.every(b => /\.$/.test(b) && b.length > 12), 'every beat is a full fact sentence');
+  const kidRe = /\b(kids?|sons?|daughters?|bab(?:y|ies)|toddlers?|child|children|school|daycare|nursery|diapers?)\b/i;
+  const kidLed = tpl.beats.filter(b => kidRe.test(b)).length;
+  ok(kidLed <= Math.floor(tpl.beats.length / 3), 'kid/dependent beats ≤ 1/3 (' + kidLed + '/' + tpl.beats.length + ')');
+  ok(tpl.beats.some(b => /landlord/.test(b)) && tpl.beats.some(b => /Tuesday closing shifts/.test(b)),
+    'storyline and anchors became beats');
+  // the kid cap actually trims: mostly-kid answers lose the excess, with a note
+  const kidTpl = Personas.compileBuilder({
+    b_name: 'Sam', w_story: 'renovating the kitchen',
+    w_anchors: 'gym Mondays, school run daily, daycare pickup Fridays'
+  });
+  const kidLed2 = kidTpl.beats.filter(b => kidRe.test(b)).length;
+  ok(kidLed2 <= Math.floor(kidTpl.beats.length / 3) && kidTpl.warnings.some(w => /kid\/dependent/.test(w)),
+    'kid cap trims a kid-heavy bank and says so (' + kidLed2 + '/' + kidTpl.beats.length + ')');
+
+  // -- textures: up to 6, scenery-grade fragments from the free evening --
+  ok(tpl.textures.length >= 2 && tpl.textures.length <= 6 && tpl.textures.every(t => /\.$/.test(t)),
+    'textures compiled from the free-evening answer (' + tpl.textures.length + ')');
+
+  // -- appearance sanitizers: no face features, no measured moderation words --
+  ok(!/\b(face|eyes?|nose|lips?|smiles?|cheeks?)\b/i.test(tpl.appearance),
+    'appearance names no face feature after sanitize');
+  ok(!/\b(breasts?|braless|boy shorts|hang)\b/i.test(tpl.appearance),
+    'measured moderation triggers calmed');
+  ok(/chest/.test(tpl.appearance) && /freckles across her shoulders/.test(tpl.appearance),
+    'the same anatomy survives in calmer words; body freckles stay');
+  ok(tpl.warnings.some(w => /portrait/.test(w)) && tpl.warnings.some(w => /braless/i.test(w)),
+    'both sanitizers reported to the review step (' + tpl.warnings.length + ' notes)');
+
+  // -- memories: importance 4, keywords real, inside joke NOT pinned --
+  ok(tpl.seedMemories.length === 3 && tpl.seedMemories.every(m => m.importance === 4 && m.keywords.length >= 2),
+    'two memories + the joke, importance 4, keywords extracted');
+  ok(tpl.seedMemories.every(m => !m.pinned), 'no memory is pinned (pinned bypasses the theme cap)');
+  ok(/solid four out of ten/.test(tpl.seedMemories[2].text), 'the inside joke phrase is the third memory');
+
+  // -- the private layer routes to the seeding channels the schema already has --
+  ok(tpl.unsaidSeed === FULL.u_feels, 'secretly-feels -> unsaidSeed, verbatim, nowhere else');
+  ok(!(tpl.personality + tpl.interests + tpl.plist + tpl.backstory).includes('scares her'),
+    'the unsaid never leaks into a spoken field');
+  ok(tpl.significantSeed === FULL.h_open, 'unresolved/charged -> significantSeed (state.lastSignificant at creation)');
+  ok(tpl.reveals.length === 1 && /hall light/.test(tpl.reveals[0].text) && tpl.reveals[0].after === 40,
+    'never-admits-publicly becomes a gated reveal, not surface text');
+
+  // -- greeting: register-true and content-free --
+  ok(tpl.greeting.length === 2 && tpl.greeting[0] === 'hey', 'lowercase burst greeting: two plain bubbles');
+  ok(!tpl.greeting.join(' ').match(/landlord|Theo|karaoke/), 'greeting invents and leaks nothing');
+
+  // -- sliders derived from the answers --
+  ok(tpl.sliders.closeness === 80 && tpl.sliders.curiosity === 65 && tpl.sliders.flirtiness === 60,
+    'close-friend + years known + she-texts-first + drunk-flirty all move the dials');
+
+  // -- sparse answers: half skipped compiles clean, and absent stays absent --
+  const SPARSE = {
+    b_name: 'June', b_rel: 'friend',
+    b_met: 'We met in the comments of a niche synth forum and it spilled into DMs',
+    v_caps: 'punctuated', v_sig: 'em dashes everywhere',
+    p_traits: 'earnest, precise, a little formal',
+    w_job: 'a librarian who runs the local history room',
+    i_evening: 'tea and cataloguing her record shelf',
+    h_mem1: 'The estate sale where we found the broken Moog and carried it eleven blocks'
+  };
+  const sp = Personas.compileBuilder(SPARSE);
+  ok(sp.name === 'June' && sp.plist.length > 0 && sp.style.length > 0, 'sparse set still compiles');
+  const spBlob = JSON.stringify(sp);
+  ok(!/landlord|Theo|karaoke|Corolla/.test(spBlob), 'nothing from another interview bleeds in');
+  ok(sp.beats.length === 0, 'no section-5 answers -> NO beats — never padded with invented events');
+  ok(sp.significantSeed === null && sp.unsaidSeed === '' && sp.mood === '',
+    'skipped seeds stay empty (defaults, not fabrications)');
+  ok(!/known each other|texts first|Her place|best friend|goodnights|been drinking/.test(spBlob),
+    'skipped questions leave no trace — the compiler writes only what was answered');
+  ok(/Properly punctuated/.test(sp.style.split(/[.!]/)[0]) && /em dashes everywhere/.test(sp.style.split(/[.!]/)[0]),
+    'sparse S1 still packs register + signature');
+  ok(Personas.compileBuilder({}).name === 'Her', 'a fully empty interview does not crash');
+
+  // -- the compiled profile assembles through the REAL pipeline --
+  const f = mkBuilderFriend(tpl);
+  const notes = Personas.sliderText(tpl.sliders, tpl.name, tpl.sliders);
+  ok(notes.personality === '' && notes.style === '',
+    'derived sliders ARE the defaults, so sliderText adds no generic clauses');
+  const persona = API.buildPersona(f, 'rich');
+  const dyn = API.buildDynamicContext(f, API._now() - 3600000, 0, 10, null, null, [{ role: 'user', text: 'hey' }]);
+  const plist = API._plist(f);
+  const phi = API._phi(f, true, 3, []);
+  ok(persona.length > 1500 && dyn.length > 300 && plist.length > 150 && phi.length > 100,
+    'builder persona assembles through buildPersona + dynamic + plist + phi');
+  ok(plist.includes('dry, loyal, stubborn') && plist.includes('Lowercase'),
+    'binding traits and style S1 reach the generation point');
+  ok(plist.includes('she likes me more than she will ever say'),
+    'the unsaid seed rides depth-4 from message one');
+  // no duplicated fact 4-grams: the volatile blocks never restate the plist,
+  // and the beat that rides the dynamic block never restates her fields
+  ok(overlap(grams(tpl.plist), grams(dyn)).length === 0, 'dynamic block shares no 4-gram with plist traits');
+  const beatLine = (dyn.match(/something real happened in your world: ([^\n]*)/) || [])[1] || '';
+  ok(overlap(grams(beatLine), grams(tpl.interests + ' ' + tpl.plist + ' ' + tpl.style)).length === 0,
+    'the surfaced beat duplicates nothing from her static fields');
+  // and the mechanical dedupe pass actually fires when the user repeats
+  // themselves across questions
+  const dup = Personas.compileBuilder(Object.assign({}, SPARSE, {
+    i_three: 'earnest, precise, a little formal'   // same words she gave as traits
+  }));
+  ok(!grams(dup.interests).size || overlap(grams(dup.plist), grams(dup.interests)).length === 0,
+    'a fact typed into two questions still lands in one place');
+  ok(dup.warnings.some(w => /one place/.test(w)), 'and the review step is told why');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
   + (intendedRed ? ', ' + intendedRed + ' intended-red (expected — see RED* lines)' : ''));
 process.exit(fail ? 1 : 0);
