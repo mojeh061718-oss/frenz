@@ -409,7 +409,7 @@ console.log('\n== 16. testlook lens ==');
 console.log('\n== 17. v10.4 backstory rewrites ==');
 {
   const sam = Personas.byId('samantha');
-  ok(sam.templateRev === 9, 'samantha at rev 9');
+  ok(sam.templateRev === 10, 'samantha at rev 10');
   ok(/did not stop/.test(sam.backstory) && /five seconds/.test(sam.backstory), 'the five seconds are in the backstory');
   ok(/never about those five seconds/.test(sam.backstory), '…and marked as the thing she never mentions');
   ok(sam.greeting.length === 2 && /mortified/.test(sam.greeting[1]) && /sorry/.test(sam.greeting[1]), 'her first text is mortified + sorry, nothing more');
@@ -425,7 +425,7 @@ console.log('\n== 17. v10.4 backstory rewrites ==');
   ok(/sorry/i.test(tay.greeting.join(' ')) && /top/.test(tay.greeting[1]), 'greeting apologizes for the top');
 
   const anna = Personas.byId('anna');
-  ok(anna.templateRev === 2, 'anna at rev 2');
+  ok(anna.templateRev === 3, 'anna at rev 3');
   ok(/husband-and-kid-free/.test(anna.greeting[0]) && /riding like old times/.test(anna.greeting[1]), 'kid-free night + riding like old times opener');
   ok(/riding around/.test(anna.backstory), 'the riding history is real backstory, not an orphan line');
 
