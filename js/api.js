@@ -2353,8 +2353,8 @@ const ClaudeAPI = {
       'A casual photo she took on her phone at lap height, looking down at what she is doing — her hands, her thighs or knees, the thing she is holding — the frame starting mid-torso so everything above it is out of the picture.'
     ],
     mirror: [
-      'A full-length mirror photo she took on her phone, the phone raised in front of her head so that it covers her face completely in the reflection, her whole outfit visible from shoes to shoulders.',
-      'A mirror photo she took on her phone, holding it up in front of her face so the phone is what appears in the reflection where her head would be, the rest of her visible head to toe.'
+      'A full-length mirror photo she took on her phone, the phone raised in front of her head so that it covers her face completely in the reflection, her whole outfit visible from shoes to shoulders. The picture contains only the mirror\'s reflection.',
+      'A mirror photo she took on her phone, holding it up in front of her face so the phone is what appears in the reflection where her head would be, the rest of her visible head to toe. The picture contains only the mirror\'s reflection.'
     ]
   },
 
@@ -2491,8 +2491,15 @@ const ClaudeAPI = {
     // slices prompts at 1000 chars, and the full block pushed every
     // persona's test prompt past it — truncating exactly the no-filter
     // cues the lens exists to check.
-    return 'A mirror photo she took on her phone, standing square to a tall wall mirror mounted low: the mirror\'s top edge sits at the base of her neck, so the reflection shows her from the base of the neck down to her feet, and everything above the neck is past the mirror\'s edge.' +
-      ' The picture shows her whole figure exactly as it is, standing relaxed at home in simple everyday clothes that show her true build.' +
+    // Three rounds of live testing shaped this framing. "Mirror mounted
+    // low" rendered her real head floating above the glass; crop-at-the-
+    // neck alone leaked a face 1 in 5; crop + reflection-only produced
+    // duplicate-torso junk in the headroom — the model fights any headless
+    // whole-figure ask, because mirror selfies in its training data have
+    // heads. The composition it renders cleanly every time is the one real
+    // people actually post: full length, phone held up in FRONT of the
+    // face. The face region is occupied (no junk to invent) and hidden.
+    return 'A full-length mirror photo she took on her phone, standing square to a tall wall mirror, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet exactly as she is, relaxed at home in simple everyday clothes that show her true build.' +
       ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.') +
       ' Shot on a phone in real room light, handheld and slightly off level, true skin and fabric texture, flat unedited colour, no filter, no retouching, no beauty smoothing, no text or overlay.';
   },

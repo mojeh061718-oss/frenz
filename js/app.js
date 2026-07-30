@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.9';
+const APP_JS_VERSION = '10.10';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -1113,7 +1113,9 @@ async function runTestLook(friend) {
   $('#chat-messages').appendChild(note);
   scrollChat();
   try {
-    const url = await ClaudeAPI.generateImage(entry, ClaudeAPI.testLookPrompt(friend), { raw: true, width: 768, height: 1280 });
+    // 3:4, not 9:16 — the extra headroom of a tall frame is where the
+    // model invents junk (duplicate torsos) above the mirror.
+    const url = await ClaudeAPI.generateImage(entry, ClaudeAPI.testLookPrompt(friend), { raw: true, width: 768, height: 1024 });
     note.remove();
     const div = bubbleEl('assistant', '', { photo: url });
     div.classList.add('transient-note'); // never persisted; gone on the next real send

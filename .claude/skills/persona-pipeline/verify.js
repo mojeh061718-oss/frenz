@@ -400,7 +400,7 @@ console.log('\n== 16. testlook lens ==');
     ok(p.length <= 1000, t.id + ': prompt survives the 1000-char slice (' + p.length + ')');
   }
   const p = API.testLookPrompt(mkFriend('samantha'));
-  ok(/base of her neck/.test(p) && /down to her feet/.test(p), 'mirror ends at the neck, full figure below');
+  ok(/directly in front of her face/.test(p) && /hair to feet/.test(p), 'phone-over-face full figure (the framing grok renders cleanly — 4 live rounds)');
   ok(/redhead/.test(p) && /tattoos/.test(p), 'appearance sheet is the subject');
   ok(/no filter, no retouching/.test(p), 'raw-photo cues intact (not truncated)');
   ok(API.testLookPrompt({ profile: {} }).includes('an adult woman'), 'tolerates a persona with no appearance');
