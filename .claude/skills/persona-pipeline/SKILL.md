@@ -208,10 +208,14 @@ for scene-premise personas: persona-scoped direction for the aftermath
 conversation, injected into the dynamic block only while `exchangedCount`
 is under the window, self-retiring before the reveal ladder takes over —
 situational loading with a built-in expiry, never a permanent rule. Two out-of-band tools live beside the pipeline and must STAY out of
-band: the composer command `testlook` (renders the persona's appearance
-sheet as a neck-down mirror shot — no history, no state, no model call, no
-acknowledgment, swept with the transient notes) and the triple-tap panic
-cover (pure UI). Neither may ever leak into anything the model reads. It loads `js/personas.js` then `js/api.js` into a `vm` context with
+band: the composer command `testlook` (bare: the persona's appearance sheet
+as the byte-stable neck-down mirror check; `testlook <action> [normal|spicy]`,
+brackets optional: the action through the REAL photo pipeline via
+`testLookScenePrompt` — garnish + framing re-roll per invocation off the
+time salt, spicy = heat-2 implication register; either way no history, no
+state, no chat-model call, no acknowledgment, swept with the transient
+notes) and the triple-tap panic cover (pure UI). Neither may ever leak
+into anything the model reads. It loads `js/personas.js` then `js/api.js` into a `vm` context with
 stub `localStorage` and drives the REAL engine headlessly — extend it there,
 and add assertions for any new behavior before shipping. Use it to:
 
@@ -336,7 +340,7 @@ the fixtures were wrong before.
   unposed yet "quietly, accidentally alluring… suggests more than it shows".
   Camera degradation stays mild (stacking blur+noise+artifacts = mush, v8.2
   lesson) and pose language stays positive (a bare "no modeling pose" ban
-  renders merely domestic). Prompt slice budget is 1800 chars — it was 1000
+  renders merely domestic). Prompt slice budget is 2000 chars — it was 1000
   through v10.17, SHORTER than every assembled pov prompt, silently cutting
   the camera register and heat tone; verify guards the full chain per
   persona now. The cap is a runaway guard, not an xAI limit.

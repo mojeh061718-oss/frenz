@@ -2631,6 +2631,46 @@ const ClaudeAPI = {
       ' Shot like a quick snap: careless tilted framing, slightly grainy, flat unedited colour, ordinary room light, true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.';
   },
 
+  /* testlook [action] [normal|spicy] — the SCENE variant of the debug lens.
+     Same out-of-band contract as the bare command (no history, no state, no
+     acknowledgment), but instead of the fixed appearance check it drives the
+     REAL photo pipeline — framing pools, faceless rules, pose clause, snap
+     camera, heat tone — so what you inspect is exactly what the app would
+     produce for that moment. Bare `testlook` stays byte-stable on purpose:
+     it is the comparable sheet check; this is the situational one.
+
+     Variety comes from the salt (the invocation time): it rotates the
+     garnish, and because the garnish changes the desc, it also rotates
+     which framing variant the pool hash picks — same action twice never
+     composes identically. Spicy is written to the house register: nothing
+     shown, everything implied, the mind does the work — and in the calm
+     vocabulary the moderation lessons proved out (a slipped strap and a
+     high hem pass; anatomical insistence does not). */
+  _TL_GARNISH: {
+    normal: [
+      'caught mid-moment, one hand busy with it, exactly as ordinary as it sounds',
+      'settled into it for the evening, comfortable and unbothered',
+      'halfway through it like nobody is texting her — the ordinary, unperformed version',
+      'the domestic version, casual and lived-in, nothing arranged for the camera'
+    ],
+    spicy: [
+      'done the way she does it when nobody is expected: technically innocent, and the angle knows better',
+      'dressed for it the way she actually is at home by that hour, the frame stopping exactly where it gets interesting',
+      'caught at the instant the ordinary scene turns suggestive — a slipped strap, a hem higher than she noticed — still just an evening at home on its face',
+      'relaxed and a little careless with herself, what sits just past the frame edge doing all the talking'
+    ]
+  },
+  testLookScenePrompt(friend, action, spicy, salt) {
+    const appearance = (friend && friend.profile && friend.profile.appearance) || 'an adult woman';
+    const bank = this._TL_GARNISH[spicy ? 'spicy' : 'normal'];
+    const g = bank[this._hash32(String(action) + '|tl|' + (salt || 0)) % bank.length];
+    const desc = 'at home this evening — the scene: ' + String(action).trim() + ' — ' + g;
+    // mode forced to pov: a look test is about HER, and bare nouns like
+    // "bed" or "couch" would otherwise route to scene mode (a photo of the
+    // furniture with nobody in it — correct for chat, useless here).
+    return this._imagePrompt(desc, 'pov', appearance, spicy ? 2 : 0);
+  },
+
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —
      map whatever width/height the caller wanted onto the nearest ratio. */
   _ASPECTS: [['1:1', 1], ['3:4', 3 / 4], ['4:3', 4 / 3], ['2:3', 2 / 3], ['3:2', 3 / 2], ['9:16', 9 / 16], ['16:9', 16 / 9], ['1:2', 1 / 2], ['2:1', 2]],
@@ -2654,10 +2694,10 @@ const ClaudeAPI = {
     /* Budget bug, caught at v10.18: the old 1000-char slice was SHORTER than
        every assembled pov prompt (appearance sheet + framing alone run
        ~1000), so the camera register and heat tone were being cut off before
-       they ever reached the model. 1800 fits the longest persona's full
+       they ever reached the model. 2000 clears the longest persona's full
        prompt; xAI has been accepting well past this with _IMAGE_AVOID
        appended, so the cap is a runaway guard, not an API limit. */
-    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 1800);
+    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 2000);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
@@ -2734,7 +2774,7 @@ const ClaudeAPI = {
     const ladder = [firstPrompt];
     if (!o.raw) {
       for (const m of (this._RECOVERY_LADDER[mode] || [])) {
-        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 1800));
+        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 2000));
       }
     }
     let declined = null;

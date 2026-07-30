@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.19';
+const APP_JS_VERSION = '10.20';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -1042,15 +1042,25 @@ async function sendMessage() {
   const text = input.value.trim();
   if (!text) return;
 
-  // 'testlook' is a debug lens, not a message: render this persona's
-  // appearance sheet as a neck-down mirror shot and touch NOTHING else —
-  // no history, no state, no model call, no acknowledgment, and it does
-  // not even cancel an opener she happens to be drafting.
-  if (/^testlook$/i.test(text)) {
+  // 'testlook' is a debug lens, not a message: touch NOTHING else — no
+  // history, no state, no model call, no acknowledgment, and it does not
+  // even cancel an opener she happens to be drafting. Bare `testlook`
+  // renders the appearance sheet as the fixed neck-down mirror check;
+  // `testlook <action> [normal|spicy]` (brackets optional) runs the action
+  // through the real photo pipeline instead.
+  const tl = /^testlook\b([\s\S]*)$/i.exec(text);
+  if (tl) {
     input.value = '';
     input.style.height = 'auto';
     updateSendButton();
-    runTestLook(currentFriend);
+    let rest = tl[1].replace(/[[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    let spicy = false;
+    const heat = /\s*\b(normal|spicy)\s*$/i.exec(rest);
+    if (heat) {
+      spicy = heat[1].toLowerCase() === 'spicy';
+      rest = rest.slice(0, heat.index).trim();
+    }
+    runTestLook(currentFriend, rest || null, spicy);
     return;
   }
 
@@ -1127,7 +1137,7 @@ async function sendMessage() {
    model never sees that this happened. Deliberately does not take the
    composer lock: it is a tool, not a conversation turn. */
 let testlookBusy = false;
-async function runTestLook(friend) {
+async function runTestLook(friend, action, spicy) {
   if (testlookBusy || !friend) return;
   const settings = Settings.get();
   const entry = ClaudeAPI.imageEntry(settings);
@@ -1138,13 +1148,21 @@ async function runTestLook(friend) {
   testlookBusy = true;
   const note = document.createElement('div');
   note.className = 'msg sys transient-note';
-  note.textContent = 'test shot — rendering her appearance sheet…';
+  note.textContent = action
+    ? `test shot — rendering: ${action}${spicy ? ' (spicy)' : ''}…`
+    : 'test shot — rendering her appearance sheet…';
   $('#chat-messages').appendChild(note);
   scrollChat();
   try {
-    // 3:4, not 9:16 — the extra headroom of a tall frame is where the
-    // model invents junk (duplicate torsos) above the mirror.
-    const url = await ClaudeAPI.generateImage(entry, ClaudeAPI.testLookPrompt(friend), { raw: true, width: 768, height: 1024 });
+    // Mirror check stays 3:4 — the extra headroom of a tall frame is where
+    // the model invents junk (duplicate torsos) above the mirror. Scene
+    // shots use the real photo pipeline's tall default, because they ARE
+    // the real photo pipeline.
+    const prompt = action
+      ? ClaudeAPI.testLookScenePrompt(friend, action, spicy, ClaudeAPI._now())
+      : ClaudeAPI.testLookPrompt(friend);
+    const url = await ClaudeAPI.generateImage(entry, prompt,
+      action ? { raw: true } : { raw: true, width: 768, height: 1024 });
     note.remove();
     const div = bubbleEl('assistant', '', { photo: url });
     div.classList.add('transient-note'); // never persisted; gone on the next real send

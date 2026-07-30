@@ -317,8 +317,8 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   const longDesc = 'curled up on the couch in my thin cami and sleep shorts, tv on, glass of wine in my hand, one leg tucked under me';
   for (const t of Personas.templates) {
     const full = API._imagePrompt(longDesc, 'pov', t.appearance, 2);
-    ok(full.length <= 1800 && /implication rather than display/.test(full),
-      t.id + ': full pov prompt fits the 1800 budget with heat tail intact (' + full.length + ')');
+    ok(full.length <= 2000 && /implication rather than display/.test(full),
+      t.id + ': full pov prompt fits the 2000 budget with heat tail intact (' + full.length + ')');
   }
   ok(/redhead/i.test(pov), 'body-type fidelity: appearance sheet rides as the phone-holder');
   const mirror = API._imagePrompt('new dress, fit check', 'mirror', app, 0);
@@ -415,6 +415,30 @@ console.log('\n== 16. testlook lens ==');
   ok(/redhead/i.test(p) && /tattoos/.test(p), 'appearance sheet is the subject');
   ok(/no filter, no retouching/.test(p), 'raw-photo cues intact (not truncated)');
   ok(API.testLookPrompt({ profile: {} }).includes('an adult woman'), 'tolerates a persona with no appearance');
+
+  // the scene variant: testlook [action] [normal|spicy]
+  {
+    const f = { profile: { appearance: Personas.byId('samantha').appearance } };
+    const sp = API.testLookScenePrompt(f, 'bed', true, 1);
+    ok(/redhead/i.test(sp) && sp.includes('bed'), 'scene lens carries the sheet and the action');
+    ok(/head is outside the picture|collarbone|shoulders/i.test(sp), 'scene lens is faceless by construction');
+    ok(sp.includes('implication rather than display'), 'spicy rides the charged heat tone');
+    ok(!API.testLookScenePrompt(f, 'bed', false, 1).includes('implication rather than display'),
+      'normal stays uncharged');
+    const seen = new Set();
+    for (let s = 0; s < 8; s++) seen.add(API.testLookScenePrompt(f, 'bed', true, s));
+    ok(seen.size >= 3, 'same action re-rolls composition across invocations (' + seen.size + '/8 distinct)');
+    let worst = 0;
+    for (const t of Personas.templates) {
+      for (let s = 0; s < 8; s++) {
+        for (const spicy of [false, true]) {
+          worst = Math.max(worst, API.testLookScenePrompt({ profile: { appearance: t.appearance } },
+            'folding the last of the laundry on the couch', spicy, s).length);
+        }
+      }
+    }
+    ok(worst <= 2000, 'worst scene prompt fits the 2000 budget (' + worst + ')');
+  }
 }
 
 console.log('\n== 17. v10.4 backstory rewrites ==');
