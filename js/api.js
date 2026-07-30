@@ -199,7 +199,10 @@ const ClaudeAPI = {
   // Read off her style field. Lowercase signals win over politeness signals:
   // "lowercase but polite" is still lowercase.
   _STYLE_LOWERCASE: /lowercase|all lower|no caps|without capital|no punctuation|minimal punctuation/i,
-  _STYLE_PUNCTUATED: /properly punctuat|proper punctuat|proper grammar|full sentences|correct punctuat|punctuates|capitali[sz]|formal|polite|prim|precise/i,
+  // "Sentence case… Punctuation mostly correct" (Anna) matched none of the
+  // original forms and fell through to the lowercase default — the exact
+  // archived failure invariant 10 was written about, from the routing side.
+  _STYLE_PUNCTUATED: /properly punctuat|proper punctuat|proper grammar|full sentences|correct punctuat|punctuation (?:is )?mostly correct|mostly correct punctuat|sentence case|punctuates|capitali[sz]|formal|polite|prim|precise/i,
   _exampleBank(style) {
     const s = String(style || '');
     if (this._STYLE_LOWERCASE.test(s)) return this._EXAMPLES;

@@ -2093,6 +2093,15 @@ async function upgradeTemplateFriends() {
     // anything while the relationship is still inside the opening window,
     // so reaching existing early-stage friends is the whole point.
     if (tpl && tpl.opening && !f.profile.opening) { f.profile.opening = tpl.opening; changed = true; }
+    // Unsaid seeds are STATE, not profile — mirror creation seeding
+    // (state.unsaid = t.unsaidSeed) for friends still inside the opening
+    // exchange window: the seed is the aftermath's inner voice, and a thread
+    // past the window has its own unsaid life that must never be overwritten.
+    if (tpl && tpl.unsaidSeed && f.state && !f.state.unsaid) {
+      const win = (tpl.opening && tpl.opening.until) || 40;
+      const msgCount = (await DB.getMessages(f.id)).length;
+      if (msgCount < win) { f.state.unsaid = tpl.unsaidSeed; changed = true; }
+    }
     // Significance seed: stamped at the friend's creation time, so a thread
     // already weeks past its origin event falls outside the reckoning
     // window and nothing changes for it.

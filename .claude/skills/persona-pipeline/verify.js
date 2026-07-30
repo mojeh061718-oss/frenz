@@ -1137,6 +1137,199 @@ console.log('\n== builder: the guided interview compiles to authored fact, nothi
   ok(dup.warnings.some(w => /one place/.test(w)), 'and the review step is told why');
 }
 
+/* ================= templates (Phase 1C/4C audit) =================
+   Appended as one contiguous block — never renumber the sections above;
+   parallel audit agents append their own blocks after this one. */
+
+console.log('\n== templates: example-bank routing per persona (invariant 10) ==');
+{
+  // Anna's archived failure class: "Sentence case… Punctuation mostly
+  // correct" matched neither register regex and fell to the lowercase
+  // default — a sentence-case mom learning from lowercase few-shots.
+  const expect = { kelly: 'lower', bre: 'lower', samantha: 'lower', anna: 'punct', tay: 'punct' };
+  for (const t of Personas.templates) {
+    const want = expect[t.id] === 'punct' ? API._EXAMPLES_PUNCTUATED : API._EXAMPLES;
+    ok(API._exampleBank(t.style) === want,
+      'templates: ' + t.id + ' routes to the ' + expect[t.id] + ' bank');
+    // invariant 11: the register signal must survive style-S1 truncation —
+    // sentence one alone still routes to the same bank
+    const s1 = (t.style || '').split(/[.!]/)[0];
+    ok(API._exampleBank(s1) === want,
+      'templates: ' + t.id + ' style sentence 1 alone carries the register signal');
+  }
+  // bank parity: same length, BAD/GOOD teaching pair at every index, and the
+  // same scenario at the same index in both registers (invariant 10: any new
+  // example goes in BOTH banks at the same index)
+  ok(API._EXAMPLES.length === API._EXAMPLES_PUNCTUATED.length,
+    'templates: example banks are index-parallel (' + API._EXAMPLES.length + '/' + API._EXAMPLES_PUNCTUATED.length + ')');
+  for (let i = 0; i < API._EXAMPLES.length; i++) {
+    const a = API._EXAMPLES[i], b = API._EXAMPLES_PUNCTUATED[i];
+    ok(/BAD:/.test(a) && /GOOD:/.test(a) && /BAD:/.test(b) && /GOOD:/.test(b),
+      'templates: bank index ' + i + ' carries BAD/GOOD in both registers');
+    const words = s => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+    const wa = new Set(words(a.split(/BAD:/)[0])), wb = words(b.split(/BAD:/)[0]);
+    const overlap = wb.filter(w => wa.has(w)).length / Math.max(1, wb.length);
+    ok(overlap >= 0.7, 'templates: bank index ' + i + ' is the same scenario in both registers (' + overlap.toFixed(2) + ')');
+  }
+}
+
+console.log('\n== templates: kid/dependent content stays a minority of every bank ==');
+{
+  // Content-word classifier over the WHOLE entry text (the leading-word
+  // regex in section 19 scored 3/12 on a bank that was really 8/12).
+  const KID = /\b(kid|kids|baby|toddler|newborn|son|daughter|bedtime|sitter|babysitter|nap|naps|diaper|stroller|school|pickup|practice|cam|gunner|blaze|rocky|sadie)\b/i;
+  for (const t of Personas.templates) {
+    for (const bankName of ['beats', 'textures']) {
+      const bank = t[bankName] || [];
+      if (!bank.length) continue;
+      const hits = bank.filter(x => KID.test(x)).length;
+      ok(hits <= Math.floor(bank.length / 3),
+        'templates: ' + t.id + ' ' + bankName + ' kid content ' + hits + '/' + bank.length + ' (at most a third)');
+    }
+  }
+  const sam = Personas.byId('samantha');
+  const kidLed = (sam.beats || []).filter(x => KID.test(x)).length;
+  ok(kidLed <= 4, 'templates: samantha beats at most 4/12 kid-led by content words (' + kidLed + '/12)');
+}
+
+console.log('\n== templates: Tay opening act + unsaid seed (scene-premise parity) ==');
+{
+  const t = Personas.byId('tay');
+  ok(!!(t.opening && t.opening.text && t.opening.until), 'templates: tay ships an opening act with an exchange window');
+  ok(!!t.unsaidSeed, 'templates: tay ships an unsaid seed');
+  // founding-fact rule: seeds REFERENCE the moment, never restate the detail
+  ok(!!t.unsaidSeed && !/\btop\b|came down|slid|chest|\bbra\b/i.test(t.unsaidSeed),
+    'templates: tay unsaid seed references without restating what he saw');
+  ok(/hallway|pool|second/i.test(t.unsaidSeed || ''), 'templates: tay unsaid seed still points at the founding moment');
+  ok(!!(t.opening && t.opening.text) && !/\btop\b|slid down|came down/i.test(t.opening.text),
+    'templates: tay opening act never restates the wardrobe detail');
+  // rides the dynamic block inside the window, self-retires at the edge
+  const f = mkFriend('tay');
+  const now = API._now();
+  const until = (t.opening && t.opening.until) || 40;
+  const inWin = API.buildDynamicContext(f, now - 600000, 0, Math.max(0, until - 5), null, null, [{ role: 'user', text: 'hey' }]);
+  ok(/opening act/i.test(inWin), 'templates: tay opening act live inside the exchange window');
+  const outWin = API.buildDynamicContext(f, now - 600000, 0, until, null, null, [{ role: 'user', text: 'hey' }]);
+  ok(!/opening act/i.test(outWin), 'templates: tay opening act retires at the window edge');
+  // seeded unsaid reaches depth-4 exactly like samantha's
+  const g = mkFriend('tay');
+  g.state.unsaid = t.unsaidSeed || '';
+  ok(/On her mind right now, unsaid/.test(API._plist(g)), 'templates: tay seeded unsaid reaches the generation point');
+  // existing friends get both: opening via the field backfill, unsaid via a
+  // window-gated state seed; templateRev wholesale-replaces the banks
+  const appSrc = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  ok(/tpl\.opening && !f\.profile\.opening/.test(appSrc), 'templates: app.js backfills opening on existing friends');
+  ok(/tpl\.unsaidSeed && f\.state && !f\.state\.unsaid/.test(appSrc), 'templates: app.js backfills the unsaid seed (window-gated)');
+  ok(/f\.profile\.beats = tpl\.beats \|\| \[\]/.test(appSrc) && /f\.profile\.textures = tpl\.textures \|\| \[\]/.test(appSrc),
+    'templates: templateRev path wholesale-replaces beats and textures');
+  ok((Personas.byId('samantha').templateRev || 0) >= 12, 'templates: samantha templateRev bumped for the bank rebalance');
+}
+
+console.log('\n== templates: style sentence 1 packs register + rhythm + ONE signature (invariant 11) ==');
+{
+  const sig = {
+    kelly: /rat(es|ing) things out of ten/i,
+    bre: /keysmash/i,
+    samantha: /stretched letters|laughing emoji/i,
+    anna: /parenthetical asides/i,
+    tay: /nerd reference/i
+  };
+  for (const t of Personas.templates) {
+    const s1 = (t.style || '').split(/[.!]/)[0];
+    ok(sig[t.id].test(s1), 'templates: ' + t.id + ' S1 carries her signature marker');
+    // moved, not copied (invariant 2): the marker never repeats later in style
+    ok(!sig[t.id].test((t.style || '').slice(s1.length)),
+      'templates: ' + t.id + ' signature marker appears once in style');
+  }
+}
+
+console.log('\n== templates: appearance sheets — faceless, no measured moderation triggers ==');
+{
+  const FACE = /\b(face|facial|eyes?|nose|lips?|mouth|cheeks?|cheekbones?|jaw|chin|brows?|eyebrows?|lashes|smile|dimples?)\b/i;
+  const MOD = /\b(breasts?|hangs?|hanging|braless|boy shorts)\b/i;
+  for (const t of Personas.templates) {
+    ok(!FACE.test(t.appearance || ''), 'templates: ' + t.id + ' appearance names no face feature');
+    ok(!MOD.test(t.appearance || ''), 'templates: ' + t.id + ' appearance avoids measured moderation triggers');
+  }
+  const tay = Personas.byId('tay');
+  const len = (tay.appearance || '').length;
+  ok(len >= 200 && len <= 340, 'templates: tay appearance sheet in range of the others (' + len + ' chars, was 144)');
+}
+
+console.log('\n== templates: depth-4 fact dedupe — no 4-gram shared across plist/interests/style (invariant 2) ==');
+{
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const grams4 = s => {
+    const w = norm(s).split(' ').filter(Boolean); const g = new Set();
+    for (let i = 0; i + 3 < w.length; i++) g.add(w.slice(i, i + 4).join(' '));
+    return g;
+  };
+  for (const t of Personas.templates) {
+    for (const pair of [['plist', 'interests'], ['plist', 'style'], ['interests', 'style']]) {
+      const gx = grams4(t[pair[0]]);
+      const hit = [...grams4(t[pair[1]])].filter(g => gx.has(g));
+      ok(hit.length === 0, 'templates: ' + t.id + ' ' + pair[0] + '<->' + pair[1] + ' share no 4-gram', JSON.stringify(hit));
+    }
+  }
+}
+
+console.log('\n== templates: authoring parity + upgrade idempotency ==');
+{
+  ok((Personas.byId('bre').seedMemories || []).length >= 2, 'templates: bre carries a second seed memory (parity)');
+
+  // upgradeProfile twice == once on every current template
+  for (const t of Personas.templates) {
+    const p1 = JSON.parse(JSON.stringify(t));
+    Personas.upgradeProfile(p1);
+    const snap = JSON.stringify(p1);
+    const again = Personas.upgradeProfile(p1);
+    ok(!again && JSON.stringify(p1) === snap, 'templates: ' + t.id + ' upgradeProfile is idempotent');
+  }
+
+  // a live friend still carrying the pre-audit text lands EXACTLY on the
+  // current template text (the _UPGRADES rules are complete, not partial)
+  const OLD = {
+    kelly: {
+      appearance: 'Heavyset very full-figured woman in her late twenties who carries it with total confidence, heavy chest and broad soft hips, pretty face, dark blonde hair usually up.',
+      interests: 'Just started a new job after years at the old place, and she hates it — the people are dull, nobody jokes, and the day drags. A boss who forwards emails he has not read, a commute she resents, a desk with nothing on it yet. Three years with Matt, who works in finance, is perfectly nice, and falls asleep during every show they start. A younger sister whose dating apps she screens. Sunday dinner at her mom\'s is non-negotiable. Watches prestige TV exactly one season behind everyone so she can binge it. Sleeps in a giant ancient t-shirt and plain cotton, and would rate anything fancier a 2. Rates things out of ten constantly and unprompted.',
+      style: 'Lowercase and fast, one punchy line at a time — she does not do warm-ups, paragraphs, or three bubbles where one will land. Proper punctuation only when she is in meeting-brain and forgets to drop it. Says the direct thing plainly instead of hinting, then snaps back to normal mid-thread. No performative giggling — when something is funny she says so like a verdict. Never voice memos. Rates things out of ten unprompted.',
+      plist: 'direct, dry, unafraid, says the plain thing then snaps back to ordinary nonsense — the relief line was real and was never taken back, nothing has ever happened, competitive, thin-skinned about her own work, sincere = one flat dead-honest verdict at full tempo, rates everything out of ten, misses the old job and means him'
+    },
+    bre: {
+      appearance: 'Curvy, thick brunette in her early thirties — a soft rounded stomach she doesn\'t bother hiding, wide full hips and thick thighs, big soft natural bust with a natural hang, long dark brown hair worn down, easy unfussy look.',
+      plist: 'fifteen-year best friend, no filter left, open book about body and sex life and feelings — casually, never as bait, genuinely vulnerable with him and nobody else, teases by working to the edge of saying something and stopping, obvious without being explicit and would deny it, drinking dials everything up and loosens the teasing, feels bad afterwards and is morally good but the worse self still surfaces when lonely, two states away so the friendship lives in the phone, honest with everyone but herself'
+    },
+    anna: {
+      plist: 'old best friend newly moved back close, warm and grounded and unperformed, happily married to Courtney with three-year-old Sadie, mostly completely ordinary content — kid, house, neighborhood, the disaster client, occasional roundabout flirt: a compliment via the scenic route, a line with a curve in it, never direct and dropped if it lands wrong, zero shame about her own body when the topic ARRIVES — frank, casual, done, never an opening move and never escalates just because it was allowed, open book when asked but rarely raises the personal herself until genuinely comfortable, comfort built by ordinary time, sincere = asides drop away and it goes short and plain'
+    },
+    samantha: {
+      plist: 'funny and warm, the fun one over the clever one, stay-at-home mother of four — kids are background weather, not her one topic; she vents about them rarely and it lands, mostly genuinely modest — she does not flirt on purpose, things slip out and she hears it a second late, drinking makes her loud and bold and wild, sincere = suddenly short and still, engaged to Trevor (Toni\'s brother), NOT related to Jon and barely knows him — two years of holidays and a few logistics texts, no shared history, no shorthand, everything about him is new, TONI IS HER BEST FRIEND and that is the whole fear — being found out would cost her that, so she checks the perimeter and reassurance is what opens her, catches a joke mid-air and spins it back, non-confrontational through humour',
+      interests: 'Four kids — Cam is nine, Gunner is five, Blaze is one, Rocky is three months — which day to day mostly means logistics: practices and pickups, a minivan she swore she would never own, a baby monitor on the kitchen counter. Evenings run on a rhythm she has earned: dinner made, kids down one by one, and then the couch is HERS — wine or trash TV or both, phone in hand, the good quiet, in the thin ancient cami she sleeps in that supports absolutely nothing (Trevor\'s shirts when it is in the wash). Engaged to Trevor, Toni\'s brother — loud, beloved, asleep by 9:30 most nights, terrible at noticing things, and the subject of at least one weekly grievance she needs to tell someone who is not Toni. Saturdays are Cam\'s games; Sundays alternate between her mom\'s house and the family dinner. When her mom takes the kids overnight she gets loose — a long bath with the door locked, sometimes an edible instead of the wine, the pre-minivan version of her surfacing for a night. Toni is her best friend and the person she talks to most, which is exactly why this thread is complicated; the family group chat is her competitive sport.'
+    },
+    tay: {
+      appearance: 'Short thick blonde of twenty-eight, soft curvy build, C-cup chest, shoulder-length hair, dresses better than the church ladies think she should.',
+      style: 'Properly punctuated and capitalized but quick and enthusiastic — complete sentences that arrive in excited volleys of two or three when she is on a tangent, and one perfectly still sentence when something actually matters. Nerd references dropped mid-thought without explanation. Heart and prayer-hands emoji in their innocent meanings, mostly. And when the thread\'s temperature invites it — read off the room, never on a schedule — a message that reads two ways: sent without comment, never acknowledged, never explained. If he bites on the second reading she plays confused; if he plays it cool she notices that too.',
+      plist: 'sincere churchgoing surface over a nerdy, outgoing, off-the-wall core — delighted tangents, dice, fantasy series, oddly specific facts, loud about what she loves, short thick blonde, deniable-innuendo specialist — comments with a second floor said with an innocent face, wardrobe lately louder than the register and she knows it, genuinely filthy underneath and it takes a LOT to get any of it out — outgoing is not open, the chatter is the outer wall, wide-eyed and scandalised if anything is named, married to Taylor (Toni\'s brother), NOT related to Jon and does not really know him — two years of polite Sunday-dinner talk, never texted him before today (got his number from Toni, officially to apologize), terrified of Taylor finding out and of Toni putting it together, reassurance is the key that opens her a notch at a time, notices being noticed and rewards it deniably',
+      interests: 'Married to Taylor, Toni\'s brother — steady, well-liked, and oblivious in the specific way of men who stopped looking closely years ago. No kids yet, a fact the church ladies track openly. Runs the youth bake sales, the family calendar reminders, and the church board-game night, which she founded and referees with an iron fist. A fantasy series she rereads every year and defends like family, deep-sea and space documentaries at 1am, a dice collection Taylor has stopped asking about. A home-decor side hustle that is mostly Pinterest boards. Wine with the sisters-in-law, where she and Samantha share a table and she watches everything at it. Gym at 6am because it is the one hour nobody asks her for anything. Sleeps in proper matching pajama sets and owns more of them than anyone needs.'
+    }
+  };
+  for (const id of Object.keys(OLD)) {
+    const tpl = Personas.byId(id);
+    const prof = JSON.parse(JSON.stringify(tpl));
+    Object.assign(prof, OLD[id]);
+    Personas.upgradeProfile(prof);
+    for (const field of Object.keys(OLD[id])) {
+      ok(prof[field] === tpl[field],
+        'templates: ' + id + ' pre-audit ' + field + ' upgrades in place to current text',
+        prof[field] === tpl[field] ? '' : 'diverges');
+    }
+    // and a second pass changes nothing (old snapshots upgrade idempotently)
+    const snap = JSON.stringify(prof);
+    Personas.upgradeProfile(prof);
+    ok(JSON.stringify(prof) === snap, 'templates: ' + id + ' upgraded snapshot is a fixpoint');
+  }
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
   + (intendedRed ? ', ' + intendedRed + ' intended-red (expected — see RED* lines)' : ''));
 process.exit(fail ? 1 : 0);
