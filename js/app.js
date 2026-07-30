@@ -619,7 +619,10 @@ async function openRelationship() {
 let lastSweepAt = 0;
 const SWEEP_COOLDOWN_MS = 15 * 60000;
 async function sweepOpeners(force) {
-  const nowT = Date.now();
+  // App time, not wall time: every other clock in the opener system drinks
+  // from _now(), and a cooldown ticking in a different timeline than the
+  // dice it gates is the kind of skew that only shows up around time-skips.
+  const nowT = ClaudeAPI._now();
   if (!force && nowT - lastSweepAt < SWEEP_COOLDOWN_MS) return;
   lastSweepAt = nowT;
   let friends = [];
@@ -678,20 +681,61 @@ let openerFlight = null;
       foreground ones). */
 const openerBusy = new Set();
 
+/* Absence cooling, priced ONCE per silence. Both entry points — his send
+   and her opener — call this, so cooling no longer depends on who texts
+   first; the drift anchor on the friend records how far the silence has
+   already been charged, because the opener path can cool-and-save without
+   producing a message, and his later send must not charge the same days
+   again. The anchor lives on the friend root (state is rebuilt every turn).
+   It goes in the ledger like any other movement: an invisible drift made
+   the graph disagree with the meter. */
+function coolForAbsence(friend, lastTs) {
+  if (!lastTs || !friend.state) return;
+  const now = ClaudeAPI._now();
+  const from = Math.max(lastTs, Number(friend.driftAnchor) || 0);
+  const gap = now - from;
+  if (gap < 2 * 86400000) return;
+  const beforeCloseness = Number(friend.state.closeness) || 0;
+  const cooled = ClaudeAPI.applyAbsenceDrift(friend, gap);
+  friend.driftAnchor = now;
+  const cooledCloseness = beforeCloseness - (Number(friend.state.closeness) || 0);
+  if (cooled || cooledCloseness) {
+    DB.addEvent({
+      friendId: friend.id, ts: now, reason: 'absence — days without a word', confidence: 1,
+      deltas: { comfort: -cooled, closeness: -cooledCloseness, attraction: 0 },
+      applied: { comfort: -cooled, closeness: -cooledCloseness, attraction: 0 },
+      tension: Number(friend.state.tension) || 0,
+      after: { comfort: friend.state.comfort, closeness: friend.state.closeness, attraction: friend.state.attraction, tension: Number(friend.state.tension) || 0 }
+    }).catch(() => {});
+  }
+}
+
 async function maybeOpener(friend, background) {
   if (sending && !background) return;
   if (openerBusy.has(friend.id)) return;
   openerBusy.add(friend.id);
-  const flight = { cancelled: false };
+  const flight = { cancelled: false, friendId: friend.id };
   if (!background) openerFlight = flight;
+  let marked = null;  // the day-roll stamp, so a transport error can undo it
+  let landed = 0;     // bubbles that actually reached the thread
   try {
     friend = (await DB.getFriend(friend.id)) || friend;
     const msgs = await DB.getMessages(friend.id);
     const last = msgs[msgs.length - 1];
     if (!ClaudeAPI.openerDue(friend, msgs)) return;
-    // mark first so a slow request can't double-fire
-    friend.lastOpenerDay = ClaudeAPI._dayKey(ClaudeAPI._now());
-    friend.lastOpenerAt = ClaudeAPI._now(); // second-surprise spacing reads this
+    // Cooling must not depend on who texts first: the same absence drift
+    // his send applies runs here too, before the prompt is built, so her
+    // opener's tone reflects the silence she noticed.
+    coolForAbsence(friend, last.ts);
+    // mark first so a slow request can't double-fire — but remember what we
+    // overwrote: a transport error has to be able to hand the roll back
+    marked = {
+      at: ClaudeAPI._now(),
+      prevDay: friend.lastOpenerDay,
+      prevAt: friend.lastOpenerAt
+    };
+    friend.lastOpenerDay = ClaudeAPI._dayKey(marked.at);
+    friend.lastOpenerAt = marked.at; // second-surprise spacing reads this
     friend.vibeSeed = ClaudeAPI._now() % 1e9; // openers always start a fresh burst
     friend.burstStart = ClaudeAPI._now();
     await DB.saveFriend(friend);
@@ -718,14 +762,23 @@ async function maybeOpener(friend, background) {
     const freshMsgs = await DB.getMessages(friend.id);
     const lastFresh = freshMsgs[freshMsgs.length - 1];
     if (freshMsgs.length !== msgs.length || (lastFresh && last && lastFresh.ts !== last.ts)) return;
-    // The echo guard may decide the opener had nothing new to say (every
-    // bubble restated a finished topic) — on this path silence is a real
-    // outcome, not an error: she simply didn't text first today. Nothing is
-    // saved, nothing is cleared; the day was already marked above.
-    if (!result.bubbles || !result.bubbles.length) {
-      await DB.saveFriend(friend);   // keep the beat log the nudge may have rolled
+    // A content refusal is the PROVIDER'S decision (invariant 18): distinct
+    // from silence, never persisted as sent, and counted in the ledger so
+    // the archive can finally see the class. The day stays burned — she
+    // doesn't re-ask the provider to text first today.
+    if (result.refusal) {
+      DB.addEvent({ friendId: friend.id, ts: ClaudeAPI._now(), kind: 'refusal', path: 'opener' }).catch(() => {});
       return;
     }
+    // The echo guard may decide the opener had nothing new to say (every
+    // bubble restated a finished topic) — on this path silence is a real
+    // outcome, not an error: she simply didn't text first today. NOTHING is
+    // saved — not even the life beat the nudge rolled: the roll only lives
+    // in this in-memory copy, so returning here is what keeps a beat from
+    // being consumed (and its 21-day slot burned) by a message that never
+    // shipped. The day mark was already persisted above, which is all this
+    // outcome leaves behind.
+    if (!result.bubbles || !result.bubbles.length) return;
     // She texted while he was away, not the instant he opened the app: place
     // the message at a believable past moment inside her waking hours since
     // the gap began. Nothing else in the app makes her feel like a person with
@@ -754,6 +807,12 @@ async function maybeOpener(friend, background) {
         if (p) openerPreviews.push(p);
       }
     }
+    landed = openerPreviews.length;
+    // A turn whose ONLY content was dropped (a background opener that was
+    // all photo markers, or a foreground one whose photos all failed) is a
+    // skip, not a message: applying its state delta or clearing unresolved
+    // would credit a conversation that never happened.
+    if (!landed) return;
     if (result.state) {
       const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, { history, gapMs: ClaudeAPI._now() - last.ts });
       friend.state = outcome.state;
@@ -771,8 +830,31 @@ async function maybeOpener(friend, background) {
       }
     }
     await DB.saveFriend(friend);
+    // Keep the module global fresh: this save wrote opener bookkeeping,
+    // state and memories that the stale `currentFriend` object would
+    // silently wipe on his next whole-record save (the lost-update hole).
+    if (currentFriend && currentFriend.id === friend.id) currentFriend = friend;
     renderFriendsList();
-  } catch { /* silent — she just didn't text first today */ } finally {
+  } catch {
+    // A transport error is an OUTAGE, not an outcome (invariant 18): the
+    // request died before the provider ever decided anything, so the day's
+    // roll must survive for a later sweep to retry — silently burning it
+    // turned every flaky morning into "she never texts first". Only when
+    // nothing landed: once a bubble is in the thread, the opener happened.
+    // The un-mark goes through a FRESH read and only if our own stamp is
+    // still in place, so it can never clobber work a parallel path saved.
+    if (marked && !landed) {
+      try {
+        const fresh = await DB.getFriend(friend.id);
+        if (fresh && fresh.lastOpenerAt === marked.at) {
+          fresh.lastOpenerDay = marked.prevDay;
+          fresh.lastOpenerAt = marked.prevAt;
+          await DB.saveFriend(fresh);
+          if (currentFriend && currentFriend.id === fresh.id) currentFriend = fresh;
+        }
+      } catch (_) { /* she just didn't text first today */ }
+    }
+  } finally {
     openerBusy.delete(friend.id);
     if (openerFlight === flight) openerFlight = null;
     // If the user trumped this opener, his send owns the typing indicator
@@ -1065,7 +1147,10 @@ async function sendMessage() {
   }
 
   // Her in-flight opener yields to him: discard it and let his send run.
-  if (openerFlight) {
+  // Scoped to THIS thread — a flight drafting for a different friend is not
+  // in his way, and cancelling it threw away an opener his send could never
+  // have collided with (lock 3 already protects the cross-thread case).
+  if (openerFlight && openerFlight.friendId === currentFriend.id) {
     openerFlight.cancelled = true;
     openerFlight = null;
     $('#typing').classList.add('hidden');
@@ -1082,25 +1167,21 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
 
-  const friend = currentFriend;
+  // Re-read the record at the send boundary. The opener path re-reads and
+  // saves its own fresh copy, so the module global can be STALE here — and
+  // a whole-record save of the stale object at the end of this send would
+  // silently wipe the opener's bookkeeping, state and memories (the
+  // lost-update that reopened the double-opener hole from a direction the
+  // three delivery locks don't cover).
+  const friend = (await DB.getFriend(currentFriend.id)) || currentFriend;
+  currentFriend = friend;
   const priorMsgs = await DB.getMessages(friend.id);
   const lastTs = priorMsgs.length ? priorMsgs[priorMsgs.length - 1].ts : null;
 
-  // a multi-day silence cools her comfort a little before we even ask —
-  // she noticed the absence. It goes in the ledger like any other movement:
-  // an invisible drift made the graph disagree with the meter.
-  if (lastTs) {
-    const cooled = ClaudeAPI.applyAbsenceDrift(friend, ClaudeAPI._now() - lastTs);
-    if (cooled) {
-      DB.addEvent({
-        friendId: friend.id, ts: ClaudeAPI._now(), reason: 'absence — days without a word', confidence: 1,
-        deltas: { comfort: -cooled, closeness: 0, attraction: 0 },
-        applied: { comfort: -cooled, closeness: 0, attraction: 0 },
-        tension: Number(friend.state.tension) || 0,
-        after: { comfort: friend.state.comfort, closeness: friend.state.closeness, attraction: friend.state.attraction, tension: Number(friend.state.tension) || 0 }
-      }).catch(() => {});
-    }
-  }
+  // a multi-day silence cools her a little before we even ask — she noticed
+  // the absence. Shared with the opener path: cooling can't depend on who
+  // texts first.
+  coolForAbsence(friend, lastTs);
 
   // a fresh conversation burst rerolls tonight's dice — same afternoon,
   // different sit-down, different her. burstStart anchors the energy's
@@ -1227,6 +1308,10 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
     if (result.refusal) {
       // Not persisted — a hiccup here shouldn't leave a permanent scar in the
       // conversation or in their memory of you. Show a transient note instead.
+      // But COUNT it (invariant 18): refusals are the provider's decisions,
+      // and an archive that can't see them can't tell a refusing model from
+      // a silent one.
+      DB.addEvent({ friendId: friend.id, ts: ClaudeAPI._now(), kind: 'refusal', path: 'reply' }).catch(() => {});
       $('#typing').classList.add('hidden');
       const note = document.createElement('div');
       note.className = 'msg sys transient-note';
@@ -1303,6 +1388,13 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
     friend.lastActivity = ClaudeAPI._now();
     refreshTails();
     friend.lastPreview = previews.length ? previews[previews.length - 1] : fallbackPreview;
+    // Archival compaction (opt-in; settings.compactArchives, OFF by default
+    // — memories are the long-arc carrier and a wrong retirement is
+    // invisible later, so the conservative compactor stays behind a flag
+    // until real archives prove it safe).
+    if (settings && settings.compactArchives) {
+      try { ClaudeAPI.compactArchives(friend); } catch (_) { /* compaction must never break a send */ }
+    }
     await DB.saveFriend(friend);
     renderFriendsList();
 

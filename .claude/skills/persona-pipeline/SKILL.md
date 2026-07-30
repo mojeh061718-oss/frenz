@@ -304,6 +304,18 @@ the fixtures were wrong before.
 - Decay clocks: `unsaid` TTL 3 days, mood break 72h (post-first-exchange),
   memory theme cap 2. Shorter clocks make her forgetful and cold; longer
   ones bring the immortal-theme loop back.
+- Absence drift (`applyAbsenceDrift`): comfort cools from 2+ silent days
+  (max 4 per application), closeness from 4+ days (max 3 — "we talk less"
+  arrives before "we're less close"), both floor-bounded and halved at deep
+  bands; attraction NEVER drifts — it dies by events, not calendars, and
+  calendar erosion there would outrun the trickle's slow arc. Priced once
+  per silence (app-side `driftAnchor`) on BOTH entry paths — his send and
+  her opener — so cooling can't depend on who texts first. Canon names get
+  the relaxed 5-of-8 rut threshold only from mid-sentence capitals in the
+  persona's OWN text (plus world names her text actually uses): "trevor" is
+  a life, "Nothing"/"Neither" are grammar, and a custom persona inherits no
+  world cast. 30-day before/after sims for these dials live in
+  audit-evidence/engine.md.
 - Rut exemption liveness: exempt if he used it ≥2 times or within his last
   4-6 messages. Widening it re-opens the lifetime-pass blind spot; narrowing
   it starts flagging genuinely shared bits.

@@ -953,9 +953,23 @@ const ClaudeAPI = {
     const f = Math.max(10, Number(friend.state.floors.comfort) || 0);
     const prev = friend.state.comfort || 0;
     friend.state.comfort = Math.min(prev, Math.max(f, prev - cool));
+    // Closeness cools too — comfort-like, floor-bounded, and SLOWER (the
+    // clock engages at 4+ days, caps at 3 per application vs comfort's 4),
+    // because "we talk less" arrives before "we are less close". Attraction
+    // is deliberately untouched: attraction is sticky by design — it dies
+    // by events, not by calendars, and inside-band cooling there would
+    // erode the trickle's slow arc faster than it can build. The 30-day
+    // sims before/after this dial are in audit-evidence/engine.md; weekly
+    // ordinary contact still outruns the drift (invariant 15).
+    let coolC = Math.min(3, Math.floor(days / 4));
+    if (this._bandRank(this.bandsFor(friend).closeness) >= 3) coolC = Math.ceil(coolC / 2);
+    const fc = Math.max(0, Number(friend.state.floors.closeness) || 0);
+    const prevC = friend.state.closeness || 0;
+    friend.state.closeness = Math.min(prevC, Math.max(fc, prevC - coolC));
     // tension needs contact to stay alive — silence bleeds it off, gently
     friend.state.tension = Math.max(0, (Number(friend.state.tension) || 0) - Math.floor(days));
-    // return what actually moved, so callers can ledger it truthfully
+    // return what comfort actually moved, so callers can ledger it
+    // truthfully (closeness movement is read off the state by the caller)
     return prev - friend.state.comfort;
   },
 
@@ -1261,24 +1275,33 @@ const ClaudeAPI = {
   },
 
   /* Dated memories that are due (or just passed) become follow-up fuel. A
-     surfaced-3-times or long-past item retires itself. */
-  dueNotes(friend, now, history) {
+     surfaced-3-times or long-past item retires itself.
+     `dryRun` reads without touching the counters: buildDynamicContext runs
+     twice per request (length probe + real build), and when both calls
+     mutated, follow-ups double-counted every surfacing and retired at ~1.5
+     conversations instead of 3. The probe passes dryRun; only the real
+     build spends. */
+  dueNotes(friend, now, history, dryRun) {
     const t = now === undefined ? this._now() : now;
     const todayK = this._dayKey(t);
     const lines = [];
     // Retire an item once it has actually been TALKED about — otherwise she
     // keeps asking how the audit went three days after they dissected it.
-    const recentText = (history || []).slice(-24).map(m => String(m.text || '')).join(' ').toLowerCase();
+    // REAL history only: on opener runs the synthetic nudge is ~1900 chars
+    // of instruction text riding as "his" turn, and its vocabulary
+    // ("material", "register"…) was retiring due follow-ups nobody had
+    // actually discussed (invariant 14).
+    const recentText = this._realHistory(history).slice(-24).map(m => String(m.text || '')).join(' ').toLowerCase();
     for (const m of (friend.memories || [])) {
       if (!m || typeof m !== 'object' || !m.when || m.whenDone) continue;
       const due = Date.parse(m.when + 'T12:00:00');
-      if (isNaN(due)) { m.whenDone = true; continue; }
+      if (isNaN(due)) { if (!dryRun) m.whenDone = true; continue; }
       const dk = this._dayKey(due);
-      if (dk < todayK - 3) { m.whenDone = true; continue; }
+      if (dk < todayK - 3) { if (!dryRun) m.whenDone = true; continue; }
       if (dk <= todayK && recentText) {
         const kws = (m.keywords || []).filter(k => String(k).length >= 4).map(k => String(k).toLowerCase());
         const hits = kws.filter(k => recentText.includes(k)).length;
-        if (hits >= Math.min(2, kws.length) && kws.length) { m.whenDone = true; continue; }
+        if (hits >= Math.min(2, kws.length) && kws.length) { if (!dryRun) m.whenDone = true; continue; }
       }
       // Whose event is it? Telling her to ask how HER OWN quiz went is the
       // kind of tell that ends immersion instantly.
@@ -1288,11 +1311,13 @@ const ClaudeAPI = {
         lines.push('- ' + m.text + (own
           ? ' — that was yours, and it already happened; it is on your mind whether or not he asks.'
           : ' — that already happened, and you want to know how it went.'));
-        m.dueSurfaced = (m.dueSurfaced || 0) + 1;
-        if (m.dueSurfaced >= 3) m.whenDone = true;
+        if (!dryRun) {
+          m.dueSurfaced = (m.dueSurfaced || 0) + 1;
+          if (m.dueSurfaced >= 3) m.whenDone = true;
+        }
       } else if (dk === todayK) {
         lines.push('- ' + m.text + (own ? ' — that is YOURS, today.' : ' — that is TODAY.'));
-        m.dueSurfaced = (m.dueSurfaced || 0) + 1;
+        if (!dryRun) m.dueSurfaced = (m.dueSurfaced || 0) + 1;
       } else if (dk - todayK <= 2) {
         lines.push('- ' + m.text + ' — coming up in the next day or two.');
       }
@@ -1462,9 +1487,17 @@ const ClaudeAPI = {
       } else {
         exact = bounded * scale;
       }
-      exact += Number(carry[key]) || 0;
+      // The same gate that zeroes the delta must hold the BANK: banked
+      // warmth (the attraction trickle) used to cash on the next turn no
+      // matter what that turn was, so a plain fire-alarm exchange could pay
+      // out a point of attraction the charged nights had banked. When
+      // positive movement isn't allowed, a positive bank stays banked —
+      // kept, not lost — and cashes on the next turn the gate is open.
+      const bank = Number(carry[key]) || 0;
+      const holdBank = positiveAllowed === false && bank > 0;
+      if (!holdBank) exact += bank;
       let d = Math.round(exact);
-      carry[key] = exact - d; // remainder banks; capped overflow below does NOT
+      carry[key] = (holdBank ? bank : 0) + (exact - d); // remainder banks; capped overflow below does NOT
       const net = session[key] || 0;
       if (d > 0 && net + d > T.SESSION_CAP) d = Math.max(0, T.SESSION_CAP - net);
       if (d < 0 && net + d < -T.SESSION_CAP) d = Math.min(0, -T.SESSION_CAP - net);
@@ -1510,6 +1543,12 @@ const ClaudeAPI = {
       opinion_notes: this._reviseNotes(prev.opinion_notes, raw.opinion_notes, conf),
       unsaid,
       unsaidTs,
+      // tensionNote's hysteresis flag lives on state so the hum survives
+      // reloads — and it must survive THIS rebuild too: the fresh object
+      // used to drop it every turn, which killed the 24-30 hysteresis zone
+      // the flag exists for (the section flickered off over a one-point
+      // decay tick, exactly the failure its own comment describes).
+      humming: !!prev.humming,
       _carry: carry
     };
 
@@ -1531,6 +1570,14 @@ const ClaudeAPI = {
 
     // ---- tension accumulation (see the tension engine block above) ----
     const T2 = this._TENSION;
+    // Deliberately called WITHOUT `raw` here, unlike the attraction gate at
+    // the top: the attraction gate may take the model's own high-confidence
+    // testimony as evidence the room was charged (refusing to hear it called
+    // her a liar), but the tension METER moves the plot — a release night is
+    // scheduled off it — so it feeds only on text evidence. Letting the
+    // model's report charge the meter would let one hallucinated
+    // attraction_delta start marching the thread toward a confession night
+    // (invariant 17: testimony is input, not truth). Asymmetry is by design.
     const charged = this._recentRomance(opts && opts.history);
     const releaseWasActive = this.tensionReleaseActive(friend, now);
     let build = 0;
@@ -1605,7 +1652,18 @@ const ClaudeAPI = {
         && ['flirty', 'innuendo', 'frame'].includes(this._classifyUserTurn(lastUserMsg.text))) {
       sigKind = 'you drew a line — and it held, and you both know a line now exists';
     }
-    next.lastSignificant = sigKind ? { ts: now, kind: sigKind } : (prev.lastSignificant || null);
+    // Read-window hygiene: significantNote stops reading this after 10 days
+    // and unresolvedNote after 14 — but the fields themselves used to live
+    // forever in storage, an immortal marker waiting for any future
+    // consumer that forgets the window. Once the window lapses, the stored
+    // field goes too.
+    const prevSig = prev.lastSignificant && prev.lastSignificant.ts
+      && (now - prev.lastSignificant.ts) / 86400000 <= 10 ? prev.lastSignificant : null;
+    next.lastSignificant = sigKind ? { ts: now, kind: sigKind } : prevSig;
+    if (friend.unresolved && friend.unresolved.ts
+        && (now - friend.unresolved.ts) / 86400000 > 14) {
+      friend.unresolved = null;
+    }
 
     return {
       state: next,
@@ -1771,8 +1829,18 @@ const ClaudeAPI = {
     return mood;
   },
 
-  buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines, history) {
-    // recomputed per request; _phi reads it after this returns
+  /* `dryRun` marks a build whose output is only being MEASURED (the length
+     probe, the post-trim disclosure rebuild): everything that mutates the
+     friend (dueNotes counters) stays untouched on those calls. The bank
+     rolls (_lifeBeat/_lifeTexture) need no flag — they are idempotent per
+     day by construction. */
+  buildDynamicContext(friend, lastMessageTs, omittedCount, exchangedCount, memoriesOverride, sceneLines, history, dryRun) {
+    // Recomputed per request; _phi reads it after this returns. A singleton
+    // on purpose: every set→read pair happens inside one synchronous build
+    // (_buildPlainRequest runs probe → phi → real build with no await
+    // between), so concurrent sends cannot interleave on it. If a build
+    // path ever awaits between here and _phi, this must move into a
+    // per-request context.
     this._witLicensed = false;
     const s = friend.state;
     const bands = this.bandsFor(friend);
@@ -1841,7 +1909,7 @@ const ClaudeAPI = {
     // Prospective memory: dated things he mentioned surface ON the right day.
     // "SO??? how'd the interview go" at 6pm on interview day is worth more
     // than any amount of style instruction.
-    const dueLines = this.dueNotes(friend, undefined, history);
+    const dueLines = this.dueNotes(friend, undefined, history, dryRun);
     if (dueLines) parts.push('', ...dueLines);
     if (!this._leanContext) {
       parts.push('', '## Your curiosity (private)', this.curiosityNote(friend));
@@ -2281,8 +2349,9 @@ const ClaudeAPI = {
     // suddenly writes badly"; named degradation reads as an outage.
     const skipped = [];
     const startedAt = this._now();
-    this._deadline = startedAt + this.SEND_BUDGET_MS;
-    this._forgiven = 0;
+    // per-invocation budget token — see _openBudget for why this is not a
+    // shared deadline field (concurrent sends were zeroing each other's)
+    const budgetTok = this._openBudget(this.SEND_BUDGET_MS);
     try {
     for (const entry of entries) {
       if (this._budgetLeft() <= 0) {
@@ -2323,7 +2392,7 @@ const ClaudeAPI = {
     }
     throw lastErr || new Error('Everyone\'s lines are busy — every provider is rate-limited or down right now. Give it a minute and send again.');
     } finally {
-      this._deadline = 0;
+      this._closeBudget(budgetTok);
     }
   },
 
@@ -2334,6 +2403,12 @@ const ClaudeAPI = {
     let lastErr;
     let timeouts = 0;
     let strictRegen = false; // a filler/parrot reply forced a silent redo
+    // _strictNext discipline: between arming (below) and consumption (the
+    // request rebuild in _phi) there is no await, so a concurrent send can
+    // never read another send's flag — but a budget break BETWEEN arming
+    // and the rebuild used to leak an armed flag into whatever unrelated
+    // send built next. The finally clears it on every exit.
+    try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       if (this._budgetLeft() <= 0) break;
       try {
@@ -2376,6 +2451,9 @@ const ClaudeAPI = {
     }
     if (lastErr && (lastErr.quota || lastErr.transport)) lastErr.failover = true;
     throw lastErr;
+    } finally {
+      this._strictNext = false;
+    }
   },
 
   /* Rate limits are minute-scale, and the old flat backoff (1.2s/3s/7s)
@@ -2571,7 +2649,13 @@ const ClaudeAPI = {
   },
   _frame(mode, desc) {
     const set = this._FRAMING[mode] || this._FRAMING.scene;
-    return set[this._hash32(String(desc || '')) % set.length];
+    // Day salt: hashing the description alone froze the framing — "my legs
+    // on the couch, tv on" produced the identical composition on every wine
+    // night forever. Salted per _dayKey (the vibe-dice discipline): stable
+    // for any retry of the same moment tonight, rotated tomorrow. Every
+    // entry in every pool is faceless by construction, so rotation can
+    // never surface a face.
+    return set[this._hash32(String(desc || '') + '|' + this._dayKey(this._now())) % set.length];
   },
 
   // Does the scene already say what she has on? If so the prompt must not
@@ -2849,6 +2933,14 @@ const ClaudeAPI = {
     const ladder = [firstPrompt];
     if (!o.raw) {
       for (const m of (this._RECOVERY_LADDER[mode] || [])) {
+        // Heat resets to 0 on every recovery rung, deliberately: the decline
+        // being recovered from is usually a moderation judgement, and heat
+        // tone ("implication rather than display", closer crops) is the most
+        // likely ingredient to re-trip it. A rung exists to land SOME photo
+        // of the moment — the calmer register is the price of landing it,
+        // not a bug. (A heat-1 middle rung was considered and rejected: it
+        // would double the ladder's worst-case latency for a marginal tone
+        // win, inside a photo budget that is already the slow path.)
         ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 2000));
       }
     }
@@ -3293,7 +3385,14 @@ const ClaudeAPI = {
     const tier = budgetTokens <= 10000 ? 'compact'
       : (this._isCapableModel(entry, null) ? 'rich' : 'full');
 
+    // try/finally: _leanContext is a module singleton read by
+    // buildDynamicContext/buildPersona — if assembly throws between set and
+    // clear, the NEXT request (any friend, any tier) inherited compact-mode
+    // trimming and the she-drives layer silently vanished from a rich-tier
+    // prompt. The build itself is fully synchronous, so no concurrent send
+    // can observe the flag mid-request; the throw path was the real leak.
     this._leanContext = (tier === 'compact');
+    try {
     const persona = this.buildPersona(friend, tier);
     const recap = this._recapBlock(friend);
 
@@ -3306,9 +3405,18 @@ const ClaudeAPI = {
     const memories = this.selectMemories(friend, history, share(0.12, 600, 9000));
     const scenes = this._sceneContext(friend, history, share(0.06, 400, 4500));
 
-    const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
+    // The synthetic opener nudge is one raw-history entry but zero REAL
+    // exchanges: exchangedCount, the phi turn hash, and every analysis
+    // input count real turns only (invariant 14). The raw length still
+    // governs the transport window below — the provider must see the nudge.
+    const realLen = this._realHistory(history).length;
+
+    // The probe exists only to MEASURE the dynamic block for the reserve —
+    // dryRun, so counters (dueNotes) are spent exactly once per request, by
+    // the real build further down.
+    const probe = this.buildDynamicContext(friend, lastMessageTs, 1, realLen, memories, scenes, history, true);
     const plist = this._plist(friend);
-    const phi = this._phi(friend, jsonMode, history.length, this._ruts(history, friend), this._shapeRut(history));
+    const phi = this._phi(friend, jsonMode, realLen, this._ruts(history, friend), this._shapeRut(history));
     // 6144 reserve: the dynamic block grew (room read, thermostat, tonight,
     // due notes) and the old 4096 left history packing flush against the cap
     // edge — variance in wildcard/omitted-note length must never breach it
@@ -3336,7 +3444,7 @@ const ClaudeAPI = {
     while (kept.length > 1 && kept[0].role !== 'user') kept.shift();
 
     const omitted = history.length - kept.length;
-    const dynamic = this.buildDynamicContext(friend, lastMessageTs, omitted, history.length, memories, scenes, history);
+    const dynamic = this.buildDynamicContext(friend, lastMessageTs, omitted, realLen, memories, scenes, history);
 
     const injRole = this._injectionRole(entry);
     let msgs = kept.map(m => ({ role: m.role, content: m.text }));
@@ -3355,16 +3463,32 @@ const ClaudeAPI = {
     // block legitimately varies (wildcards, due notes, tension). Rather than
     // chase a magic constant every time a rule is added, measure the finished
     // request and drop the oldest history until it genuinely fits.
-    this._leanContext = false;
+    //
+    // And the trim is never silent (budget rule): the dynamic block baked
+    // its "(About N earlier messages aren't shown)" line from the count at
+    // build time, so any drop here used to leave prompt and ledger
+    // disagreeing — and when the pre-trim count was 0, the trim was fully
+    // undisclosed. After trimming, the disclosure is rebuilt (dry — this
+    // request's side effects are already spent) and re-measured, since the
+    // rebuilt block can itself change size (the scenes section gates on
+    // omitted > 0). Converges in a pass or two; the bound is a guard.
     const system = persona + '\n\n' + instr;
     let total = system.length + msgs.reduce((s, m) => s + m.content.length, 0);
     let trimmed = omitted;
-    while (total > budgetChars && msgs.length > 2) {
-      const drop = msgs.findIndex(m => m !== dynMsg && m !== newestMsg && !m.content.startsWith('[') && !m.content.startsWith('<system-reminder'));
-      if (drop < 0 || drop >= msgs.length - 1) break;
-      total -= msgs[drop].content.length;
-      msgs.splice(drop, 1);
-      trimmed++;
+    let disclosed = omitted;
+    for (let pass = 0; pass < 4; pass++) {
+      while (total > budgetChars && msgs.length > 2) {
+        const drop = msgs.findIndex(m => m !== dynMsg && m !== newestMsg && !m.content.startsWith('[') && !m.content.startsWith('<system-reminder'));
+        if (drop < 0 || drop >= msgs.length - 1) break;
+        total -= msgs[drop].content.length;
+        msgs.splice(drop, 1);
+        trimmed++;
+      }
+      if (trimmed === disclosed) break;
+      total -= dynMsg.content.length;
+      dynMsg.content = this.buildDynamicContext(friend, lastMessageTs, trimmed, realLen, memories, scenes, history, true) + '\n\n' + recap;
+      total += dynMsg.content.length;
+      disclosed = trimmed;
     }
 
     return {
@@ -3372,6 +3496,9 @@ const ClaudeAPI = {
       messages: msgs,
       omitted: trimmed
     };
+    } finally {
+      this._leanContext = false;
+    }
   },
 
   /* ---------------- memory: records, retrieval, scenes ---------------- */
@@ -3447,6 +3574,10 @@ const ClaudeAPI = {
     const raw = friend.memories || [];
     if (!raw.length) return [];
     const mems = raw.map(m => this._normMemory(m));
+    // REAL history only (invariant 14): on opener runs the ~1900-char nudge
+    // was the newest "user" turn, so the BM25 query was mostly instruction
+    // vocabulary and retrieval keyed off it instead of the conversation.
+    history = this._realHistory(history);
     const turn = history.length;
     const cached = this._retrievalCache[friend.id];
     if (cached && turn - cached.turn < 3 && cached.count === mems.length) return cached.texts;
@@ -3538,7 +3669,14 @@ const ClaudeAPI = {
         for (const s of picked.slice().sort((a, b) => b.score - a.score)) {
           const hks = themeKeys(s).filter(k => hot.has(k));
           const over = hks.some(k => (perTheme.get(k) || 0) >= 2);
-          if (s.m.pinned || !over) {
+          // Pinned entries get one extra seat, not a blanket pass: a user
+          // who pins five same-theme memories was rebuilding the exact
+          // monoculture this cap exists to break, with the cap standing by.
+          // Three pinned + the block's other material still says "this
+          // relationship is about the thing" without the block BEING the
+          // thing.
+          const overPinned = hks.some(k => (perTheme.get(k) || 0) >= 3);
+          if ((s.m.pinned && !overPinned) || (!s.m.pinned && !over)) {
             kept.push(s);
             for (const k of hks) perTheme.set(k, (perTheme.get(k) || 0) + 1);
           }
@@ -3597,7 +3735,9 @@ const ClaudeAPI = {
   _sceneContext(friend, history, charBudget) {
     const scenes = friend.scenes || [];
     if (!scenes.length) return [];
-    const query = this._keywords(history.slice(-5).map(m => m.text).join(' '));
+    // real history only — the nudge's instruction text must not pull old
+    // scenes into the block (same contract as selectMemories, invariant 14)
+    const query = this._keywords(this._realHistory(history).slice(-5).map(m => m.text).join(' '));
     const lines = [];
     let used = 0;
     const budget = Math.max(300, charBudget || 1200);
@@ -3617,6 +3757,68 @@ const ClaudeAPI = {
     }
     for (const sc of recent) add(sc);
     return lines;
+  },
+
+  /* ---------------- archival compaction (opt-in, Settings flag) ----------
+     memories[] and scenes[] grow without bound on disk, and BM25 walks all
+     of them every turn. This compactor is CONSERVATIVE by design and OFF by
+     default (settings.compactArchives) — memories are the long-arc carrier,
+     and a wrong deletion is a hole in the relationship that nothing can
+     detect later:
+       - memories: only beyond a soft cap of 300, and only entries that are
+         simultaneously non-pinned, importance ≤ 3, and carrying no pending
+         dated commitment — retired lowest-importance first, coldest first.
+         Pinned and importance 4-5 entries are untouchable at any count.
+       - scenes: only beyond a soft cap of 200, oldest-first, importance ≤ 3
+         only; a dropped scene's standalone `facts` are folded into memories
+         (through mergeMemories, so duplicates strengthen instead of piling)
+         — the scene's chronology is spent, its knowledge is not.
+     TTL deletion was rejected outright: age alone is exactly the wrong axis
+     for the channel that exists to carry the long arc. */
+  MEMORY_SOFT_CAP: 300,
+  SCENE_SOFT_CAP: 200,
+  compactArchives(friend, now) {
+    const t = now === undefined ? this._now() : now;
+    let changed = false;
+    const mems = friend.memories || [];
+    if (mems.length > this.MEMORY_SOFT_CAP) {
+      const candidates = mems
+        .map((raw, i) => ({ raw, i, m: this._normMemory(raw) }))
+        .filter(x => !x.m.pinned
+          && x.m.importance <= 3
+          && !(x.raw && typeof x.raw === 'object' && x.raw.when && !x.raw.whenDone));
+      candidates.sort((a, b) => (a.m.importance - b.m.importance)
+        || ((a.m.lastAccessed || 0) - (b.m.lastAccessed || 0)));
+      const drop = new Set();
+      for (const x of candidates) {
+        if (mems.length - drop.size <= this.MEMORY_SOFT_CAP) break;
+        drop.add(x.i);
+      }
+      if (drop.size) {
+        friend.memories = mems.filter((_, i) => !drop.has(i));
+        changed = true;
+      }
+    }
+    const scenes = friend.scenes || [];
+    if (scenes.length > this.SCENE_SOFT_CAP) {
+      let excess = scenes.length - this.SCENE_SOFT_CAP;
+      const kept = [];
+      const rescuedFacts = [];
+      for (const sc of scenes) {
+        if (excess > 0 && (Number(sc && sc.importance) || 3) <= 3) {
+          excess--;
+          changed = true;
+          for (const fact of (sc && Array.isArray(sc.facts) ? sc.facts : [])) {
+            rescuedFacts.push({ text: String(fact), keywords: (sc.keywords || []).slice(0, 4), importance: 2 });
+          }
+          continue;
+        }
+        kept.push(sc);
+      }
+      friend.scenes = kept;
+      if (rescuedFacts.length) this.mergeMemories(friend, rescuedFacts, t);
+    }
+    return changed;
   },
 
   /* Weaker models drift out of character more, and instructions near the
@@ -3936,16 +4138,42 @@ const ClaudeAPI = {
      composer locked, and it got worse with the ladder in 9.6 and the slower
      quality model in 9.9 — which is exactly when the stalling started. */
   PHOTO_BUDGET_MS: 110000,
-  _deadline: 0,
-  _budgetLeft() { return this._deadline ? Math.max(0, this._deadline - this._now()) : Infinity; },
+  /* Per-send budget TOKENS, not a shared deadline. The old `_deadline`
+     singleton corrupted concurrent flows (a background opener sweep racing
+     the user's own send, or a testlook photo): the first flow to finish
+     zeroed the shared field in its finally, so the surviving flow's
+     `_budgetLeft()` snapped to Infinity — a 150s ceiling silently became a
+     10-minute hang. Now every send opens its own token and closes only its
+     own; the effective deadline at any moment is the TIGHTEST live token
+     (same only-tighten-never-widen law withBudget always had).
+     Documented residual: while two sends overlap, both are governed by the
+     earlier of the two deadlines — a late-starting send can be cut short by
+     up to the stagger between them. That is a bounded early give-up, the
+     safe direction; the unbounded hang is gone. */
+  _budgets: [],
+  _openBudget(ms) {
+    const tok = { deadline: this._now() + ms, forgiven: 0 };
+    this._budgets.push(tok);
+    return tok;
+  },
+  _closeBudget(tok) {
+    const i = this._budgets.indexOf(tok);
+    if (i >= 0) this._budgets.splice(i, 1);
+  },
+  _budgetActive() { return this._budgets.length > 0; },
+  _budgetLeft() {
+    if (!this._budgets.length) return Infinity;
+    let d = Infinity;
+    for (const t of this._budgets) d = Math.min(d, t.deadline);
+    return Math.max(0, d - this._now());
+  },
   /* Run something under a deadline. A nested call may only TIGHTEN the
      budget it inherits, never widen it — otherwise a photo inside a reply
-     could hand itself more time than the reply had left. */
+     could hand itself more time than the reply had left. (Min-over-tokens
+     implements exactly that: the nested token can only lower the minimum.) */
   async withBudget(ms, fn) {
-    const prev = this._deadline;
-    const want = this._now() + ms;
-    this._deadline = prev ? Math.min(prev, want) : want;
-    try { return await fn(); } finally { this._deadline = prev; }
+    const tok = this._openBudget(ms);
+    try { return await fn(); } finally { this._closeBudget(tok); }
   },
   /* Sleep that cannot outlive the budget — and that measures elapsed time by
      the clock rather than trusting the timer. A backgrounded mobile tab
@@ -3958,15 +4186,18 @@ const ClaudeAPI = {
     await new Promise(r => setTimeout(r, capped));
     // A throttled background tab oversleeps every pause, and forgiving each
     // one individually let the budget creep well past its ceiling. Forgive
-    // the lost time once, in total, not per pause.
+    // the lost time once, in total, not per pause — per token, since the
+    // whole tab slept: every live send lost the same wall time.
     const overshoot = this._now() - until;
-    if (overshoot > 1000 && this._deadline && this._forgiven < 15000) {
-      const give = Math.min(overshoot, 15000 - this._forgiven);
-      this._forgiven += give;
-      this._deadline += give;
+    if (overshoot > 1000) {
+      for (const t of this._budgets) {
+        if (t.forgiven >= 15000) continue;
+        const give = Math.min(overshoot, 15000 - t.forgiven);
+        t.forgiven += give;
+        t.deadline += give;
+      }
     }
   },
-  _forgiven: 0,
 
   /* Hand the request to the service worker when one is driving this page.
      The worker survives the tab being hidden, backgrounded, or evicted, so a
@@ -4060,7 +4291,7 @@ const ClaudeAPI = {
   _notify: null,
   async _timedFetch(url, opts, ms, what, notify) {
     const limit = Math.max(1000, Math.min(ms || this.TIMEOUTS.chat, this._budgetLeft()));
-    const wantNotify = notify || (this._deadline ? this._notify : null);
+    const wantNotify = notify || (this._budgetActive() ? this._notify : null);
     if (await this._swSpeaks()) {
       try {
         return await this._swFetch(url, opts, limit, wantNotify);
@@ -4644,17 +4875,42 @@ const ClaudeAPI = {
      life; five-plus is the Rocky failure, and that still flags (the
      measured Rocky rut was 8 of 8). Names are read from the persona's own
      authored text — capitalized words that recur there. */
+  /* Only MID-SENTENCE capitalization counts: a capital at the start of a
+     sentence is grammar, not identity, and counting it handed the relaxed
+     5-of-8 threshold to "Nothing", "Neither", "Fifteen" — permanent,
+     unbounded rut passes for function words (invariant 13). And her canon
+     draws from HER OWN authored text: `p.world` is the shared family map
+     every persona carries, so scanning it gave every friend — including a
+     user-made one with no connection to the family — samantha/tay/toni as
+     protected names. A world name joins her canon only when her own text
+     actually uses it (Kelly genuinely knows Toni; Dana-the-custom-persona
+     does not). */
   _canonNames(friend) {
     if (!friend || !friend.profile) return new Set();
     const p = friend.profile;
-    const blob = [p.personality, p.interests, p.backstory, p.world].filter(Boolean).join(' ');
+    const countMid = (blob, counts) => {
+      for (const m of String(blob || '').matchAll(/\b[A-Z][a-z]{2,}\b/g)) {
+        let i = m.index - 1;
+        while (i >= 0 && /[\s"'“”‘’()[\]]/.test(blob[i])) i--;
+        if (i < 0) continue;                      // start of text
+        if (/[.!?:;\n]/.test(blob[i])) continue;  // sentence-initial
+        const w = m[0].toLowerCase();
+        counts.set(w, (counts.get(w) || 0) + 1);
+      }
+    };
+    const own = [p.personality, p.interests, p.backstory, p.plist].filter(Boolean).join('\n');
     const counts = new Map();
-    for (const m of blob.matchAll(/\b[A-Z][a-z]{2,}\b/g)) {
-      const w = m[0].toLowerCase();
-      counts.set(w, (counts.get(w) || 0) + 1);
-    }
+    countMid(own, counts);
     const set = new Set();
     for (const [w, c] of counts) if (c >= 2 && !this._MOTIF_STOP.has(w)) set.add(this._stem(w));
+    // world names, gated on her own text mentioning them at all
+    const worldCounts = new Map();
+    countMid(String(p.world || ''), worldCounts);
+    const ownLower = own.toLowerCase();
+    for (const [w, c] of worldCounts) {
+      if (c >= 2 && !this._MOTIF_STOP.has(w)
+          && new RegExp('\\b' + w + '\\b').test(ownLower)) set.add(this._stem(w));
+    }
     if (p.name) set.add(this._stem(String(p.name).toLowerCase()));
     if (p.userName) set.add(this._stem(String(p.userName).toLowerCase()));
     return set;

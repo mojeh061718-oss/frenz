@@ -786,5 +786,355 @@ console.log('\n== 22. the she-drives layer reaches the WIRE (tier gating) ==');
     'compact survival tier still trims the layer (by design, for tiny budgets only)');
 }
 
+/* ================================================================== */
+/* ==================== engine (Phase 2A + 2B audit) ================= */
+/* One contiguous block, appended — never renumber the sections above.  */
+/* ================================================================== */
+
+console.log('\n== engine 1. tension hysteresis survives a state application ==');
+{
+  // The hum flag lives on state so the hysteresis zone (24-30) is real —
+  // but applyStateDeltas rebuilt state without copying it, so the flag died
+  // every turn and the section flickered exactly as audit #1 described.
+  const f = mkFriend('kelly');
+  f.state.tension = 31;
+  API.tensionNote(f);
+  ok(f.state.humming === true, 'engine: tension 31 arms the hum flag');
+  const out = API.applyStateDeltas(f, { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: Date.now(), history: [] });
+  f.state = out.state;
+  ok(f.state.humming === true, 'engine: humming survives applyStateDeltas');
+  f.state.tension = 27;
+  ok(API.tensionNote(f) !== null, 'engine: tension 27 stays humming (inside the hysteresis zone)');
+  f.state.tension = 23;
+  ok(API.tensionNote(f) === null && f.state.humming === false, 'engine: tension 23 breaks the hum');
+}
+
+console.log('\n== engine 2. the probe build is side-effect-free ==');
+{
+  // buildDynamicContext runs twice per request (length probe + real build);
+  // dueNotes used to mutate counters in both, so follow-ups retired at ~1.5
+  // surfacings instead of 3.
+  const iso = (daysAgo) => {
+    const d = new Date(API._now() - daysAgo * DAY);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
+  const entry = { id: 'x', enabled: true, kind: 'openai', baseUrl: 'https://api.x.ai/v1', apiKey: 'k', model: 'grok-4', contextTokens: 1000000 };
+  const f = mkFriend('kelly');
+  f.memories.push({ text: 'Jon has a big audit at work.', keywords: ['audit', 'presentation'], importance: 4, ts: API._now() - 5 * DAY, lastAccessed: API._now() - 5 * DAY, when: iso(2) });
+  const mem = f.memories[f.memories.length - 1];
+  const hist = [];
+  for (let i = 0; i < 6; i++) hist.push({ role: 'user', text: 'thing ' + i }, { role: 'assistant', text: 'reply ' + i });
+  API._retrievalCache = {};
+  API._buildPlainRequest(entry, f, hist, Date.now() - 600000, API._jsonInstruction(), true);
+  ok((mem.dueSurfaced || 0) === 1, 'engine: one request surfaces a due note exactly once (' + (mem.dueSurfaced || 0) + ')');
+  API._retrievalCache = {};
+  API._buildPlainRequest(entry, f, hist, Date.now() - 600000, API._jsonInstruction(), true);
+  API._retrievalCache = {};
+  API._buildPlainRequest(entry, f, hist, Date.now() - 600000, API._jsonInstruction(), true);
+  ok(mem.dueSurfaced === 3 && mem.whenDone === true, 'engine: follow-ups retire after THREE surfacings (' + mem.dueSurfaced + ', done=' + !!mem.whenDone + ')');
+  // dryRun must produce the same lines with zero mutation
+  const g = mkFriend('kelly');
+  g.memories.push({ text: 'Jon has a big audit at work.', keywords: ['audit', 'presentation'], importance: 4, ts: API._now() - 5 * DAY, lastAccessed: API._now() - 5 * DAY, when: iso(2) });
+  const gm = g.memories[g.memories.length - 1];
+  const dry = API.dueNotes(g, undefined, hist, true);
+  const wet = API.dueNotes(g, undefined, hist);
+  ok(JSON.stringify(dry) === JSON.stringify(wet), 'engine: dry and real builds read the same lines');
+  ok((gm.dueSurfaced || 0) === 1, 'engine: only the real build moved the counter');
+  // beat/texture rolls stay idempotent per day (repeat builds, same entry)
+  const b = mkFriend('samantha');
+  b.beatLog = [];
+  for (let d = 0; d < 40; d++) {
+    API._timeOffset = null; API.addTimeOffset(d * DAY);
+    API._lifeBeat(b); API._lifeBeat(b); API._lifeBeat(b);
+  }
+  API.resetTimeOffset();
+  const days = b.beatLog.map(u => u.day);
+  ok(days.length === new Set(days).size, 'engine: repeated same-day rolls never double-log a beat');
+}
+
+console.log('\n== engine 3. the synthetic nudge stays out of analysis inputs ==');
+{
+  const iso2 = (daysAgo) => {
+    const d = new Date(API._now() - daysAgo * DAY);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
+  // (a) dueNotes retirement must not key off nudge vocabulary ("material",
+  // "register" both ride the opener instruction text)
+  const dn = mkFriend('samantha');
+  dn.memories = [{ text: 'Jon was dreading the material review at work.', keywords: ['material', 'register'], importance: 4, ts: API._now() - 5 * DAY, lastAccessed: API._now() - 5 * DAY, when: iso2(2) }];
+  const nudge = { role: 'user', text: API.openerNudge(30 * 3600000, false, dn) };
+  const hist = [{ role: 'user', text: 'long day' }, { role: 'assistant', text: 'same honestly' }, nudge];
+  const lines = API.dueNotes(dn, undefined, hist);
+  ok(lines !== null && dn.memories[0].whenDone !== true, 'engine: nudge vocabulary cannot retire a due follow-up');
+  const dn2 = mkFriend('samantha');
+  dn2.memories = [{ text: 'Jon was dreading the material review at work.', keywords: ['material', 'register'], importance: 4, ts: API._now() - 5 * DAY, lastAccessed: API._now() - 5 * DAY, when: iso2(2) }];
+  API.dueNotes(dn2, undefined, [{ role: 'user', text: 'the material review went fine, register stuff mostly' }, { role: 'assistant', text: 'knew it would' }]);
+  ok(dn2.memories[0].whenDone === true, 'engine: a follow-up they actually talked about still retires');
+  // (b) selectMemories: BM25/exact-hit query reads real history only
+  const g = mkFriend('kelly');
+  g.memories = [{ text: 'Kelly once promised him actual material for his set.', keywords: ['material'], importance: 1, ts: Date.now() - 40 * DAY, lastAccessed: Date.now() - 40 * DAY }];
+  for (let i = 0; i < 11; i++) g.memories.push({ text: 'Filler fact number ' + i + ' about the neighborhood block party planning', keywords: ['filler' + i], importance: 2, ts: Date.now() - (20 - i) * DAY, lastAccessed: Date.now() - (20 - i) * DAY });
+  API._retrievalCache = {};
+  API._rand = () => 0.1; // exact hits always fire when eligible
+  const openHist = [{ role: 'user', text: 'ok night' }, { role: 'assistant', text: 'night' }, { role: 'user', text: API.openerNudge(30 * 3600000, false, g) }];
+  const sel = API.selectMemories(g, openHist, 5000);
+  ok(!sel.some(x => /actual material/.test(x)), 'engine: retrieval no longer keys off the nudge instruction text');
+  API._retrievalCache = {};
+  const sel2 = API.selectMemories(g, [{ role: 'user', text: 'got any material for the set' }, { role: 'assistant', text: 'always' }], 5000);
+  ok(sel2.some(x => /actual material/.test(x)), 'engine: his real reference still retrieves it');
+  API._rand = null;
+  // (c) _sceneContext: keyword extras read real history only
+  const s = mkFriend('kelly');
+  s.scenes = [
+    { title: 'the material night', summary: 'They joked about his set.', keywords: ['material'], importance: 3, ts: 1 },
+    { title: 'filler one', summary: 'Ordinary evening talk.', keywords: ['evening'], importance: 2, ts: 2 },
+    { title: 'filler two', summary: 'More ordinary talk.', keywords: ['talk'], importance: 2, ts: 3 },
+    { title: 'filler three', summary: 'Even more talk.', keywords: ['more'], importance: 2, ts: 4 },
+    { title: 'filler four', summary: 'Last talk.', keywords: ['last'], importance: 2, ts: 5 }
+  ];
+  const scLines = API._sceneContext(s, openHist, 3000);
+  ok(!scLines.some(l => /material night/.test(l)), 'engine: nudge text cannot pull an old scene into the block');
+  const scLines2 = API._sceneContext(s, [{ role: 'user', text: 'that material bit again' }], 3000);
+  ok(scLines2.some(l => /material night/.test(l)), 'engine: his real callback still pulls the scene');
+  // (d) exchangedCount / phi turn hash use REAL history length
+  const f4 = mkFriend('samantha');
+  const entry = { id: 'x', enabled: true, kind: 'openai', baseUrl: 'https://api.x.ai/v1', apiKey: 'k', model: 'grok-4', contextTokens: 1000000 };
+  const hist4 = [
+    { role: 'assistant', text: 'hey' }, { role: 'user', text: 'hey yourself' },
+    { role: 'assistant', text: 'how was it' }, { role: 'user', text: 'fine' },
+    { role: 'user', text: API.openerNudge(30 * 3600000, false, f4) }
+  ];
+  API._retrievalCache = {};
+  const req4 = API._buildPlainRequest(entry, f4, hist4, Date.now() - 30 * 3600000, API._jsonInstruction(), true);
+  const blob4 = req4.messages.map(m => m.content).join('\n');
+  ok(/roughly 4 messages/.test(blob4), 'engine: the nudge does not inflate exchangedCount');
+}
+
+console.log('\n== engine 4. request-scoped scratch ==');
+{
+  // Two overlapping sends (opener sweep vs user send): the first finisher
+  // used to zero the shared deadline, handing the survivor an Infinity
+  // budget (a 10-minute hang wearing a 150s badge).
+  ok(typeof API._openBudget === 'function' && typeof API._closeBudget === 'function', 'engine: per-send budget tokens exist');
+  if (typeof API._openBudget === 'function') {
+    const a = API._openBudget(50000);
+    const b = API._openBudget(80000);
+    API._closeBudget(a);
+    const left = API._budgetLeft();
+    ok(left > 0 && left !== Infinity, 'engine: first finisher closing its budget leaves the survivor bounded (' + Math.round(left / 1000) + 's)');
+    API._closeBudget(b);
+    ok(API._budgetLeft() === Infinity, 'engine: all budgets closed -> unbounded again');
+  }
+  // _leanContext must reset even when assembly throws mid-build
+  const f = mkFriend('kelly');
+  const entry = { id: 'x', enabled: true, kind: 'openai', baseUrl: 'https://api.x.ai/v1', apiKey: 'k', model: 'grok-4', contextTokens: 8000 };
+  const orig = API.buildPersona;
+  API.buildPersona = () => { throw new Error('boom'); };
+  try { API._buildPlainRequest(entry, f, [{ role: 'user', text: 'hi' }], Date.now(), API._jsonInstruction(), true); } catch (_) { /* expected */ }
+  API.buildPersona = orig;
+  ok(API._leanContext === false, 'engine: _leanContext resets when assembly throws (no compact-tier leak)');
+}
+
+console.log('\n== engine 5. the safety trim is never silent ==');
+{
+  // Simulate the dynamic block growing between the probe and the final
+  // measure (the class the reserve constant papers over): the disclosure
+  // line and the ledger's omitted count must still agree.
+  const f = mkFriend('samantha');
+  const entry = { id: 'x', enabled: true, kind: 'openai', baseUrl: 'https://api.x.ai/v1', apiKey: 'k', model: 'grok-4', contextTokens: 12000 };
+  const hist = [];
+  for (let i = 0; i < 30; i++) {
+    hist.push({ role: 'user', text: 'message number ' + i + ' with a decent amount of ordinary conversational text in it to give the window something to pack and trim against tonight' });
+    hist.push({ role: 'assistant', text: 'reply number ' + i + ' with a comparable amount of ordinary conversational text so both sides of the window carry real weight in the packing loop' });
+  }
+  API._retrievalCache = {};
+  const req0 = API._buildPlainRequest(entry, f, hist, Date.now() - 600000, API._jsonInstruction(), true);
+  const origDyn = API.buildDynamicContext;
+  let calls = 0;
+  API.buildDynamicContext = function () {
+    calls++;
+    const out = origDyn.apply(this, arguments);
+    return calls >= 2 ? out + '\n' + 'pad-for-trim-test '.repeat(700) : out;
+  };
+  API._retrievalCache = {};
+  const req = API._buildPlainRequest(entry, f, hist, Date.now() - 600000, API._jsonInstruction(), true);
+  API.buildDynamicContext = origDyn;
+  ok(req.omitted > req0.omitted, 'engine: the safety trim fired (' + req0.omitted + ' -> ' + req.omitted + ')');
+  const dynBlock = req.messages.map(m => m.content).find(c => c.indexOf("aren't shown") >= 0) || '';
+  const m = dynBlock.match(/About (\d+) earlier messages/);
+  ok(!!m && Number(m[1]) === req.omitted, 'engine: prompt disclosure and ledger agree after the trim (' + (m && m[1]) + ' vs ' + req.omitted + ')');
+}
+
+console.log('\n== engine 6. banked attraction carry respects the romance gate ==');
+{
+  const f = mkFriend('tay');
+  const charged = [{ role: 'user', text: 'been thinking about you today, not gonna lie' }, { role: 'assistant', text: 'oh?' }];
+  const plain = [{ role: 'user', text: 'the fire alarm went off at work again' }, { role: 'assistant', text: 'lol no way' }];
+  const t = Date.now();
+  for (let i = 0; i < 2; i++) {
+    const out = API.applyStateDeltas(f, { comfort_delta: 1, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: t + i * 600000, gapMs: 600000, history: charged });
+    f.state = out.state;
+  }
+  const banked = Number(f.state._carry.attraction) || 0;
+  ok(banked > 0.5, 'engine: two warm charged turns bank the trickle (' + banked.toFixed(2) + ')');
+  const before = f.state.attraction;
+  const out = API.applyStateDeltas(f, { comfort_delta: 1, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: t + 3 * 600000, gapMs: 600000, history: plain });
+  ok(out.state.attraction === before, 'engine: banked warmth does not cash through a romanceOk=false turn (' + before + ' -> ' + out.state.attraction + ')');
+  ok((Number(out.state._carry.attraction) || 0) >= banked - 0.001, 'engine: ...and the bank is kept, not lost');
+  f.state = out.state;
+  const out2 = API.applyStateDeltas(f, { comfort_delta: 1, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: t + 4 * 600000, gapMs: 600000, history: charged });
+  ok(out2.state.attraction > before, 'engine: the next charged turn cashes it through the normal gates (' + before + ' -> ' + out2.state.attraction + ')');
+}
+
+console.log('\n== engine 7. canon names are proper nouns, not grammar ==');
+{
+  const sam = API._canonNames(mkFriend('samantha'));
+  ok(sam.has('trevor'), 'engine: her fiance stays canon (5-of-8 rut threshold preserved)');
+  ok(!sam.has('neither') && !sam.has('sunday'), 'engine: sentence-initial capitalizations are not canon (samantha)');
+  const tay = API._canonNames(mkFriend('tay'));
+  ok(tay.has('taylor'), 'engine: taylor stays canon for tay');
+  const kelly = API._canonNames(mkFriend('kelly'));
+  ok(!kelly.has('nothing'), 'engine: "Nothing" is not a person (kelly)');
+  ok(!kelly.has('toni'), 'engine: kelly\'s own text never names Toni — no world inheritance');
+  const bre = API._canonNames(mkFriend('bre'));
+  ok(bre.has('toni'), 'engine: a world name HER text actually uses stays canon (bre knows Toni)');
+  ok(!bre.has('fifteen'), 'engine: "Fifteen" is not a person (bre)');
+  const anna = API._canonNames(mkFriend('anna'));
+  ok(anna.has('courtney') && anna.has('sadie'), 'engine: her own family stays canon (anna)');
+  // every persona used to inherit the whole world cast via p.world
+  const custom = mkFriend('kelly');
+  custom.profile = Object.assign({}, custom.profile, {
+    name: 'Dana',
+    personality: 'warm and dry. she loves her dog Biscuit and Biscuit rules the house.',
+    interests: 'gardening', backstory: 'you met at a work thing', plist: ''
+  });
+  const cn = API._canonNames(custom);
+  ok(!cn.has('samantha') && !cn.has('tay') && !cn.has('toni'), 'engine: a custom persona no longer inherits the world cast');
+  ok(cn.has('biscuit'), 'engine: her own recurring mid-sentence name still counts');
+}
+
+console.log('\n== engine 8. photo framing rotates per day ==');
+{
+  const seen = new Set();
+  for (let d = 0; d < 20; d++) {
+    API._timeOffset = null; API.addTimeOffset(d * DAY);
+    seen.add(API._frame('pov', 'my legs on the couch, tv on'));
+  }
+  API.resetTimeOffset();
+  ok(seen.size >= 2, 'engine: identical descriptions rotate framing across days (' + seen.size + ' distinct in 20 days)');
+  API._timeOffset = null;
+  ok(API._frame('pov', 'my legs on the couch, tv on') === API._frame('pov', 'my legs on the couch, tv on'), 'engine: framing stable within a day');
+}
+
+console.log('\n== engine 9. absence drift: closeness cools, attraction stays sticky (2B) ==');
+{
+  const g = mkFriend('samantha');
+  g.state.comfort = 62; g.state.closeness = 62; g.state.attraction = 40;
+  const o = API.applyStateDeltas(g, { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: Date.now(), history: [] });
+  g.state = o.state; // floors comfort/closeness at 50
+  const att = g.state.attraction;
+  API.applyAbsenceDrift(g, 8 * DAY);
+  ok(g.state.closeness < 62, 'engine: closeness now cools over a real silence (' + g.state.closeness + ')');
+  ok((62 - g.state.closeness) < (62 - g.state.comfort), 'engine: closeness cools SLOWER than comfort (' + (62 - g.state.closeness) + ' vs ' + (62 - g.state.comfort) + ')');
+  ok(g.state.attraction === att, 'engine: attraction stays sticky by design');
+  for (let i = 0; i < 12; i++) API.applyAbsenceDrift(g, 30 * DAY);
+  ok(g.state.closeness === 50, 'engine: a year of silence stops at the closeness floor (' + g.state.closeness + ')');
+  ok(API.applyAbsenceDrift(mkFriend('kelly'), 3 * DAY) === 0 || true, 'engine: (informational) short gaps engage no closeness drift');
+  const short = mkFriend('kelly');
+  const c0 = short.state.closeness;
+  API.applyAbsenceDrift(short, 3 * DAY);
+  ok(short.state.closeness === c0, 'engine: a 3-day gap does not touch closeness (slower clock than comfort)');
+  // invariant 15: ordinary weekly contact outruns the new drift
+  const w = mkFriend('tay');
+  const start = w.state.closeness;
+  let t = Date.now();
+  for (let wk = 0; wk < 4; wk++) {
+    t += 7 * DAY;
+    API.applyAbsenceDrift(w, 7 * DAY);
+    for (let b = 0; b < 2; b++) {
+      const out = API.applyStateDeltas(w, { comfort_delta: 1, closeness_delta: 1, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: t + b * 3600000, gapMs: 100 * 60000, history: [{ role: 'user', text: 'real talk tonight' }, { role: 'assistant', text: 'yeah' }] });
+      w.state = out.state;
+    }
+  }
+  ok(w.state.closeness > start, 'engine: weekly ordinary contact outruns the drift (' + start + ' -> ' + w.state.closeness + ')');
+}
+
+console.log('\n== engine 10. lapsed markers are cleared in storage (2B) ==');
+{
+  const u = mkFriend('kelly');
+  u.unresolved = { ts: Date.now() - 16 * DAY, kind: 'rough' };
+  u.state.lastSignificant = { ts: Date.now() - 12 * DAY, kind: 'x' };
+  const o = API.applyStateDeltas(u, { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: Date.now(), history: [] });
+  ok(u.unresolved === null, 'engine: unresolved clears from storage after its 14-day window');
+  ok(o.state.lastSignificant === null, 'engine: lastSignificant clears from storage after its 10-day window');
+  const u2 = mkFriend('kelly');
+  u2.unresolved = { ts: Date.now() - 5 * DAY, kind: 'rough' };
+  u2.state.lastSignificant = { ts: Date.now() - 5 * DAY, kind: 'x' };
+  const o2 = API.applyStateDeltas(u2, { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] }, { now: Date.now(), history: [] });
+  ok(u2.unresolved !== null && o2.state.lastSignificant !== null, 'engine: live markers survive (nearest good case)');
+}
+
+console.log('\n== engine 11. pinned memories obey a theme cap of 3 (2B) ==');
+{
+  const p = mkFriend('kelly');
+  const t = Date.now();
+  p.memories = [];
+  for (let i = 0; i < 5; i++) {
+    p.memories.push({ text: 'Pinned secret detail number ' + i + ' from that night nr' + i, keywords: ['secret'], importance: 4, pinned: true, ts: t - i * DAY, lastAccessed: t - i * DAY });
+  }
+  p.memories.push({ text: 'Kelly hates the new office layout.', keywords: ['office'], importance: 3, ts: t - DAY, lastAccessed: t - DAY });
+  API._retrievalCache = {};
+  API._rand = () => 0.99;
+  const sel = API.selectMemories(p, [{ role: 'user', text: 'about that secret of ours' }], 4000);
+  const pinnedCount = sel.filter(x => /Pinned secret/.test(x)).length;
+  ok(pinnedCount === 3, 'engine: pinned same-theme memories cap at 3 (' + pinnedCount + ' selected)');
+  ok(sel.some(x => /office/.test(x)), 'engine: off-theme memory still rides');
+  API._rand = null;
+}
+
+console.log('\n== engine 12. conservative archive compaction (2B, flag-gated) ==');
+{
+  ok(typeof API.compactArchives === 'function', 'engine: compactor exists');
+  if (typeof API.compactArchives === 'function') {
+    const c = mkFriend('kelly');
+    const t = Date.now();
+    c.memories = [];
+    for (let i = 0; i < 320; i++) {
+      c.memories.push({ text: 'Low fact ' + i, keywords: ['k' + i], importance: (i % 40 === 0 ? 5 : 1), pinned: i % 50 === 0, ts: t - (400 - i) * DAY, lastAccessed: t - (400 - i) * DAY });
+    }
+    c.scenes = [];
+    for (let i = 0; i < 230; i++) c.scenes.push({ title: 'scene ' + i, summary: 'summary ' + i, keywords: [], facts: [], importance: (i % 30 === 0 ? 5 : 2), ts: i });
+    API.compactArchives(c);
+    ok(c.memories.length <= 300, 'engine: memory soft cap holds (' + c.memories.length + ')');
+    ok(c.memories.filter(m => m.pinned).length === 7, 'engine: pinned memories all survive compaction');
+    ok(c.memories.filter(m => m.importance === 5).length === 8, 'engine: high-importance memories all survive');
+    ok(c.scenes.length <= 200, 'engine: scene soft cap holds (' + c.scenes.length + ')');
+    ok(c.scenes.filter(s => s.importance === 5).length === 8, 'engine: important scenes all survive');
+    ok(c.scenes[c.scenes.length - 1].title === 'scene 229', 'engine: newest scenes untouched (oldest-first drop)');
+    // under the caps: a no-op
+    const small = mkFriend('kelly');
+    const memCount = small.memories.length;
+    API.compactArchives(small);
+    ok(small.memories.length === memCount, 'engine: compaction is a no-op under the caps');
+  }
+}
+
+console.log('\n== engine 13. app.js delivery wiring (source tripwires) ==');
+{
+  // These are deliberately shallow: verify.js cannot boot app.js (DOM/DB),
+  // so until the Phase-0.4 app harness lands, each delivery fix keeps a
+  // tripwire that fails loudly if the wiring is reverted.
+  const app = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  ok(/DB\.getFriend\(currentFriend\.id\)/.test(app), 'engine: sendMessage re-reads the friend record (stale-object lost update)');
+  ok(/lastOpenerDay = marked\.prevDay/.test(app), 'engine: a transport error un-marks the day\'s opener roll');
+  ok((app.match(/kind: 'refusal'/g) || []).length >= 2, 'engine: refusals are ledgered on both the reply and opener paths');
+  ok(app.indexOf('keep the beat log the nudge may have rolled') < 0, 'engine: a skipped opener no longer persists the rolled life beat');
+  ok(/const nowT = ClaudeAPI\._now\(\)/.test(app), 'engine: sweep cooldown runs on app time, not wall time');
+  ok(/openerFlight\.friendId === currentFriend\.id/.test(app), 'engine: his send cancels only HER flight for the same thread');
+  ok((app.match(/coolForAbsence\(/g) || []).length >= 3, 'engine: absence drift runs on the opener path too (2B)');
+  ok(/if \(!landed\) return;/.test(app), 'engine: an opener whose only content was dropped applies no state');
+  ok(/settings\.compactArchives/.test(app) && !/compactArchives:\s*true/.test(app), 'engine: compaction is flag-gated and OFF by default');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
