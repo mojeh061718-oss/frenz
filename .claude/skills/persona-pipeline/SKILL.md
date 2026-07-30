@@ -330,6 +330,16 @@ the fixtures were wrong before.
   painting nails, lotion) crop naturally. Grok moderation triggers measured
   live: "breasts", "hang", "braless", "boy shorts" near a busty sheet —
   same anatomy in calmer words renders fine.
+- Camera & pose register (`_CAMERA` + the `posed` clause in `_imagePrompt`):
+  the camera is UGLY (careless tilted framing, grainy, flat colour, "doing
+  her no favours") but she is not — a separate positive clause says she's
+  unposed yet "quietly, accidentally alluring… suggests more than it shows".
+  Camera degradation stays mild (stacking blur+noise+artifacts = mush, v8.2
+  lesson) and pose language stays positive (a bare "no modeling pose" ban
+  renders merely domestic). Prompt slice budget is 1800 chars — it was 1000
+  through v10.17, SHORTER than every assembled pov prompt, silently cutting
+  the camera register and heat tone; verify guards the full chain per
+  persona now. The cap is a runaway guard, not an xAI limit.
 - Floors & reckoning clocks: floors at band lower bounds (0/25/50/75), the
   historic comfort-10 kindness floor kept; significantNote window 1.5-10
   days, unresolved window 14 days, unresolved > significant. Shortening the

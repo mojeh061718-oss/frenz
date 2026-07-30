@@ -2435,11 +2435,10 @@ const ClaudeAPI = {
      careless framing, slight grain, flat colour, harsh direct flash when
      it's dark. Degradation stays MILD on purpose — the v8.2-era lesson
      holds that stacking blur+noise+artifacts produces mush, not candor. */
-  _CAMERA: ' Shot like a quick snap to a friend: grabbed one-handed in two seconds mid-moment, framing careless and a little off —' +
-    ' tilted, awkwardly cropped, slightly too close or too far, composed by nobody.' +
-    ' Real cheap phone-camera texture: slightly grainy, flat unedited colour, uneven ordinary room light —' +
-    ' harsh direct flash with hard shadows if the room is dark — true skin and fabric texture, a touch of softness where the camera missed.' +
-    ' Ordinary clutter left exactly where it is. No filter, no retouching, no beauty smoothing, no captions or app overlay.',
+  _CAMERA: ' Shot like a quick snap to a friend: grabbed one-handed mid-moment, framing careless and a little ugly —' +
+    ' tilted, awkwardly cropped, too close or too far, composed by nobody, and the camera doing her no favours.' +
+    ' Slightly grainy, flat unedited colour, uneven ordinary room light — harsh direct flash with hard shadows if the room is dark —' +
+    ' true skin and fabric texture. Clutter left where it is. No filter, no retouching, no beauty smoothing, no captions or app overlay.',
 
   _imagePrompt(desc, mode, appearance, heat) {
     const m = this._FRAMING[mode] ? mode : this._modeFor(desc);
@@ -2466,6 +2465,17 @@ const ClaudeAPI = {
     const clothed = isScene ? ''
       : (this._CLOTHING_NAMED.test(String(desc || '')) ? '' : ' She is dressed for being at home.');
 
+    /* The camera is ugly; SHE is not. Without this the artless register
+       reads as a ban on charm and the renders come back merely domestic.
+       The picture that works is careless AND worth staring at: body
+       language genuinely unposed, the pull coming from what the frame
+       almost shows. Stated positively so it steers the pose instead of
+       censoring it. */
+    const posed = isScene ? ''
+      : ' She is not posing — caught the way she actually sits or stands, weight where it really falls —' +
+        ' and that is exactly what makes it quietly, accidentally alluring: the picture suggests more than it shows' +
+        ' and leaves the rest to the imagination.';
+
     // Framing, not exclusion: "her head is outside the picture" describes the
     // photograph, where "her face is not visible" describes a removal — and
     // the second, sitting beside a physical description, reads as intent.
@@ -2483,7 +2493,7 @@ const ClaudeAPI = {
        with nothing — the old free model returned a nude frame from "in the
        kitchen at night, just got home, heels off". */
     return frame + ' The picture shows: ' + String(desc || '').trim().replace(/\.?$/, '.') +
-      who + faceRule + clothed + this._CAMERA +
+      who + faceRule + clothed + posed + this._CAMERA +
       (isScene ? '' : (this._HEAT_TONE[Math.max(0, Math.min(2, heat | 0))] || ''));
   },
 
@@ -2496,10 +2506,9 @@ const ClaudeAPI = {
      lens exists to inspect: the appearance sheet. */
   testLookPrompt(friend) {
     const appearance = (friend && friend.profile && friend.profile.appearance) || 'an adult woman';
-    // Compact camera clause, not the full _CAMERA block: generateImage
-    // slices prompts at 1000 chars, and the full block pushed every
-    // persona's test prompt past it — truncating exactly the no-filter
-    // cues the lens exists to check.
+    // Compact camera clause, not the full _CAMERA block: the lens exists to
+    // compare appearance sheets, so everything around the sheet stays as
+    // short and fixed as possible.
     // Three rounds of live testing shaped this framing. "Mirror mounted
     // low" rendered her real head floating above the glass; crop-at-the-
     // neck alone leaked a face 1 in 5; crop + reflection-only produced
@@ -2533,7 +2542,13 @@ const ClaudeAPI = {
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
     const mode = o.mode || this._modeFor(description);
-    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 1000);
+    /* Budget bug, caught at v10.18: the old 1000-char slice was SHORTER than
+       every assembled pov prompt (appearance sheet + framing alone run
+       ~1000), so the camera register and heat tone were being cut off before
+       they ever reached the model. 1800 fits the longest persona's full
+       prompt; xAI has been accepting well past this with _IMAGE_AVOID
+       appended, so the cap is a runaway guard, not an API limit. */
+    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 1800);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
@@ -2610,7 +2625,7 @@ const ClaudeAPI = {
     const ladder = [firstPrompt];
     if (!o.raw) {
       for (const m of (this._RECOVERY_LADDER[mode] || [])) {
-        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 1000));
+        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 1800));
       }
     }
     let declined = null;

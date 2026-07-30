@@ -309,6 +309,17 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   const pov = API._imagePrompt('my legs stretched out on the couch, tv on', 'pov', app, 0);
   ok(/head|collarbone|shoulders|torso/.test(pov) && !/her face is visible/i.test(pov), 'pov framing keeps the head out of frame');
   ok(pov.includes('quick snap') && pov.includes('grainy'), 'snapchat-register cues present');
+  ok(pov.includes('not posing') && pov.includes('alluring') && pov.includes('imagination'),
+    'natural-but-hot pose clause: unposed, mind left wandering');
+  // v10.18 budget bug: the 1000-char slice was shorter than every assembled
+  // pov prompt, silently cutting the camera register and heat tone. Guard
+  // the full chain: longest persona + a long scene desc + max heat must fit.
+  const longDesc = 'curled up on the couch in my thin cami and sleep shorts, tv on, glass of wine in my hand, one leg tucked under me';
+  for (const t of Personas.templates) {
+    const full = API._imagePrompt(longDesc, 'pov', t.appearance, 2);
+    ok(full.length <= 1800 && /implication rather than display/.test(full),
+      t.id + ': full pov prompt fits the 1800 budget with heat tail intact (' + full.length + ')');
+  }
   ok(/redhead/i.test(pov), 'body-type fidelity: appearance sheet rides as the phone-holder');
   const mirror = API._imagePrompt('new dress, fit check', 'mirror', app, 0);
   ok(/covers her face completely|where her head would be/.test(mirror), 'mirror framing: phone over face');
