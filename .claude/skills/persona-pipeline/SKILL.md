@@ -323,6 +323,13 @@ the fixtures were wrong before.
   mirror only on fit-check words; every framing is faceless by construction
   (head past the frame edge, phone over the face) and the pov pool must stay
   VARIED — near-identical torso shots made every body photo the same photo.
+  Appearance sheets must never NAME a face feature ("freckles across her
+  nose" made every Anna render a portrait — the model shows what the sheet
+  describes); keep identity markers on the body and hair. Arms-overhead /
+  stretch poses defeat the face crop; tasks that look DOWN (folding,
+  painting nails, lotion) crop naturally. Grok moderation triggers measured
+  live: "breasts", "hang", "braless", "boy shorts" near a busty sheet —
+  same anatomy in calmer words renders fine.
 - Floors & reckoning clocks: floors at band lower bounds (0/25/50/75), the
   historic comfort-10 kindness floor kept; significantNote window 1.5-10
   days, unresolved window 14 days, unresolved > significant. Shortening the
