@@ -340,6 +340,29 @@ the fixtures were wrong before.
   through v10.17, SHORTER than every assembled pov prompt, silently cutting
   the camera register and heat tone; verify guards the full chain per
   persona now. The cap is a runaway guard, not an xAI limit.
+- July-archive guards (all situational — they speak only when their failure
+  is live, per invariant 7): `_pressLoop` (her last 3 real replies mutually
+  echo-similar ≥0.45 on 2 pairs → room note demands a strategy CHANGE — name
+  it, tease the pressing, go short, swerve — never a reworded dodge; varied
+  riffs on a shared bit stay clean); `_shapeRut` (3 of last 5 replies open
+  on an agreement token → phi callout bans the opener position only);
+  `_noQuestionStretch` (8+ replies, zero '?', authored curiosity ≥25 → ONE
+  question licensed; incurious personas exempt so curiosityNote is never
+  contradicted); `_drinkTell` (her own stated quantity/state — "three drinks
+  in", "tipsy" — activates the style's drinking register; wine-as-scenery
+  from the texture engine must NOT trip it); `_slipNote` (15% of charged
+  evenings, deterministic per day, comfort ≥ building, OFF for flirt-sport
+  ≥70 and platonic — the trigger channel for the authored "things slip out"
+  trait). Clock clauses: early-evening not-bedtime (17-21h), late-night
+  register activation (21-02h), gap block's reply-to-NOW (>2h) and
+  N-day-quiet clocking (≥3 days, outranked by significant/unresolved).
+  State: boundary pushes are never delta-neutral (`_jsonInstruction`).
+- Opener delivery is guarded three ways in app.js (`openerBusy` per-friend
+  lock, fresh friend re-read before the due check, post-generation discard
+  if ANY message landed since the draft's snapshot). The July archive's
+  double-delivered backdated opener needed all three; removing any one
+  reopens it, because the boot-timer sweep and the visibility force-sweep
+  can reach the same friend within a second.
 - Floors & reckoning clocks: floors at band lower bounds (0/25/50/75), the
   historic comfort-10 kindness floor kept; significantNote window 1.5-10
   days, unresolved window 14 days, unresolved > significant. Shortening the

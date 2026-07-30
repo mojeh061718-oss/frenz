@@ -697,6 +697,71 @@ const ClaudeAPI = {
     return null;
   },
 
+  /* The archive's cami loop (#0075-#0100): he pressed the same subject eight
+     times and she produced the same dodge five times — "old thin cami" until
+     the worn-phrase detector tripped. Deflection was CORRECT (her unsaid said
+     so); repeating the deflection was the failure. A real person asked the
+     same thing five times changes STRATEGY, not wording. Trigger: her last
+     three real replies are mutually similar — which IS "the same dodge on
+     repeat" whatever he is doing. Nearest good case (counter-rule check): a
+     shared running bit both are riffing on — riffs VARY, so her-side pairwise
+     similarity stays low and this never fires. His pressed word is looked up
+     only as flavor for the note. */
+  _pressLoop(history) {
+    history = this._realHistory(history);
+    const mine = (history || []).filter(m => m.role === 'assistant').slice(-3);
+    if (mine.length < 3) return null;
+    const norms = mine.map(m => this._normBubble(String(m.text || '')));
+    if (norms.some(n => n.split(' ').filter(Boolean).length < 4)) return null; // short is texting, not a loop
+    let similar = 0;
+    for (let i = 0; i < norms.length; i++) {
+      for (let j = i + 1; j < norms.length; j++) {
+        const s = Math.max(this._echoScore(norms[i], norms[j]), this._echoScore(norms[j], norms[i]));
+        if (s >= 0.45) similar++;
+      }
+    }
+    if (similar < 2) return null;
+    const his = (history || []).filter(m => m.role === 'user').slice(-4);
+    const counts = new Map();
+    for (const m of his) {
+      const seen = new Set();
+      for (const w0 of this._normBubble(String(m.text || '')).split(' ')) {
+        const w = this._stem(w0);
+        if (w.length < 4 || this._MOTIF_STOP.has(w) || seen.has(w)) continue;
+        seen.add(w);
+        counts.set(w, (counts.get(w) || 0) + 1);
+      }
+    }
+    const top = [...counts.entries()].filter(([, c]) => c >= 3).sort((a, b) => b[1] - a[1])[0];
+    return { word: top ? top[0] : null };
+  },
+
+  /* 108 archived messages, zero questions from her — the anti-interview
+     rules won so completely that "curious about him" never produced one ask.
+     This is the counterweight, and it is situational on purpose (a standing
+     "ask more" rule would just recreate the interview): it speaks only after
+     a long all-serve stretch, licenses ONE question, and stands down for
+     personas whose authored curiosity is genuinely low. */
+  _noQuestionStretch(history) {
+    history = this._realHistory(history);
+    const mine = (history || []).filter(m => m.role === 'assistant').slice(-10);
+    if (mine.length < 8) return false;
+    return mine.every(m => !/\?/.test(String(m.text || '')));
+  },
+
+  /* Bre announced "three drinks in" and then typed like a sober archivist —
+     the style field's drinking register never fired because nothing at the
+     generation point said it was active. Trigger only on HER OWN stated
+     quantity or state ("three drinks in", "drunk", "tipsy"): a glass of wine
+     as couch scenery is the texture engine's business and must NOT flip this
+     (that is the nearest good case — mentioning wine is not being drunk). */
+  _DRINK_RE: /\b(?:(?:\d+|two|three|four|five|few|couple|several)\s+(?:drinks?|glasses|beers?|shots?)|drinks? in|drunk|tipsy|buzzed|wasted|hammered)\b|\bedible\b.{0,20}\b(?:hit|kick)/i,
+  _drinkTell(history) {
+    history = this._realHistory(history);
+    const mine = (history || []).filter(m => m.role === 'assistant').slice(-5);
+    return mine.some(m => this._DRINK_RE.test(String(m.text || '')));
+  },
+
   readTheRoom(friend, history, actLive) {
     history = this._realHistory(history);
     const lastUser = (history || []).slice().reverse().find(m => m.role === 'user');
@@ -743,6 +808,10 @@ const ClaudeAPI = {
     const shared = this._sharedCallback(friend, lastUser.text);
     if (shared) {
       lines.push('And read this one twice: whatever the surface register above says, his last message brushes against something the two of you share — "' + shared + '" Unless it clearly isn\'t, that IS what he\'s referring to. Answer the REFERENCE, in your own register and at your own pace — play it, arch at it, go still, deflect knowingly — never the innocent surface words alone, as though the reference weren\'t there. And if you genuinely can\'t tell what he means, asking ("what do you mean lol") in your own voice is a completely real move.');
+    }
+    const press = this._pressLoop(history);
+    if (press) {
+      lines.push('And one more thing you can feel: this exchange is STUCK — you have now sent nearly the same reply' + (press.word ? ' about "' + press.word + '"' : '') + ' several times running, and nobody real does that. This turn changes the MOVE, not the wording: name the pattern to his face in your own voice ("that\'s like the third time you\'ve asked lol"), tease him about the pressing itself, go conspicuously short and let the quiet talk, or swerve hard to something real. If you are declining something, decline the thing he actually said — a dodge that answers a different, safer question than the one he asked reads as a machine evading, not a person choosing. The one move you do not have is any earlier deflection again, reworded or not.');
     }
     // Assemble-time conflict resolution, not model-time. When the opening
     // act is live, a charged line lands inside a SCENE with its own rules
@@ -1213,9 +1282,9 @@ const ClaudeAPI = {
         flavor = ' It is deep night, and 3am texts are a thing you two genuinely DO — this relationship has night hours. Quieter, half-asleep honest, comfortable: no performance at this hour, shorter messages, the guard fully down in the way only this hour allows. The hour is not remarkable to either of you, and you never act like it is.';
       }
     } else if (h >= 21 || h < 2) {
-      flavor = ' Late-night texting is its own register: quieter, more honest, guards a notch lower — things get said at this hour that daylight would never allow, and flirtation that got a laugh at noon gets a beat of real consideration now. A notch, not a collapse: who you are and where you two actually stand still govern.';
+      flavor = ' Late-night texting is its own register: quieter, more honest, guards a notch lower — things get said at this hour that daylight would never allow, and flirtation that got a laugh at noon gets a beat of real consideration now. A notch, not a collapse: who you are and where you two actually stand still govern. And if your style names a late-night or wine register of your own, THIS is the hour it actually shows — daytime carefulness carried into this hour reads as someone else typing under your name.';
     } else if (h >= 17) {
-      flavor = ' The workday is done — texting is leisure now: more time, more warmth, more play than midday.';
+      flavor = ' The workday is done — texting is leisure now: more time, more warmth, more play than midday. But early evening is NOT bedtime: nobody is winding down yet, and goodnights or end-of-day talk this early read as a clock nobody looked at.';
     } else {
       flavor = ' Daytime texting: squeezed between things, so the PACE is quicker and lighter — but pace is not a gate. The same person is in there, and a line that lands, lands at noon too; big conversations just tend to get their full airtime later.';
     }
@@ -1660,6 +1729,9 @@ const ClaudeAPI = {
       `Your energy: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed, friend.burstStart)}. Energy is not a topic — it colors pace, patience, boldness, and warmth, never announced. ` + (texture
         ? `Your actual evening so far: ${texture} That is scenery, not a topic — it colors you, gets one mention at most, and only if it fits.`
         : `What you're actually doing right now is yours to invent fresh, different from last time, mentioned once at most.`)];
+    if (this._drinkTell(history)) {
+      tonight.push('You said it yourself in this conversation: you have been DRINKING tonight, more than a polite glass. That register is live right now — whatever drinking does to you specifically, your traits and style already say — and at minimum you are visibly looser, bolder, and less careful than sober-you. A person three drinks in who texts in perfectly measured sober sentences is nobody at all.');
+    }
     if (snNet >= 3) {
       tonight.push('This conversation is landing on you more than you planned — let it show in real time: quicker, easier, a beat more give before any footwork.');
     } else if (snNet <= -3) {
@@ -1698,6 +1770,13 @@ const ClaudeAPI = {
     if (dueLines) parts.push('', ...dueLines);
     if (!this._leanContext) {
       parts.push('', '## Your curiosity (private)', this.curiosityNote(friend));
+      // The all-serve counterweight. Gated on authored curiosity so a
+      // persona whose curiosityNote says "it would not occur to you to ask"
+      // never receives a contradicting order in the same prompt (invariant:
+      // co-occurring blocks must not disagree).
+      if (this._curiosity(friend) >= 25 && this._noQuestionStretch(history)) {
+        parts.push('A thing you would notice about yourself: you have not asked him ONE question in this entire stretch — he serves, you return, and that is all this has been. Somewhere in your next couple of replies, ask the one thing you actually want to know. One real question, from real curiosity, when the moment fits — not an interview, and not by force this exact second.');
+      }
       // Release nights get a clean field: the tension note demands ONE true
       // thing with no joke shell, and a licensed wit die in the same prompt
       // demanded ONE crafted deniable line — half of all payoff nights
@@ -1706,6 +1785,11 @@ const ClaudeAPI = {
       if (!this.tensionReleaseActive(friend)) {
         parts.push('', '## Wit tonight (private)', this.playfulNote(friend));
         this._witLicensed = true;   // read by _phi, so the joke ask stands down
+        // The slip stands down on release nights (that night has its own
+        // mechanic) and while an opening act runs (the authored arc is not
+        // to be jostled by dice).
+        const slip = !actLive && this._slipNote(friend);
+        if (slip) parts.push('', '## Tonight\'s slip (private)', slip);
       }
       const life = this.lifeEventNote(friend);
       if (life) parts.push('', '## Your week (private)', life);
@@ -1758,7 +1842,16 @@ const ClaudeAPI = {
         // first-texts (invariant: one statement per assembled prompt).
         const openerRun = history && history.length && this._isSyntheticTurn(history[history.length - 1]);
         const sig = openerRun ? null : this.significantNote(friend, lastMessageTs);
-        parts.push('', `(It has been about ${gap} since the last message. React to the gap naturally if it matters to you.)` + (sig || ''));
+        // Archive #0057: "hope your shower resets the day" six hours after
+        // the shower — replying to the moment his message was SENT, not to
+        // now. And #0108: an eight-day silence resumed mid-sentence as if
+        // the last text were an hour old.
+        const stale = gapMin > 120 ? ' Anything he said he was ABOUT to do back then has long since happened — you reply to NOW, never to the moment his last text was sent.' : '';
+        const gapDays = gapMin / 1440;
+        const clocked = (!sig && !openerRun && gapDays >= 3)
+          ? ` And days of silence do not resume mid-sentence: he just broke a ${Math.round(gapDays)}-day quiet, and you clock that before anything else — a "look who remembered me", real warmth at seeing his name, or the smallest edge, whichever is true for you. A beat, not a speech, and it lands in your FIRST reply.`
+          : '';
+        parts.push('', `(It has been about ${gap} since the last message. React to the gap naturally if it matters to you.${stale}${clocked})` + (sig || ''));
       }
     }
     // Settings is a page global (db.js); guarded so headless tests that load
@@ -1859,7 +1952,23 @@ const ClaudeAPI = {
     '',
     ''
   ],
-  _phi(friend, jsonMode, turn, motifs) {
+  /* Shape rut, distinct from word ruts: the archive showed ~15 of 40 replies
+     opening "yeah…" / "haha yeah…" — agreement, restate his premise, small
+     addition, every turn. No single word wears out, so _wordRuts never fires;
+     the SHAPE is the rerun. Nearest good case: agreeing is natural — the
+     guard needs 3 of her last 5 replies opening on an agreement token before
+     it says anything, and only bans the opener position, not agreement. */
+  _AGREE_OPEN: /^\s*(?:(?:ha)+h?\s+|lm+f?ao+\s+|lol+\s+)?(?:yeah+|yea+h*|ya|yep|yup)\b/i,
+  _shapeRut(history) {
+    history = this._realHistory(history);
+    const mine = (history || []).filter(m => m.role === 'assistant').slice(-5);
+    if (mine.length < 4) return '';
+    const n = mine.filter(m => this._AGREE_OPEN.test(String(m.text || ''))).length;
+    if (n < 3) return '';
+    return 'Look at your own last few messages: nearly every one opens by AGREEING ("yeah…", "haha yeah…") and then restating his point — one more makes it a tic. Open this reply anywhere else: the new thing first, the reaction first, a disagreement, a question — anything but another agreement token. ';
+  },
+
+  _phi(friend, jsonMode, turn, motifs, shapeNote) {
     const p = friend.profile;
     const userName = p.userName || 'them';
     const h = this._hash32(String(friend.id) + '|phi|' + (turn || 0));
@@ -1876,9 +1985,9 @@ const ClaudeAPI = {
     // reject presence/frequency penalties, and a warning 20k tokens up in a
     // context block loses to the repeated phrasing sitting right there in
     // the visible history.
-    const rut = (motifs && motifs.length)
+    const rut = ((motifs && motifs.length)
       ? `You have worn out ${motifs.map(m => '"' + m + '"').join(', ')} — he can feel the rerun. Retired as of now: never that phrasing again, no synonym wearing the same bit, and the next reply leans somewhere else entirely. `
-      : '';
+      : '') + (shapeNote || '');
     // consume-once: the flag must not leak into later turns (or later tests)
     const wasStrict = this._strictNext;
     this._strictNext = false;
@@ -2815,7 +2924,7 @@ const ClaudeAPI = {
     const wrap = (t) => midOk ? t : '<system-reminder>\n' + t + '\n</system-reminder>';
     let msgs = trimmed.map(m => ({ role: m.role, content: m.text }));
     msgs = this._injectDepth(msgs, wrap(this._plist(friend)), injRole);
-    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._ruts(history))) });
+    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._ruts(history), this._shapeRut(history))) });
 
     const body = {
       model,
@@ -3084,7 +3193,7 @@ const ClaudeAPI = {
 
     const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
     const plist = this._plist(friend);
-    const phi = this._phi(friend, jsonMode, history.length, this._ruts(history));
+    const phi = this._phi(friend, jsonMode, history.length, this._ruts(history), this._shapeRut(history));
     // 6144 reserve: the dynamic block grew (room read, thermostat, tonight,
     // due notes) and the old 4096 left history packing flush against the cap
     // edge — variance in wildcard/omitted-note length must never breach it
@@ -3416,7 +3525,7 @@ const ClaudeAPI = {
       '## Reply format (mandatory)',
       'Reply with ONLY a single JSON object — no prose before or after it, no markdown fences:',
       '{"messages": ["first bubble", "optional second"], "state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause: what you are thinking but not saying right now", "new_memories": []}}',
-      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). "mood" belongs to your whole LIFE, not just this chat: between sessions it moves for your own reasons — the day you had, the week you are in, the thing you are carrying — so update it whenever it has genuinely moved instead of hauling yesterday\'s mood forward out of inertia. "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life established OR referenced this exchange (your commitments, stories, opinions — never contradict your own canon later); something you already knew still deserves recording the first time it comes up between you. The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance; a relationship that forgets its own origin reads as fake. [] only when genuinely nothing new.'
+      '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). A boundary push you deflected — the photo ask, the what-are-you-wearing press, the suggestion you dodged — is NEVER a neutral exchange: it lands somewhere (comfort down when it was unwelcome, attraction up only when part of you genuinely liked it), even while your visible reply stays breezy; the breezy reply is the surface, the delta is the truth. "mood" belongs to your whole LIFE, not just this chat: between sessions it moves for your own reasons — the day you had, the week you are in, the thing you are carrying — so update it whenever it has genuinely moved instead of hauling yesterday\'s mood forward out of inertia. "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life established OR referenced this exchange (your commitments, stories, opinions — never contradict your own canon later); something you already knew still deserves recording the first time it comes up between you. The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance; a relationship that forgets its own origin reads as fake. [] only when genuinely nothing new.'
     ].join('\n');
   },
 
@@ -3524,7 +3633,14 @@ const ClaudeAPI = {
     // interview tell
     const q = assistant.filter(x => /\?\s*$/.test(x.m.text)).length;
     const qRate = assistant.length ? q / assistant.length : 0;
-    out.push(`- **Question endings**: ${Math.round(qRate * 100)}% of her messages${qRate > 0.35 ? ' — ELEVATED, interviewing instead of talking' : ' — healthy'}`);
+    // Both tails are tells: >35% is the interview, but 0% across a long
+    // thread means she never asks him ANYTHING — all serve, no return —
+    // and this line used to call that "healthy" (the July archive: 0
+    // questions in 108 messages, labeled green).
+    const qLabel = qRate > 0.35 ? ' — ELEVATED, interviewing instead of talking'
+      : (q === 0 && assistant.length >= 20 ? ' — ZERO across the whole thread: she never asks him anything, which is its own bot tell'
+        : ' — healthy');
+    out.push(`- **Question endings**: ${Math.round(qRate * 100)}% of her messages${qLabel}`);
 
     // cadence: flat reply length is the bot rhythm
     const lens = assistant.map(x => x.m.text.length).sort((a, b) => a - b);
@@ -4496,6 +4612,26 @@ const ClaudeAPI = {
       return 'Mild curiosity: you follow up when something catches you, but you do not dig, and you leave the uncomfortable questions unasked.';
     }
     return 'You are not curious about anything beyond the friendship exactly as it is. You do not probe, you do not ask personal or intimate questions, and it would not occur to you to — this is what it is, and that suits you.';
+  },
+
+  /* "Things slip out — a line that reads two ways, and she hears it a second
+     after she sends it" was authored into personality and fired zero times in
+     108 archived messages: a trait with no trigger channel is decoration.
+     This is the trigger, on the playfulNote dice pattern: rare (15% of
+     charged evenings), deterministic per day, and OFF for flirt-sport
+     personas (Kelly flirts on purpose — a "slip" is another woman's move)
+     and for platonic threads. It schedules the trait; the persona's own
+     voice still writes it. */
+  _slipNote(friend, now) {
+    if (this._isPlatonic(friend)) return null;
+    if (friend.profile && friend.profile.sliders && friend.profile.sliders.flirtiness >= 70) return null;
+    const t = now === undefined ? this._now() : now;
+    const h = new Date(t).getHours();
+    if (!(h >= 19 || h < 2)) return null;
+    if (this._bandRank(this.bandsFor(friend).comfort) < 1) return null;
+    const roll = this._hash32(String(friend.id) + '|slip|' + this._dayKey(t) + '|' + (friend.vibeSeed || 0));
+    if (roll % 100 >= 15) return null;
+    return 'Tonight has a slip in it: once, when the conversation is anywhere near warm, a line of yours comes out reading two ways — and you hear it a second AFTER you hit send. Not flirting on purpose; a shade too honest for one beat. What you do next is yours: the immediate "ignore that", the backpedal that makes it worse, or brazening it out with a laugh. Never announced, never repeated, never escalated by you afterward — if he picks it up, you deal with that in character, from where you actually stand.';
   },
 
   playfulNote(friend, now) {

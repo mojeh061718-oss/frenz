@@ -580,5 +580,94 @@ console.log('\n== 20. signal pickup + self-motion ==');
   ok(/belongs to your whole LIFE/.test(API._jsonInstruction()), 'mood ownership in the state instruction');
 }
 
+console.log('\n== 21. the July archive: loops, shape, drive, clocks ==');
+{
+  // pressed-loop: the cami exchange, near-verbatim from the archive
+  const f = mkFriend('samantha');
+  const loop = [
+    { role: 'user', text: 'what kinda cami is it' },
+    { role: 'assistant', text: 'haha its this super old thin cami ive had forever' },
+    { role: 'user', text: 'so its a thin one?' },
+    { role: 'assistant', text: 'yeah its this super thin old one ive had forever' },
+    { role: 'user', text: 'i bet the cami is too thick still' },
+    { role: 'assistant', text: 'its just an old thin cami basically from forever ago' },
+    { role: 'user', text: 'lemme see the cami' }
+  ];
+  ok(!!API._pressLoop(loop), 'the cami loop trips the pressed-loop detector');
+  const room = API.readTheRoom(f, loop, false) || [];
+  ok(room.join(' ').includes('changes the MOVE'), 'room note demands a strategy change, not new wording');
+  // gremlin counter-case: a shared bit both are riffing on VARIES, stays clean
+  const riff = [
+    { role: 'user', text: 'the gremlin strikes again' },
+    { role: 'assistant', text: 'he unplugged the router to charge his tablet' },
+    { role: 'user', text: 'the gremlin has no mercy' },
+    { role: 'assistant', text: 'today he negotiated two desserts out of trevor' },
+    { role: 'user', text: 'gremlin lore grows' },
+    { role: 'assistant', text: 'i found him asleep in the dog bed again' },
+    { role: 'user', text: 'the gremlin rests' }
+  ];
+  ok(API._pressLoop(riff) === null, 'varied riff on a shared bit does not trip the loop guard');
+
+  // agree-open shape rut
+  const yy = [];
+  for (const t of ['yeah i know right', 'haha yeah the fan is winning', 'lmao yeah he claimed it first', 'yeah lets keep it that way', 'ok but hear me out']) {
+    yy.push({ role: 'user', text: 'x' }, { role: 'assistant', text: t });
+  }
+  ok(API._shapeRut(yy).includes('AGREEING'), 'four agree-opens in five replies flag the shape tic');
+  const varied = [];
+  for (const t of ['yeah i know right', 'he really said that', 'ok that is actually funny', 'yeah fair', 'stop i cant breathe']) {
+    varied.push({ role: 'user', text: 'x' }, { role: 'assistant', text: t });
+  }
+  ok(API._shapeRut(varied) === '', 'two agree-opens in five is normal texting, no flag');
+  ok(API._phi(f, true, 3, [], 'THE-SHAPE-NOTE ').includes('THE-SHAPE-NOTE'), 'phi carries the shape note at the generation point');
+
+  // question drought -> one-question license, gated on authored curiosity
+  const dry = [];
+  for (let i = 0; i < 9; i++) dry.push({ role: 'user', text: 'thing number ' + i }, { role: 'assistant', text: 'reply about thing ' + i });
+  ok(API._noQuestionStretch(dry), 'nine replies with zero questions is a drought');
+  const wet = dry.slice(0, -1).concat([{ role: 'assistant', text: 'wait what did he say?' }]);
+  ok(!API._noQuestionStretch(wet), 'one real question resets the drought');
+  const now = API._now();
+  const cq = mkFriend('samantha'); cq.profile.sliders = Object.assign({}, cq.profile.sliders, { curiosity: 60 });
+  ok(API.buildDynamicContext(cq, now - 10 * 60000, 0, 40, null, null, dry).includes('not asked him ONE question'),
+    'drought surfaces the one-question license');
+  const iq = mkFriend('samantha'); iq.profile.sliders = Object.assign({}, iq.profile.sliders, { curiosity: 10 });
+  ok(!API.buildDynamicContext(iq, now - 10 * 60000, 0, 40, null, null, dry).includes('not asked him ONE question'),
+    'incurious persona never gets the contradicting order');
+
+  // drink tell: her own stated quantity, never wine-as-scenery
+  ok(API._drinkTell([{ role: 'assistant', text: 'ok so im like three drinks in' }]), 'stated drinks flip the register');
+  ok(!API._drinkTell([{ role: 'assistant', text: 'couch wine and trash tv, the good quiet' }]), 'wine as scenery does not');
+  ok(API.buildDynamicContext(cq, now - 10 * 60000, 0, 40, null, null,
+    [{ role: 'user', text: 'hey' }, { role: 'assistant', text: 'im like three drinks in tonight' }]).includes('DRINKING tonight'),
+    'the live register reaches the Tonight block');
+
+  // the slip: rare, evening, deterministic, never for flirt-sport
+  const sf = mkFriend('samantha'); sf.state.comfort = 45;
+  const eve0 = new Date(2026, 2, 1, 21, 30).getTime();
+  let fires = 0;
+  for (let d = 0; d < 60; d++) if (API._slipNote(sf, eve0 + d * DAY)) fires++;
+  ok(fires >= 2 && fires <= 20, 'slip fires on a rare minority of evenings (' + fires + '/60)');
+  ok(API._slipNote(sf, new Date(2026, 2, 1, 13, 0).getTime()) === null, 'no slips at lunchtime');
+  let kFires = 0;
+  const kf = mkFriend('kelly');
+  for (let d = 0; d < 60; d++) if (API._slipNote(kf, eve0 + d * DAY)) kFires++;
+  ok(kFires === 0, 'flirt-sport persona never slips — she flirts on purpose');
+
+  // clocks: early evening is not bedtime; late night activates her own register
+  ok(API._timeNote(new Date(2026, 2, 3, 18, 0).getTime(), f).includes('NOT bedtime'), 'early evening carries the not-bedtime clause');
+  ok(API._timeNote(new Date(2026, 2, 3, 23, 0).getTime(), f).includes('late-night or wine register'), 'late night activates her authored register');
+
+  // gaps: stale actions and multi-day silences get clocked
+  const g5 = API.buildDynamicContext(f, now - 5 * DAY, 0, 40, null, null, [{ role: 'user', text: 'hey stranger' }]);
+  ok(g5.includes('ABOUT to do'), 'multi-hour gap carries the reply-to-NOW clause');
+  ok(g5.includes('-day quiet'), 'a five-day silence gets clocked in her first reply');
+  const g3h = API.buildDynamicContext(f, now - 3 * 3600000, 0, 40, null, null, [{ role: 'user', text: 'back' }]);
+  ok(g3h.includes('ABOUT to do') && !g3h.includes('-day quiet'), 'a three-hour gap is stale but not a silence');
+
+  // boundary pushes are never state-neutral
+  ok(API._jsonInstruction().includes('NEVER a neutral exchange'), 'push-never-neutral reaches the state ask');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

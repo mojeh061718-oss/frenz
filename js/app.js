@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.18';
+const APP_JS_VERSION = '10.19';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -660,11 +660,32 @@ async function sweepOpeners(force) {
    discarded (she just didn't text first today) and his send runs normally. */
 let openerFlight = null;
 
+/* THE SAME OPENER, TWICE. The July archive caught her delivering the
+   dishwasher opener at 3:58, holding a real exchange at 5:12, then posting
+   the dishwasher opener AGAIN backdated to 4:31. Mechanism: the boot-timer
+   sweep and the visibility force-sweep can reach the same friend within a
+   second of each other, both pass openerDue before either marks the day,
+   and each drafts from a history snapshot blind to the other — so even the
+   echo guard sees nothing. Three locks, all needed:
+   1. one flight per friend at a time (openerBusy);
+   2. every flight re-reads the FRESH friend record before checking due,
+      so a mark written moments ago by any other path is seen;
+   3. after generation, the opener commits ONLY if the thread is exactly
+      where the draft left it — one message landed since (his, hers,
+      another opener's) and the draft is stale: discarded whole, like a
+      text she thought better of. This also closes the background hole
+      where his send couldn't cancel a flight (openerFlight only tracks
+      foreground ones). */
+const openerBusy = new Set();
+
 async function maybeOpener(friend, background) {
   if (sending && !background) return;
+  if (openerBusy.has(friend.id)) return;
+  openerBusy.add(friend.id);
   const flight = { cancelled: false };
   if (!background) openerFlight = flight;
   try {
+    friend = (await DB.getFriend(friend.id)) || friend;
     const msgs = await DB.getMessages(friend.id);
     const last = msgs[msgs.length - 1];
     if (!ClaudeAPI.openerDue(friend, msgs)) return;
@@ -690,6 +711,13 @@ async function maybeOpener(friend, background) {
     // He started talking while she was drafting — his message wins, her
     // opener is discarded whole (no bubbles, no state, no memory of it).
     if (flight.cancelled) return;
+    // Lock 3: the thread must be exactly where the draft left it. Any
+    // message that landed while she was drafting (his send, a parallel
+    // path) makes this opener a reply to a conversation that no longer
+    // exists — discarded whole, same contract as the cancel above.
+    const freshMsgs = await DB.getMessages(friend.id);
+    const lastFresh = freshMsgs[freshMsgs.length - 1];
+    if (freshMsgs.length !== msgs.length || (lastFresh && last && lastFresh.ts !== last.ts)) return;
     // The echo guard may decide the opener had nothing new to say (every
     // bubble restated a finished topic) — on this path silence is a real
     // outcome, not an error: she simply didn't text first today. Nothing is
@@ -745,6 +773,7 @@ async function maybeOpener(friend, background) {
     await DB.saveFriend(friend);
     renderFriendsList();
   } catch { /* silent — she just didn't text first today */ } finally {
+    openerBusy.delete(friend.id);
     if (openerFlight === flight) openerFlight = null;
     // If the user trumped this opener, his send owns the typing indicator
     // and status line now — touching them here would stomp a live send.
