@@ -309,7 +309,7 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   const pov = API._imagePrompt('my legs stretched out on the couch, tv on', 'pov', app, 0);
   ok(/head|collarbone|shoulders|torso/.test(pov) && !/her face is visible/i.test(pov), 'pov framing keeps the head out of frame');
   ok(pov.includes('amateur snapshot') && pov.includes('one-handed'), 'amateur cues present');
-  ok(pov.includes('redhead'), 'body-type fidelity: appearance sheet rides as the phone-holder');
+  ok(/redhead/i.test(pov), 'body-type fidelity: appearance sheet rides as the phone-holder');
   const mirror = API._imagePrompt('new dress, fit check', 'mirror', app, 0);
   ok(/covers her face completely|where her head would be/.test(mirror), 'mirror framing: phone over face');
   const scene = API._imagePrompt('the bowl of ramen on the counter', 'scene', app, 0);
@@ -401,7 +401,7 @@ console.log('\n== 16. testlook lens ==');
   }
   const p = API.testLookPrompt(mkFriend('samantha'));
   ok(/directly in front of her face/.test(p) && /hair to feet/.test(p), 'phone-over-face full figure (the framing grok renders cleanly — 4 live rounds)');
-  ok(/redhead/.test(p) && /tattoos/.test(p), 'appearance sheet is the subject');
+  ok(/redhead/i.test(p) && /tattoos/.test(p), 'appearance sheet is the subject');
   ok(/no filter, no retouching/.test(p), 'raw-photo cues intact (not truncated)');
   ok(API.testLookPrompt({ profile: {} }).includes('an adult woman'), 'tolerates a persona with no appearance');
 }
