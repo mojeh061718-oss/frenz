@@ -1330,6 +1330,296 @@ console.log('\n== templates: authoring parity + upgrade idempotency ==');
   }
 }
 
+/* ================= prompt-fixes (audit phases 1A + 1B) =================
+   Dedupes and precedence fixes in what the model reads. Every assertion pairs
+   the failure case with its nearest good case, per invariant 1. Time-of-day-
+   sensitive checks pin the clock via _timeOffset and reset it after. */
+console.log('\n== prompt-fixes: 1A dedupes ==');
+{
+  const pin = (ts) => { API._timeOffset = ts - Date.now(); };
+  const evening = new Date(2026, 7, 12, 18, 30).getTime();
+  const night = new Date(2026, 7, 12, 23, 0).getTime();
+
+  // --- opinion_notes lives in ONE place (depth-4), not two ---
+  pin(night);
+  {
+    const f = mkFriend('samantha');
+    const opin = String(f.state.opinion_notes || '');
+    const dyn = API.buildDynamicContext(f, API._now() - 3600000, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+    const plist = API._plist(f, API._now() - 3600000, 40);
+    ok(!dyn.includes(opin.slice(0, 40)), 'opinion note no longer rides the dynamic state JSON');
+    ok(plist.includes(opin.slice(0, 40)), 'opinion note still rides depth-4 (the read she acts on)');
+    ok(dyn.includes('"mood"') && dyn.includes('"comfort"'), 'state JSON keeps mood and bands (nearest good case)');
+  }
+
+  // --- opinion_notes decays: 7-day unrefreshed TTL, refresh restarts it ---
+  {
+    const f = mkFriend('kelly');
+    const t0 = Date.now();
+    const noop = { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.8, new_memories: [] };
+    let out = API.applyStateDeltas(f, noop, { now: t0, history: [] });
+    f.state = out.state;
+    ok(f.state.opinion_notes.length > 0 && f.state.opinionTs === t0, 'legacy opinion note gets a start-of-clock stamp');
+    out = API.applyStateDeltas(f, noop, { now: t0 + 6 * DAY, history: [] });
+    f.state = out.state;
+    ok(f.state.opinion_notes.length > 0, 'opinion note survives six days unrefreshed');
+    out = API.applyStateDeltas(f, noop, { now: t0 + 8 * DAY, history: [] });
+    f.state = out.state;
+    ok(f.state.opinion_notes === '', 'opinion note expires after seven days unrefreshed');
+    // refreshed note survives past the original clock
+    const g = mkFriend('kelly');
+    out = API.applyStateDeltas(g, noop, { now: t0, history: [] }); g.state = out.state;
+    out = API.applyStateDeltas(g, Object.assign({}, noop, { opinion_notes: 'He is steadier than I assumed. I like it more than I expected to.' }), { now: t0 + 6 * DAY, history: [] });
+    g.state = out.state;
+    out = API.applyStateDeltas(g, noop, { now: t0 + 12 * DAY, history: [] });
+    g.state = out.state;
+    ok(/steadier/.test(g.state.opinion_notes), 'a refreshed note survives (clock restarts on refresh)');
+    out = API.applyStateDeltas(g, noop, { now: t0 + 14 * DAY, history: [] });
+    ok(out.state.opinion_notes === '', 'and expires seven days after the refresh');
+  }
+
+  // --- _reviseNotes merges coherently instead of tail-slicing mid-sentence ---
+  {
+    const s1 = 'First read on him was that he plays everything safe and rehearsed and never risks a real opinion of his own in front of anyone, adding further padding words here to make this opening sentence genuinely long enough that dropping the whole thing is the only coherent option the merge has available to it';
+    const s2 = 'Second read is that he is much funnier in writing than he ever manages in person and clearly knows it, with still more padding words attached so this middle sentence also carries genuine length and the combined running note lands well past the six hundred character cap on its own terms tonight';
+    const s3 = 'Third read: he remembers small things, which is dangerous.';
+    const old = (s1 + '. ' + s2 + '. ' + s3);
+    const add = 'He was kind tonight.';
+    const merged = API._reviseNotes(old, add, 0.5);
+    ok(old.length + add.length > 600, 'fixture really overflows the cap (' + (old.length + add.length) + ')');
+    ok(merged.length <= 600, 'merged note respects the 600 cap (' + merged.length + ')');
+    ok(merged.endsWith(add), 'low-confidence addition lands at the end, not lost');
+    ok(merged.startsWith('Second read') || merged.startsWith('Third read'),
+      'merge drops WHOLE oldest sentences — never starts mid-word', JSON.stringify(merged.slice(0, 40)));
+    ok(!merged.includes(s1.slice(0, 30)), 'the oldest impression is what got dropped');
+    ok(API._reviseNotes(old, 'A completely new confident read that replaces the accumulated one outright with fresh wording.', 0.9)
+      .startsWith('A completely new confident read'), 'a confident full revision still replaces (nearest good case)');
+  }
+
+  // --- depth-4 mood goes through _freshMood: no stale "drinks in" at the strongest slot ---
+  {
+    const f = mkFriend('bre');
+    f.state.mood = 'a few drinks in and lonely';
+    const stale = API._plist(f, API._now() - 100 * 3600000, 50);
+    ok(/Mood: sober/.test(stale) && !/drinks in and lonely/.test(stale), 'plist mood sobers up after a 100h silence');
+    const live = API._plist(f, API._now() - 30 * 60000, 50);
+    ok(/drinks in and lonely/.test(live), 'a live mood rides depth-4 unchanged (nearest good case)');
+    const sam = mkFriend('samantha');
+    ok(API._plist(sam, API._now() - 100 * 3600000, 0).includes('Mood: ' + sam.state.mood),
+      'seeded scenario mood holds at depth-4 until the first exchange (verify 7 twin)');
+  }
+
+  // --- band gloss is a true short-form: no verbatim overlap with the contracts ---
+  {
+    const grams = (t) => {
+      const w = String(t).toLowerCase().replace(/[^a-z0-9\s']/g, ' ').split(/\s+/).filter(Boolean);
+      const out = new Set();
+      for (let i = 0; i + 3 < w.length; i++) out.add(w.slice(i, i + 4).join(' '));
+      return out;
+    };
+    let clean = true, where = '';
+    for (const stat of ['comfort', 'closeness', 'attraction']) {
+      for (const band of ['low', 'building', 'high', 'deep']) {
+        const g = API._BAND_GLOSS[stat][band], t = API._BAND_TEXT[stat][band];
+        if (t.includes(g) || g.includes(t)) { clean = false; where = stat + '.' + band + ' substring'; }
+        for (const x of grams(g)) if (grams(t).has(x)) { clean = false; where = stat + '.' + band + ' 4-gram "' + x + '"'; }
+      }
+    }
+    ok(clean, 'no gloss entry shares a substring or word-4-gram with its band contract', where);
+    ok(/dodge|playful/i.test(API._BAND_GLOSS.attraction.low) && /frame/i.test(API._BAND_GLOSS.attraction.low),
+      'attraction-low gloss keeps the in-her-voice deflection + playable frame anchors (nearest good case)');
+  }
+
+  // --- life beat emitted once per opener run (nudge carries it, dynamic stays quiet) ---
+  {
+    let beatDay = null;
+    for (let d = 0; d < 40 && beatDay === null; d++) {
+      pin(evening + d * DAY);
+      if (API._lifeBeat(mkFriend('samantha'))) beatDay = d;
+    }
+    pin(evening + beatDay * DAY);
+    const f = mkFriend('samantha');
+    const nudge = API.openerNudge(30 * 3600000, false, f);
+    ok(nudge.includes('If you want material'), 'opener nudge still offers the beat');
+    const dynOp = API.buildDynamicContext(f, API._now() - 30 * 3600000, 0, 40, null, null,
+      [{ role: 'user', text: 'night sam' }, { role: 'user', text: nudge }]);
+    ok(!dynOp.includes('something real happened in your world'), 'dynamic block does not restate the beat on an opener run');
+    const g = mkFriend('samantha');
+    const dynHis = API.buildDynamicContext(g, API._now() - 3600000, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+    ok(dynHis.includes('something real happened in your world'), 'beat still fires on an ordinary his-text day (nearest good case)');
+  }
+
+  // --- "context is not a topic" stated once, per-section restatements gone ---
+  pin(night);
+  {
+    const f = mkFriend('kelly');
+    const persona = API.buildPersona(f, 'rich');
+    const dyn = API.buildDynamicContext(f, API._now() - 3600000, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+    const plist = API._plist(f, API._now() - 3600000, 40);
+    const phi = API._phi(f, true, 12, []);
+    const all = [persona, dyn, plist, phi].join('\n');
+    ok((all.match(/context is never the topic/g) || []).length === 1, 'the block-level rule is stated exactly once');
+    for (const gone of ['Energy is not a topic', 'scenery, not a topic', '(Never announced, never explained.)',
+      'not an announcement', 'not announcements', 'Never announce the remembering', 'status ticker', 'mentioned once at most']) {
+      ok(!all.includes(gone), 'restatement gone: "' + gone + '"');
+    }
+    ok(/Every reply is written to his last message specifically/.test(persona), 'rhythm section keeps its unique content');
+    ok(/These are things you KNOW/.test(dyn) && /he was THERE/.test(dyn), 'memory wrapper keeps its non-duplicative rules');
+    ok(/It only gets named if he actually notices and asks/.test(API.lifeEventNote(mkFriend('kelly'), API._now()) || 'It only gets named if he actually notices and asks'),
+      'week-event keeps its ask-exception clause');
+    const rev = mkFriend('kelly');
+    rev.profile.reveals = [{ text: 'She once quit a job over a principle.' }];
+    const dynRev = API.buildDynamicContext(rev, API._now() - 3600000, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+    ok(/surface sideways at most/.test(dynRev) && /genuinely calls for it/.test(dynRev), 'reveals keep the voiced-when-called-for exception');
+  }
+}
+
+console.log('\n== prompt-fixes: 1B precedence & contradictions ==');
+{
+  const pin = (ts) => { API._timeOffset = ts - Date.now(); };
+  const evening = new Date(2026, 7, 12, 18, 30).getTime();
+  const night = new Date(2026, 7, 12, 23, 0).getTime();
+
+  // --- openerNudge: no "like nothing happened" while an unresolved is live ---
+  pin(night);
+  {
+    const f = mkFriend('samantha');
+    f.unresolved = { ts: API._now() - 20 * 3600000, kind: 'read' };
+    const nudge = API.openerNudge(22 * 3600000, true, f);
+    ok(!nudge.includes('like nothing happened'), 'doubleText clause gated off on an unresolved night');
+    ok(nudge.includes('Do not breeze past it'), 'the unresolved reckoning still rides the same nudge');
+    const g = mkFriend('samantha');
+    const clean = API.openerNudge(22 * 3600000, true, g);
+    ok(clean.includes('double-text') && clean.includes('like nothing happened'), 'ordinary double-texts keep the clause (nearest good case)');
+  }
+
+  // --- his-first-text path: beat suppressed while significant/unresolved is live ---
+  {
+    let beatDay = null;
+    for (let d = 0; d < 40 && beatDay === null; d++) {
+      pin(evening + d * DAY);
+      if (API._lifeBeat(mkFriend('samantha'))) beatDay = d;
+    }
+    pin(evening + beatDay * DAY);
+    const sig = mkFriend('samantha');
+    sig.state.lastSignificant = { ts: API._now() - 3 * DAY, kind: 'the tension between you finally came to a head' };
+    const dynSig = API.buildDynamicContext(sig, API._now() - 3 * DAY, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+    ok(/MEAN something/.test(dynSig), 'significant note rides the his-first-text prompt');
+    ok(!dynSig.includes('something real happened in your world'), 'cheerful beat suppressed beside it (invariant 16, both paths)');
+
+    // --- unresolved note reaches the his-first-text prompt, once, and outranks significant ---
+    const ur = mkFriend('samantha');
+    ur.unresolved = { ts: API._now() - 2 * DAY, kind: 'read' };
+    ur.state.lastSignificant = { ts: API._now() - 3 * DAY, kind: 'a line got leaned on, maybe crossed' };
+    const dynUr = API.buildDynamicContext(ur, API._now() - 2 * DAY, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+    ok((dynUr.match(/deliberately did not answer/g) || []).length === 1, 'left-on-read note reaches his-first-text, stated once');
+    ok(!/MEAN something/.test(dynUr), 'unresolved outranks significant in the same prompt');
+    ok(!dynUr.includes('something real happened in your world'), 'no cheerful beat on an unresolved reply either');
+    // …and never doubled onto an opener run, where the nudge already has it
+    const nudge = API.openerNudge(2 * 24 * 3600000, false, ur);
+    const dynOp = API.buildDynamicContext(ur, API._now() - 2 * DAY, 0, 40, null, null,
+      [{ role: 'user', text: 'hey' }, { role: 'user', text: nudge }]);
+    ok(((nudge + dynOp).match(/deliberately did not answer/g) || []).length === 1,
+      'one statement per assembled prompt across nudge + dynamic block');
+    ok(!dynOp.includes('It has been about'), 'the gap fact is the nudge\'s alone on opener runs');
+    ok(API.buildDynamicContext(ur, API._now() - 2 * DAY, 0, 40, null, null, [{ role: 'user', text: 'hey' }])
+      .includes('It has been about'), 'his-first-texts still get the gap note (nearest good case)');
+    // expired unresolved stays silent (nearest good case)
+    const old = mkFriend('samantha');
+    old.unresolved = { ts: API._now() - 20 * DAY, kind: 'read' };
+    ok(!/deliberately did not answer/.test(API.buildDynamicContext(old, API._now() - 20 * DAY, 0, 40, null, null, [{ role: 'user', text: 'hey' }])),
+      'a lapsed (>14d) unresolved does not ride');
+  }
+
+  // --- reciprocity outranks the question licence on the same stale signature ---
+  pin(night);
+  {
+    const f = mkFriend('samantha');
+    f.profile.sliders = Object.assign({}, f.profile.sliders, { curiosity: 60 });
+    const both = [];
+    for (let i = 0; i < 11; i++) both.push({ role: 'user', text: 'thing number ' + i }, { role: 'assistant', text: 'reply about thing ' + i });
+    const dyn = API.buildDynamicContext(f, API._now() - 10 * 60000, 0, 40, null, null, both);
+    ok(dyn.includes('less effort back'), 'reciprocity note fires on the all-serve stretch');
+    ok(!dyn.includes('ask the one thing you actually want to know'), 'question licence stands down that turn (reciprocity wins)');
+    const dry = [];
+    for (let i = 0; i < 9; i++) dry.push({ role: 'user', text: 'thing number ' + i }, { role: 'assistant', text: 'reply about thing ' + i });
+    const dynDry = API.buildDynamicContext(f, API._now() - 10 * 60000, 0, 40, null, null, dry);
+    ok(dynDry.includes('ask the one thing you actually want to know'), 'licence still fires on a drought without reciprocity (nearest good case)');
+  }
+
+  // --- signoff turns: content demands stand down; the release defers ---
+  {
+    pin(night);
+    const mkRelease = () => {
+      const f = mkFriend('samantha');
+      f.profile.sliders = Object.assign({}, f.profile.sliders, { curiosity: 60 });
+      f.state.tension = 70; f.state.attraction = 55;
+      f.state.lastTensionRelease = API._now() - 3600000; // came up earlier tonight
+      return f;
+    };
+    const stack = [];
+    for (let i = 0; i < 11; i++) stack.push({ role: 'user', text: 'thing number ' + i }, { role: 'assistant', text: 'reply about thing ' + i });
+    const bye = stack.concat([{ role: 'user', text: 'Night sam' }]);
+    const f = mkRelease();
+    const dynBye = API.buildDynamicContext(f, API._now() - 10 * 60000, 0, 40, null, null, bye);
+    ok(dynBye.includes('reply with exactly [end]'), 'room read still lets him go');
+    ok(!dynBye.includes('comes to a head'), 'release note defers to the signoff');
+    ok(!dynBye.includes('something real happened in your world'), 'no beat offer over his goodnight');
+    ok(!dynBye.includes('ask the one thing you actually want to know'), 'no question licence over his goodnight');
+    ok(!dynBye.includes('less effort back'), 'no reciprocity demand over his goodnight');
+    const g = mkRelease();
+    const dynLive = API.buildDynamicContext(g, API._now() - 10 * 60000, 0, 40, null, null,
+      stack.concat([{ role: 'user', text: 'you still up?' }]));
+    ok(dynLive.includes('comes to a head'), 'release note rides a live (non-signoff) turn (nearest good case)');
+    // the meter is not spent over a goodnight — the moment keeps for the next real conversation
+    const h = mkRelease();
+    const before = { tension: h.state.tension, rel: h.state.lastTensionRelease };
+    let out = API.applyStateDeltas(h, { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] },
+      { now: API._now(), gapMs: 10 * 60000, history: bye });
+    ok(out.state.tension >= before.tension && out.state.lastTensionRelease === before.rel,
+      'signoff turn neither spends the meter nor restamps the release');
+    ok(!out.state.lastSignificant || !/came to a head/.test(out.state.lastSignificant.kind),
+      'no came-to-a-head stamp minted over a goodbye');
+    const k = mkRelease();
+    out = API.applyStateDeltas(k, { comfort_delta: 0, closeness_delta: 0, attraction_delta: 0, confidence: 0.9, new_memories: [] },
+      { now: API._now(), gapMs: 10 * 60000, history: stack.concat([{ role: 'user', text: 'you still up?' }]) });
+    ok(out.state.tension < 70 && out.state.lastTensionRelease > before.rel,
+      'a live release turn still spends and stamps (nearest good case)');
+  }
+
+  // --- the end-the-night licence is time-aware ---
+  {
+    pin(evening); // 18:30
+    const f = mkFriend('kelly');
+    const dynEve = API.buildDynamicContext(f, API._now() - 3600000, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+    ok(dynEve.includes('NOT bedtime'), 'early-evening clock still says not bedtime');
+    ok(!dynEve.includes('end the night'), 'no end-the-night licence at 6:30pm (the contradiction is gone)');
+    pin(night); // 23:00
+    const dynNight = API.buildDynamicContext(f, API._now() - 3600000, 0, 40, null, null, [{ role: 'user', text: 'hey' }]);
+    ok(dynNight.includes('end the night'), 'the licence is present at night — she can still leave (nearest good case)');
+  }
+
+  // --- photoNote guarded wording softens once closeness is genuinely high ---
+  {
+    const settings = { pool: [{ id: 'b', enabled: true, kind: 'bedrock', apiKey: 'k', model: 'x', imageModel: 'amazon.titan-image' }] };
+    const low = mkFriend('samantha'); // closeness 40 -> building
+    const lowTxt = (API.photoNote(settings, low) || []).join('\n');
+    ok(lowTxt.includes('do not know him well enough'), 'near-stranger keeps the distance wording');
+    const deep = mkFriend('samantha');
+    deep.state.closeness = 85; deep.bands = null;
+    const deepTxt = (API.photoNote(settings, deep) || []).join('\n');
+    ok(!deepTxt.includes('do not know him well enough'), 'deep closeness drops the "barely know him" claim');
+    ok(deepTxt.includes('not what makes it casual'), 'softened wording keeps the caution without the lie');
+    ok(deepTxt.includes('ATMOSPHERE') && /RARE/.test(deepTxt), 'atmosphere + rarity rules survive the soften (nearest good case)');
+    const open = mkFriend('bre');
+    open.profile.photoCandor = 'open'; open.state.closeness = 85; open.bands = null;
+    const openTxt = (API.photoNote(settings, open) || []).join('\n');
+    ok(!openTxt.includes('know him well enough') && !openTxt.includes('not what makes it casual') && openTxt.includes('without ceremony'),
+      'open candor untouched by the band gate');
+  }
+  API.resetTimeOffset();
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
   + (intendedRed ? ', ' + intendedRed + ' intended-red (expected — see RED* lines)' : ''));
 process.exit(fail ? 1 : 0);
