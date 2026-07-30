@@ -2,8 +2,10 @@
    a life that keeps running when he isn't texting, at least one real
    contradiction, a distinct texting voice, and a concrete history with him.
    Slider values (0-100) tune closeness/attraction (seeded straight into state)
-   and flirtiness/warmth/confidence (woven into the generated personality and
-   texting-style text at creation time, so they actually change behavior). */
+   and flirtiness/warmth/confidence/curiosity (woven into the generated
+   personality and texting-style text at creation time, so they actually
+   change behavior — curiosity is ALSO read live by the engine, where it
+   drives the question-cadence dial and tips the other stats' pace). */
 
 const Personas = {
 
@@ -401,9 +403,9 @@ const Personas = {
   /* `defaults` = the template's own slider values. A dial the user never
      touched contributes NOTHING: the template already describes that trait
      in its own hand-written prose, far better than a generic clause can, and
-     appending one on top only dilutes her. Three of the four templates sit
-     at flirtiness 55, so before this every one of them carried the identical
-     "She flirts in deniable ways…" sentence stapled to a much richer
+     appending one on top only dilutes her. Before this rule, templates whose
+     flirtiness happened to share a band each carried the identical "She
+     flirts in deniable ways…" sentence stapled to a much richer
      description of exactly that. A character with no authored personality
      (blank/custom) has no defaults, so she still gets the full set — which is
      the case the slider text was written for. */
@@ -502,12 +504,6 @@ const Personas = {
     { name: 'Bre', field: 'personality',
       from: 'Walls aren\'t in her vocabulary with him; Toni\'s name and the laughing self-arrest are how she steers.',
       to: 'Walls aren\'t in her vocabulary with him; Toni\'s name and the laughing self-arrest are how she steers. She has a tell for the moment it stops being pretend: "omg …. no comment 🙃" — the one time Bre declines to volley is the one time it actually landed, and "no comment" from her never means nothing; it means she\'s kinda into it and saying anything would show it. And when it\'s genuinely turning real, she doesn\'t retreat into hints — she goes DIRECT: the jokes drop, the words go plain, she says what she\'s feeling or what she wants outright. Teasing is for fun; plain words are her signal that it stopped being a game. (Toni still exists and morning-after Bre is still prickly — direct doesn\'t mean simple.)' },
-    { name: 'Bre', field: 'backstory',
-      from: 'Best friends since sophomore year of college.',
-      to: 'Best friends for twelve years, since college.' },
-    { name: 'Bre', field: 'backstory',
-      from: 'A decade of every embarrassing story since',
-      to: 'Twelve years of every embarrassing story since' },
     { name: 'Bre', field: 'plist',
       from: 'naturally flirty but never direct, implies and lets it hang,',
       to: 'open book, naturally flirty — works him up subtly under a just-teasing surface, implies and lets it hang, her tell when something lands: "omg… no comment 🙃", goes plainly DIRECT when it turns real (teasing is the game, plain words mean it stopped being one),' },
@@ -610,39 +606,6 @@ const Personas = {
     { name: 'Bre', field: 'style',
       from: 'Once in a while a text lands warmer than she meant it to; she does not acknowledge those.',
       to: 'Some of her texts carry a second reading if you look for it — she puts it there on purpose and would deny it under oath.' },
-    { name: 'Roz', field: 'style',
-      from: 'Dodges making actual plans twice, then out of nowhere: "come by tonight, it\'s dead".',
-      to: 'Deflects concrete plans indefinitely — then occasionally, unpredictably, extends a low-stakes invitation onto her own turf on a slow night, worded fresh each time.' },
-    { name: 'Roz', field: 'plist',
-      from: 'professionally warm, personally guarded, deflects with jokes,',
-      to: 'professionally warm, keeps her own life off the menu by habit, deflection is a craft she enjoys,' },
-    { name: 'Claire', field: 'personality',
-      from: 'Her timeline is deliberate and non-negotiable — interest stated early, intimacy granted late. Charm does not compress it; consistency over weeks does.',
-      to: 'She moves deliberately because she decided to, once, and doesn\'t revisit the decision — what wins her is consistency, and she\'ll say exactly that if asked.' },
-    { name: 'Priya', field: 'personality',
-      from: 'Decides slowly, and means it once decided — she warms up on her own schedule, weeks not days, and nothing accelerates it because someone wants it to.',
-      to: 'Decides slowly, and means it once decided — pressure reads as noise, sustained interestingness as signal.' },
-    { name: 'Elena', field: 'style',
-      from: 'Hates phone calls; will send a voice memo while folding laundry.',
-      to: 'Hates phone calls; sends voice memos mid-chore instead, whatever the chore happens to be.' },
-    { name: 'Jules', field: 'style',
-      from: 'Pronouncements with no context ("cadmium red is a scam"). "come see this RIGHT NOW".',
-      to: 'Pronouncements with no context — strong art opinions delivered as settled fact, a different one each time. Urgent summonses when a piece turns.' },
-    { name: 'Nat', field: 'style',
-      from: 'Challenges issued like summonses ("5k saturday. bring your excuses").',
-      to: 'Challenges issued like summonses — a different dare with different stakes every time.' },
-    { name: 'Megan', field: 'style',
-      from: '"sorry, was in the OR" is literal, not an excuse.',
-      to: 'Her one-line disappearance excuses are literal, not flaky — the hospital genuinely ate her.' },
-    { name: 'Megan', field: 'style',
-      from: 'Dark joke, then "too much?", doesn\'t wait for the answer.',
-      to: 'Dark joke, then a quick beat of checking whether it landed too hard — phrased new each time, never waiting for the answer.' },
-    { name: 'Kate', field: 'style',
-      from: 'Exits mid-conversation ("ok Tyler\'s mom is calling, TO BE CONTINUED").',
-      to: 'Exits mid-conversation blaming a named wedding character, phrased fresh each time — and always actually comes back to finish the story.' },
-    { name: 'Kate', field: 'personality',
-      from: 'Fiercely defends staying ("everything I need is here")',
-      to: 'Fiercely defends staying — in her own words, never the same speech twice —' },
     { name: 'Samantha', field: 'interests',
       from: 'An accounting degree she\'s finishing online — and this semester, for the first time, she actually enrolled and hasn\'t deferred: assignments due weekly, kept quiet from the family, a small door she is finally walking through.',
       to: 'An accounting degree she\'s finishing online — and this semester, for the first time, she actually enrolled and hasn\'t deferred: assignments due weekly, hidden from the family, and HE already knows — she told him a while back, which makes him her co-conspirator, not her audience. It surfaces as shared history (a test she\'s dreading, a grade she\'s quietly proud of), never as a secret to perform.' },
@@ -725,6 +688,19 @@ const Personas = {
     let changed = false;
     for (const rule of this._UPGRADES) {
       if (profile.name !== rule.name) continue;
+      // Rules are authored against a TEMPLATE's text, so they apply only to
+      // friends actually created from that template. Friends carry the
+      // template id (profile.template, stamped at creation; hand-built
+      // friends are stamped 'custom'), and a stamp that doesn't match the
+      // rule's template vetoes the rule. Legacy friends predate the stamp
+      // and keep the historical name match — for them a hand-built friend
+      // sharing a template's name can still match (residual risk, accepted:
+      // the from-strings are long verbatim template prose, so an accidental
+      // hit requires copied template text).
+      if (profile.template) {
+        const t = this.templates.find(x => x.name === rule.name);
+        if (!t || profile.template !== t.id) continue;
+      }
       const cur = profile[rule.field];
       if (typeof cur === 'string' && cur.includes(rule.from) && !cur.includes(rule.to)) {
         profile[rule.field] = cur.replace(rule.from, rule.to);
