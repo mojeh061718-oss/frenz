@@ -754,5 +754,27 @@ console.log('\n== 21. the July archive: loops, shape, drive, clocks ==');
   ok(API._jsonInstruction().includes('NEVER a neutral exchange'), 'push-never-neutral reaches the state ask');
 }
 
+console.log('\n== 22. the she-drives layer reaches the WIRE (tier gating) ==');
+{
+  // The 100-message agent runs silently ran COMPACT tier (harness entry had
+  // no contextTokens -> 8k budget) and the whole curiosity/wit/slip layer
+  // was suppressed — undetected, because every prior assertion called
+  // buildDynamicContext directly. This section goes through the real
+  // request builder with a production-shaped entry, so a tier regression
+  // can never hide again.
+  const f = mkFriend('samantha');
+  const dry = [];
+  for (let i = 0; i < 9; i++) dry.push({ role: 'user', text: 'thing number ' + i }, { role: 'assistant', text: 'reply about thing ' + i });
+  const entry = { id: 'x', enabled: true, kind: 'openai', baseUrl: 'https://api.x.ai/v1', apiKey: 'k', model: 'grok-4', contextTokens: 1000000 };
+  const req = API._buildPlainRequest(entry, f, dry, Date.now() - 600000, API._jsonInstruction(), true);
+  const blob = req.messages.map(m => m.content).join('\n');
+  ok(blob.includes('## Your curiosity'), 'curiosity section rides the real request');
+  ok(blob.includes('not asked him ONE question'), 'question license reaches the wire under drought');
+  ok(blob.includes('## Wit tonight'), 'wit note rides the real request');
+  const reqLean = API._buildPlainRequest(Object.assign({}, entry, { contextTokens: 8000 }), f, dry, Date.now() - 600000, API._jsonInstruction(), true);
+  ok(!reqLean.messages.map(m => m.content).join('\n').includes('## Your curiosity'),
+    'compact survival tier still trims the layer (by design, for tiny budgets only)');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
