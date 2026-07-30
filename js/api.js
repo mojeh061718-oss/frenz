@@ -2288,7 +2288,7 @@ const ClaudeAPI = {
   // is its only equivalent — it must carry the face rule too (measured:
   // one pov couch shot in five rendered a mostly-visible face before the
   // clause was here; the Bedrock negativeText already had it since v10.2).
-  _IMAGE_AVOID: ' Her face stays out of the picture or out of focus past the frame edge — cropped above the mouth at most. Not an illustration or 3d render; no text, watermarks, or logos.',
+  _IMAGE_AVOID: ' Her face stays out of the picture or out of focus past the frame edge — cropped above the mouth at most. This is an unremarkable amateur self-taken phone photo: one of her own hands is holding the phone, there is no photographer, no studio lighting, no modeling pose, no editorial polish. Not an illustration or 3d render; no text, watermarks, or logos.',
 
   /* Face-out-of-frame is the consistency mechanism: these models roll a new
      person every generation, so the one identity anchor we can actually hold
@@ -2354,7 +2354,7 @@ const ClaudeAPI = {
       'A photo she took on her phone looking down at herself, the top edge of the frame cutting across below her shoulders, so nothing above them is in the picture.',
       'A photo she took on her phone with her arm out, the camera pointed down the length of her own body, everything above the collarbone past the top edge of the frame.',
       'A photo she took on her phone while lying back, aimed down her own body toward her legs and past them into the room, so her legs and whatever is beyond them — the far end of the couch, the TV, the window — share the frame, and her head stays far above the top edge of the picture.',
-      'A casual photo she took on her phone at lap height, looking down at what she is doing — her hands, her thighs or knees, the thing she is holding — the frame starting mid-torso so everything above it is out of the picture.'
+      'A casual one-handed photo she took on her phone at lap height, looking down at what she is doing — her free hand, her thighs or knees, the thing she is holding — the frame starting mid-torso so everything above it is out of the picture.'
     ],
     mirror: [
       'A full-length mirror photo she took on her phone, the phone raised in front of her head so that it covers her face completely in the reflection, her whole outfit visible from shoes to shoulders. The picture contains only the mirror\'s reflection.',
