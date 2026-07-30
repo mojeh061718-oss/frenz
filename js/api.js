@@ -140,10 +140,6 @@ const ClaudeAPI = {
     }
   },
 
-  /* Presets that used to exist. A saved pool entry pointing at one of these
-     is dropped on load rather than left dangling with no preset behind it. */
-  RETIRED_PRESETS: ['llm7', 'pollinations', 'zen', 'gemini', 'groq', 'cerebras', 'openrouter', 'ollama', 'custom'],
-
   typeLabel(type, established) {
     // 'romantic' with real history (Samantha, Aubrey) must not open the
     // system prompt with "recently started talking" — the first sentence
@@ -231,12 +227,13 @@ const ClaudeAPI = {
      coarse, and deliberately conservative: an unrecognized model gets the
      defensive prompt, because that failure is recoverable and the reverse
      (a weak model handed a terse prompt) is what produced the dry, robotic
-     replies in the first place. */
+     replies in the first place. In the shipped Grok-only pool every live
+     model matches _CAPABLE_MODEL, so the 'full' tier is reachable only for
+     a hand-configured weak model — kept deliberately as that fallback. */
   _CAPABLE_MODEL: /(claude|grok|gpt-5|gpt-4\.5|o[34]-|gemini-3(\.\d+)?-pro|gemini-2\.5-pro|glm-[5-9]|kimi|minimax|deepseek-(v[3-9]|r[1-9])|qwen3-max|llama-4-maverick|mistral-large)/i,
   _WEAK_VARIANT: /(^|[-_.\/: ])(mini|lite|small|tiny|nano|distill\w*|\d+(\.\d+)?b)($|[-_.\/: ])/i,
-  _isCapableModel(entry, settings) {
-    if (entry && entry.kind === 'anthropic') return true;
-    const m = (entry && entry.model) || (settings && settings.model) || '';
+  _isCapableModel(entry) {
+    const m = (entry && entry.model) || '';
     if (!this._CAPABLE_MODEL.test(String(m))) return false;
     // Distilled and mini variants carry a flagship's name but not its
     // judgement, and they parrot examples the way small models do. Matched as
@@ -258,7 +255,12 @@ const ClaudeAPI = {
       }
       return out;
     };
-    if (tier === 'compact') return [];   // capped providers: rules only, no examples to parrot
+    // Tiny budgets keep the FIRST THREE of the register-matched bank: the
+    // design note on _EXAMPLES is explicit that those three cover both
+    // failure modes (interview-bot and dry nothing-bot), and the weak/capped
+    // models that land here are exactly the ones that need the failure
+    // worked out for them. ~900 chars against a >=8k-char budget.
+    if (tier === 'compact') return this._exampleBank(style).slice(0, 3);
     const idx = tier === 'rich'
       // One of each failure mode: enough to fix the register, too few to
       // become a template the model writes from.
@@ -268,10 +270,11 @@ const ClaudeAPI = {
     return idx.sort((a, b) => a - b).map(i => bank[i]);
   },
 
-  /* Stable persona block — kept byte-identical across turns (per tier) so it
-     prompt-caches on Anthropic, and the same character on every provider.
-     tier: 'full' (default) | 'compact' (small-context providers — trims only
-     few-shot examples, never the pacing bands or anti-interview rules). */
+  /* Stable persona block — kept byte-identical across turns (per tier) so
+     the provider's prefix cache holds, and the same character everywhere.
+     tier: 'full' (default) | 'compact' (small-context providers — trims the
+     few-shot bank to three and drops the enhancement blocks, never the
+     pacing bands or anti-interview rules). */
   /* Is this a genuinely platonic friendship?
      Deciding it needs POSITIVE evidence, and anything ambiguous stays
      charged — the same conservative bias as `_isCapableModel`, because the
@@ -284,7 +287,12 @@ const ClaudeAPI = {
      have lost her entire signature after one quiet week of absence drift
      pushed her attraction under 25. Who she is does not change with her
      mood. */
-  _FLIRT_TEXT: /flirt|tease|teasing|innuendo|seduc|sexual|tension|suggestive|deniable|come-?on|banter with an edge/i,
+  /* Narrowed (removals audit): the bare word "tension" matched almost any
+     authored prose — "hates tension at work" read as flirt evidence, which
+     silently welded the platonic door shut for hand-built friends. Tension
+     only counts when the text itself makes it relational/charged; ambiguous
+     prose still defaults charged via the other gates. */
+  _FLIRT_TEXT: /flirt|teas(?:e|ing)|innuendo|seduc|sexual|suggestive|deniable|come-?on|banter with an edge|(?:romantic|charged|unspoken|unresolved) tension|tension between/i,
   _isPlatonic(friend) {
     const p = (friend && friend.profile) || {};
     if (p.type !== 'friend') return false;                       // the user picked a charged category
@@ -1376,7 +1384,9 @@ const ClaudeAPI = {
      only way she can open up over time is for the deeper material to arrive
      over time. Unlocks are recomputed each turn from message count and state
      bands; nothing to persist. */
-  _bandRank(b) { return ['low', 'building', 'high', 'deep'].indexOf(String(b)); },
+  // Band ordering has ONE source: _BANDS. (_bandIndex maps a 0-100 value
+  // into it; this maps a band KEY into it — same scale, same authority.)
+  _bandRank(b) { return this._BANDS.findIndex(x => x.key === String(b)); },
   unlockedReveals(friend, exchangedCount) {
     const list = (friend.profile && friend.profile.reveals) || [];
     if (!list.length) return [];
@@ -2221,9 +2231,8 @@ const ClaudeAPI = {
 
   /* ---------------- provider pool ---------------- */
 
-  entryConfigured(entry, settings) {
+  entryConfigured(entry) {
     if (!entry) return false;
-    if (entry.kind === 'anthropic') return !!(settings && settings.apiKey);
     if (entry.kind === 'bedrock') return !!(entry.apiKey && entry.model);
     // xAI has no keyless tier, so an unkeyed entry is a slot waiting for a
     // key, not a provider — treating it as live would burn a doomed round
@@ -2349,9 +2358,8 @@ const ClaudeAPI = {
   /* Did the user deliberately set this entry up (a key, or a local server)?
      Failing over PAST one of these is a quality downgrade worth surfacing;
      skipping an unconfigured or keyless entry is just routine pool order. */
-  _entryKeyed(entry, settings) {
+  _entryKeyed(entry) {
     if (!entry) return false;
-    if (entry.kind === 'anthropic') return !!(settings && settings.apiKey);
     if (entry.kind === 'bedrock') return !!entry.apiKey;
     return !!(entry.apiKey && String(entry.apiKey).trim());
   },
@@ -2361,9 +2369,6 @@ const ClaudeAPI = {
     if (u.blockedUntil && u.blockedUntil > this._now()) {
       return 'cooling down until ' + new Date(u.blockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     }
-    const hints = this._presetOf(entry);
-    if (hints && hints.rpd && u.requests >= hints.rpd) return 'daily free limit reached';
-    if (hints && hints.tpm && this._minuteTokens(entry.id) >= hints.tpm) return 'rate-limited this minute';
     return 'temporarily unavailable';
   },
 
@@ -2509,14 +2514,13 @@ const ClaudeAPI = {
   _last429: 0,
   _underPressure() { return this._now() - (this._last429 || 0) < 90000; },
 
-  /* Bedrock's Mantle endpoint hosts two dialects behind one host: Anthropic's
-     Messages API for Claude, and an OpenAI-compatible route for everyone else
-     (Grok, GLM, Kimi, MiniMax…). Which one an entry needs is decided by its
-     model id, so a single pool entry covers the whole catalog. */
+  /* Bedrock rides Mantle's OpenAI-compatible route (/openai/v1), which hosts
+     the models this app actually ships against — Grok, plus the rest of the
+     non-Anthropic catalog (GLM, Kimi, MiniMax…). A Bedrock pool entry is
+     rewritten into an OpenAI-shaped one and shares that whole path. */
   _bedrockHost(entry) {
     return `https://bedrock-mantle.${(entry && entry.region) || 'us-east-1'}.api.aws`;
   },
-  _bedrockIsClaude(model) { return /claude/i.test(String(model || '')); },
   _bedrockOaiEntry(entry) {
     return Object.assign({}, entry, {
       kind: 'openai',
@@ -2599,9 +2603,9 @@ const ClaudeAPI = {
      CAMERA POSITION that cannot physically contain a face. Same test, POV
      framing: no face possible, and the result finally reads like a real
      phone snapshot instead of a moody stock portrait.
-     The set rotates so her photos don't all look like the same shot, and is
-     seeded per photo (see generateImage) rather than random, so a retry of
-     the same moment is stable. */
+     The set rotates so her photos don't all look like the same shot, and the
+     pick is a deterministic hash of the description (see _frame) rather than
+     random, so a retry of the same moment is stable. */
   /* Every entry is a frame HER OWN PHONE takes, held in her own hand. No
      third-person camera positions: "photographed from behind her" implies
      somebody else in the room holding a camera, which is a different picture
@@ -2662,13 +2666,6 @@ const ClaudeAPI = {
      case that wants a mirror. Being in a hoodie on the couch is not a fit
      check, or every cosy evening becomes a fashion shoot. */
   _MIRROR_RE: /\b(outfit|fit check|ootd|dressed up|(getting|got|all) ready|going out|new (top|dress|jeans|skirt)|heels on|before i (go|leave)|what i('m| am) wearing|in the mirror)\b/i,
-  /* Words that mean the picture is OF something, not of her. Archive case:
-     "send me a pic of your couch" matched the couch/lap hint and returned a
-     body shot — a request for a THING answered with a picture of HER, which
-     is why the exchange stopped making sense. If the scene is about a place
-     or an object and nothing in it refers to her body or clothes, the phone
-     points outward and she is not in the frame at all. */
-  _OBJECT_SUBJECT: /\b(couch|sofa|sectional|room|kitchen|bedroom|bathroom|house|apartment|view|tv|screen|dog|cat|car|garden|plant|desk|table|fridge|mess|bookshelf|bed(?!room))\b/i,
   _BODY_SUBJECT: /\b(myself|sitting|sat|lying|laying|curled|standing|wearing|outfit|dressed|pyjamas|pajamas|hoodie|towel|heels|nails|thighs|knees|legs|lap|my (legs|lap|body|outfit|hands?|feet|hair|skin|chest|top|shirt|dress|socks|arms?|stomach|waist))\b/i,
   /* Default is SCENE, deliberately. The old default was a hash across seven
      framings, five of which pointed at her body — so an ambiguous scene came
@@ -3101,153 +3098,16 @@ const ClaudeAPI = {
     return ['## Sending photos', common + (candor === 'open' ? open : guarded)];
   },
 
+  /* Every pool entry — xAI direct, or Grok-on-Bedrock rewritten into an
+     OpenAI-shaped entry — rides the one plain-provider path. The separate
+     Anthropic Messages path that used to live here was unreachable in the
+     shipped product (Settings.get() drops kind:'anthropic' entries on load)
+     and was deleted in the removals audit; git history and backup/v10.23
+     hold the reference implementation. */
   _sendEntry(entry, friend, history, settings, lastMessageTs) {
-    if (entry.kind === 'bedrock' && !this._bedrockIsClaude(entry.model)) {
-      const oai = this._bedrockOaiEntry(entry);
-      const call = (messages, format) => this._openaiRequest(oai, messages, format, friend.id);
-      return this._plainProviderChat(oai, call, friend, history, lastMessageTs);
-    }
-    if (entry.kind === 'openai') {
-      const call = (messages, format) => this._openaiRequest(entry, messages, format, friend.id);
-      return this._plainProviderChat(entry, call, friend, history, lastMessageTs);
-    }
-    return this._sendAnthropic(entry, friend, history, settings, lastMessageTs);
-  },
-
-  /* ---------------- Anthropic (reference path) ---------------- */
-
-  async _sendAnthropic(entry, friend, history, settings, lastMessageTs) {
-    // Bedrock's Mantle endpoint speaks the same Messages API, so it rides this
-    // whole path with three differences: model ids carry an `anthropic.`
-    // prefix, auth is the Bedrock API key, and first-party-only extras
-    // (server-side fallbacks, mid-array system role) are unavailable.
-    const bedrock = !!(entry && entry.kind === 'bedrock');
-    const region = (entry && entry.region) || 'us-east-1';
-    const url = bedrock
-      ? `https://bedrock-mantle.${region}.api.aws/anthropic/v1/messages`
-      : 'https://api.anthropic.com/v1/messages';
-    const rawModel = bedrock
-      ? (entry.model || 'claude-sonnet-5')
-      : (settings.model || 'claude-opus-5');
-    const model = bedrock ? 'anthropic.' + String(rawModel).replace(/^anthropic\./, '') : rawModel;
-
-    const headers = {
-      'content-type': 'application/json',
-      'x-api-key': bedrock ? entry.apiKey : settings.apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    };
-
-    // Same sticky bounded window as _buildPlainRequest — the raw transcript
-    // is capped by design (self-imitation/context-rot), and the left edge
-    // advances in chunks so the cached prefix survives between turns.
-    const winStart = Math.max(
-      history.length - this.MAX_HISTORY,
-      Math.max(0, Math.floor((history.length - this.HISTORY_WINDOW) / this.HISTORY_STEP) * this.HISTORY_STEP)
-    );
-    const trimmed = history.slice(Math.max(0, winStart));
-    while (trimmed.length > 1 && trimmed[0].role !== 'user') trimmed.shift();
-    const omitted = history.length - trimmed.length;
-
-    const memories = this.selectMemories(friend, history, 8000);
-    const scenes = this._sceneContext(friend, history, 2400);
-
-    // Depth-4 PList + PHI: mid-conversation system role is supported on
-    // Opus 5 / Opus 4.8 / Fable 5. Elsewhere, fall back to a
-    // <system-reminder> user-role block (the documented pattern).
-    const midOk = !bedrock && /^claude-(opus-5|fable-5|opus-4-8)/.test(model);
-    const injRole = midOk ? 'system' : 'user';
-    const wrap = (t) => midOk ? t : '<system-reminder>\n' + t + '\n</system-reminder>';
-    let msgs = trimmed.map(m => ({ role: m.role, content: m.text }));
-    msgs = this._injectDepth(msgs, wrap(this._plist(friend, lastMessageTs, history.length)), injRole);
-    msgs.push({ role: injRole, content: wrap(this._phi(friend, true, history.length, this._ruts(history, friend), this._shapeRut(history))) });
-
-    const body = {
-      model,
-      max_tokens: 8192,
-      temperature: 1.0,
-      system: [
-        // Everything reaching this path is Claude, first-party or on Bedrock.
-        { type: 'text', text: this.buildPersona(friend, 'rich'), cache_control: { type: 'ephemeral' } },
-        { type: 'text', text: this.buildDynamicContext(friend, lastMessageTs, omitted, history.length, memories, scenes, history) }
-      ],
-      messages: msgs,
-      output_config: {
-        effort: settings.effort || 'low',
-        format: { type: 'json_schema', schema: this.REPLY_SCHEMA }
-      }
-    };
-
-    // Opus 5 and Fable 5 safety classifiers can occasionally decline benign
-    // requests; server-side fallbacks transparently re-serve those on a
-    // fallback model.
-    if (!bedrock && (model === 'claude-opus-5' || model === 'claude-fable-5')) {
-      headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
-      body.fallbacks = 'default';
-    }
-
-    let res;
-    const t0 = this._now();
-    try {
-      res = await this._timedFetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body)
-      }, this.TIMEOUTS.chat, 'Claude');
-    } catch (e) {
-      if (e && e.timeout) throw e;
-      const netErr = new Error('Connection problem — check your internet.');
-      netErr.retryable = true;
-      netErr.transport = true;
-      throw netErr;
-    }
-
-    this._recordRequest(entry ? entry.id : 'anthropic');
-
-    if (!res.ok) {
-      let msg = `API error (${res.status})`;
-      try {
-        const err = await res.json();
-        if (err.error && err.error.message) msg = err.error.message;
-      } catch { /* keep generic message */ }
-      if (res.status === 401) msg = 'Invalid API key — check Settings.';
-      if (res.status === 429) { msg = 'Rate limited — waiting a moment…'; this._last429 = this._now(); }
-      if (res.status === 529) msg = 'Claude is busy right now — retrying…';
-      const apiErr = new Error(msg);
-      apiErr.status = res.status;
-      apiErr.retryable = res.status === 429 || res.status === 529 || res.status >= 500;
-      apiErr.quota = res.status === 429;
-      apiErr.transport = res.status === 529 || res.status >= 500;
-      throw apiErr;
-    }
-
-    const data = await res.json();
-    if (data.usage) this._recordTokens(entry ? entry.id : 'anthropic', (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0));
-    const au = data.usage || {};
-    const meta = {
-      servedModel: data.model || model,
-      inTok: au.input_tokens || 0,
-      outTok: au.output_tokens || 0,
-      cachedTok: au.cache_read_input_tokens || 0,
-      latencyMs: this._now() - t0,
-      parseSalvage: false
-    };
-
-    if (data.stop_reason === 'refusal') {
-      return { refusal: true, bubbles: [], state: null, omitted, meta };
-    }
-
-    const textBlock = (data.content || []).find(b => b.type === 'text');
-    if (!textBlock) {
-      const emptyErr = new Error('Empty response — retrying…');
-      emptyErr.retryable = true;
-      emptyErr.transport = true;
-      throw emptyErr;
-    }
-
-    const reply = this._finishReply(textBlock.text);
-    meta.parseSalvage = !reply.parsedOk;
-    return { bubbles: reply.bubbles, state: reply.state, omitted, meta };
+    const oai = entry.kind === 'bedrock' ? this._bedrockOaiEntry(entry) : entry;
+    const call = (messages, format) => this._openaiRequest(oai, messages, format, friend.id);
+    return this._plainProviderChat(oai, call, friend, history, lastMessageTs);
   },
 
   /* ---------------- plain providers (pool entries) ---------------- */
@@ -3291,17 +3151,10 @@ const ClaudeAPI = {
     let mode = rec.mode;
     let probing = false;
 
-    // splitSticky presets stay in split mode permanently — split was chosen
-    // for voice quality there, not parse reliability, so a clean-parse probe
-    // proves nothing. Also overrides a 'single' mode stored by older builds.
-    const stickyHints = this._presetOf(entry);
-    const sticky = !!(stickyHints && stickyHints.splitSticky);
-    if (sticky) mode = 'split';
-
     // Promotion probe: a split-mode model gets a periodic shot at single-call
     // mode. If it nails the combined JSON, it's promoted; the existing
     // demotion logic re-splits it if that turns out to be a fluke.
-    if (mode === 'split' && !sticky) {
+    if (mode === 'split') {
       rec.splitCalls = (rec.splitCalls || 0) + 1;
       this._saveModes();
       if (rec.splitCalls % 12 === 0) { probing = true; mode = 'single'; }
@@ -3386,7 +3239,6 @@ const ClaudeAPI = {
   _effectiveBudget(entry) {
     const hints = this._presetOf(entry);
     let budget = parseInt(entry.contextTokens, 10) || (hints && hints.contextTokens) || 8000;
-    if (hints && hints.contextCap) budget = Math.min(budget, hints.contextCap); // e.g. Cerebras's hard 8K
     return Math.max(2000, budget);
   },
 
@@ -3408,11 +3260,12 @@ const ClaudeAPI = {
     // Budget and capability are separate constraints: a capable model on a
     // tight budget still needs the trimmed prompt, so compact wins.
     // 'compact' is a survival mode for a context too small to hold the whole
-    // character — it drops examples and the enhancement blocks, which visibly
-    // flattens her. Grok's budget is 1M, so this should never trigger; it
-    // stays only so a hand-lowered budget degrades instead of overflowing.
+    // character — it trims the few-shot bank to three and drops the
+    // enhancement blocks, which visibly flattens her. Grok's budget is 1M,
+    // so this should never trigger; it stays only so a hand-lowered budget
+    // degrades instead of overflowing.
     const tier = budgetTokens <= 10000 ? 'compact'
-      : (this._isCapableModel(entry, null) ? 'rich' : 'full');
+      : (this._isCapableModel(entry) ? 'rich' : 'full');
 
     this._leanContext = (tier === 'compact');
     const persona = this.buildPersona(friend, tier);
@@ -3430,9 +3283,10 @@ const ClaudeAPI = {
     const probe = this.buildDynamicContext(friend, lastMessageTs, 1, history.length, memories, scenes, history);
     const plist = this._plist(friend, lastMessageTs, history.length);
     const phi = this._phi(friend, jsonMode, history.length, this._ruts(history, friend), this._shapeRut(history));
-    // 6144 reserve: the dynamic block grew (room read, thermostat, tonight,
-    // due notes) and the old 4096 left history packing flush against the cap
-    // edge — variance in wildcard/omitted-note length must never breach it
+    // 7424 reserve: the dynamic block grew (room read, thermostat, tonight,
+    // due notes) and the old smaller reserves left history packing flush
+    // against the cap edge — variance in wildcard/omitted-note length must
+    // never breach it
     const overhead = persona.length + probe.length + recap.length + instr.length + plist.length + phi.length + 7424;
     const room = Math.max(1000, budgetChars - overhead);
 
@@ -4394,8 +4248,8 @@ const ClaudeAPI = {
         latencyMs: this._now() - t0
       };
       const choice = data.choices && data.choices[0];
-      // The provider's own safety layer declined — same handling as an
-      // Anthropic refusal: transient, never persisted, never routed around.
+      // The provider's own safety layer declined — same handling as any
+      // content refusal: transient, never persisted, never routed around.
       if (choice && choice.finish_reason === 'content_filter') return { refusal: true, meta };
       const text = choice && choice.message && choice.message.content;
       if (!text || !text.trim()) {
@@ -4871,6 +4725,10 @@ const ClaudeAPI = {
     if (q >= 25) {
       return 'Mild curiosity: you follow up when something catches you, but you do not dig, and you leave the uncomfortable questions unasked.';
     }
+    // Reachable only for hand-built friends: the customize sliders go to 0,
+    // while every shipped template authors curiosity >= 55. Kept live on
+    // purpose — an incurious custom friend needs this register, and
+    // _noQuestionStretch exempts her so the two never contradict.
     return 'You are not curious about anything beyond the friendship exactly as it is. You do not probe, you do not ask personal or intimate questions, and it would not occur to you to — this is what it is, and that suits you.';
   },
 
@@ -5077,35 +4935,20 @@ const ClaudeAPI = {
   /* ---------------- one-off completion on the pool ---------------- */
 
   /* One simple text-in/text-out completion on the first available pool entry.
-     Best-effort: returns null on any failure. Used for scene records. */
+     Best-effort: returns null on any failure. Used for scene records.
+     KNOWN GAP (pre-existing, preserved byte-for-byte in behavior): a
+     Bedrock-only pool returns null here — before the removals audit the
+     bedrock entry fell into a doomed keyless anthropic.com call that 401'd
+     and continued, i.e. also null. Routing bedrock through _bedrockOaiEntry
+     would make scene records work there; left for a behavior-change pass. */
   async _plainCompletion(settings, system, user) {
     for (const entry of this.activeEntries(settings)) {
       if (!this.entryAvailable(entry)) continue;
+      if (entry.kind !== 'openai') continue;
       try {
-        if (entry.kind === 'openai') {
-          const r = await this._openaiRequest(entry, [{ role: 'system', content: system }, { role: 'user', content: user }], 'text');
-          if (r.refusal) return null;
-          return r.text || null;
-        }
-        const res = await this._timedFetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-api-key': settings.apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true'
-          },
-          body: JSON.stringify({
-            model: settings.model || 'claude-opus-5',
-            max_tokens: 1024,
-            system,
-            messages: [{ role: 'user', content: user }]
-          })
-        });
-        if (!res.ok) continue;
-        const data = await res.json();
-        const block = (data.content || []).find(b => b.type === 'text');
-        if (block && block.text) return block.text;
+        const r = await this._openaiRequest(entry, [{ role: 'system', content: system }, { role: 'user', content: user }], 'text');
+        if (r.refusal) return null;
+        return r.text || null;
       } catch { /* try the next entry */ }
     }
     return null;
@@ -5265,51 +5108,30 @@ const ClaudeAPI = {
       if (!entry.model) throw new Error('Pick a model first.');
       const region = entry.region || 'us-east-1';
 
-      // Non-Claude models live on the OpenAI-compatible route, so the probe
-      // has to speak that dialect — but the failures are still AWS's, so they
+      // Bedrock models live on the OpenAI-compatible route, so the probe
+      // speaks that dialect — but the failures are still AWS's, so they
       // get the same plain-language classification.
-      if (!this._bedrockIsClaude(entry.model)) {
-        const oai = this._bedrockOaiEntry(entry);
-        let r;
-        try {
-          r = await this._openaiRequest(oai, [{ role: 'user', content: 'Reply with the single word: ok' }], 'text');
-        } catch (e) {
-          // The OpenAI path's own errors are phrased for keyed providers with
-          // a fetchable model list; Bedrock has neither, so the two that would
-          // mislead get re-pointed at what the user actually has to check.
-          if (e && (e.status === 401 || e.status === 403)) {
-            throw new Error(`Bedrock rejected the key. Check it was created in ${region} — a key from another region fails exactly like this.`);
-          }
-          if (e && e.status === 404) {
-            throw new Error(`Bedrock has no model called "${entry.model}" in ${region}. Open the model's page in the Bedrock console and copy its Model ID exactly.`);
-          }
-          if (e && e.transport) {
-            throw new Error(`Can't reach Bedrock in ${region} — check the region and your connection.`);
-          }
-          throw e;
-        }
-        if (!r || (!r.text && !r.refusal)) throw new Error(`${entry.model} didn't answer. Check the Model ID matches the one on its page in the Bedrock console.`);
-        return { message: `Bedrock ✓ · ${entry.model} in ${region} answered`, context: null };
-      }
-
-      const model = 'anthropic.' + String(entry.model).replace(/^anthropic\./, '');
-      let res;
+      const oai = this._bedrockOaiEntry(entry);
+      let r;
       try {
-        res = await this._timedFetch(`https://bedrock-mantle.${region}.api.aws/anthropic/v1/messages`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-api-key': entry.apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true'
-          },
-          body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: 'Reply with the single word: ok' }] })
-        });
-      } catch {
-        throw new Error(`Can't reach Bedrock in ${region} — check the region and your connection.`);
+        r = await this._openaiRequest(oai, [{ role: 'user', content: 'Reply with the single word: ok' }], 'text');
+      } catch (e) {
+        // The OpenAI path's own errors are phrased for keyed providers with
+        // a fetchable model list; Bedrock has neither, so the two that would
+        // mislead get re-pointed at what the user actually has to check.
+        if (e && (e.status === 401 || e.status === 403)) {
+          throw new Error(`Bedrock rejected the key. Check it was created in ${region} — a key from another region fails exactly like this.`);
+        }
+        if (e && e.status === 404) {
+          throw new Error(`Bedrock has no model called "${entry.model}" in ${region}. Open the model's page in the Bedrock console and copy its Model ID exactly.`);
+        }
+        if (e && e.transport) {
+          throw new Error(`Can't reach Bedrock in ${region} — check the region and your connection.`);
+        }
+        throw e;
       }
-      if (!res.ok) throw new Error(await this._bedrockError(res, region, model));
-      return { message: `Bedrock ✓ · ${model} in ${region} answered`, context: null };
+      if (!r || (!r.text && !r.refusal)) throw new Error(`${entry.model} didn't answer. Check the Model ID matches the one on its page in the Bedrock console.`);
+      return { message: `Bedrock ✓ · ${entry.model} in ${region} answered`, context: null };
     }
 
     if (entry.kind === 'openai') {
@@ -5326,28 +5148,8 @@ const ClaudeAPI = {
       };
     }
 
-    // anthropic
-    if (!settings.apiKey) throw new Error('Enter your API key first.');
-    const res = await this._timedFetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': settings.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: settings.model || 'claude-opus-5',
-        max_tokens: 1,
-        messages: [{ role: 'user', content: 'hi' }]
-      })
-    });
-    if (!res.ok) {
-      let msg = 'HTTP ' + res.status;
-      try { const e = await res.json(); if (e.error && e.error.message) msg = e.error.message; } catch { /* keep */ }
-      if (res.status === 401) msg = 'Invalid API key.';
-      throw new Error(msg);
-    }
-    return { message: `Key valid ✓ · ${settings.model || 'claude-opus-5'} reachable ✓`, context: null };
+    // Settings.get() only ever yields the two Grok entries (openai/bedrock),
+    // so this is unreachable except for a hand-corrupted localStorage blob.
+    throw new Error('Unknown provider type — remove and re-add this entry.');
   }
 };

@@ -1620,6 +1620,80 @@ console.log('\n== prompt-fixes: 1B precedence & contradictions ==');
   API.resetTimeOffset();
 }
 
+console.log('\n== removals: platonic gate, compact examples, upgrade identity ==');
+{
+  // --- the platonic door is real again (invariant 7), both directions ---
+  // Direction 1: all five shipped templates STILL classify charged — their
+  // types, sliders, and authored flirt text carry them without the bare
+  // word "tension" doing the work.
+  for (const id of ['kelly', 'bre', 'anna', 'samantha', 'tay']) {
+    const f = mkFriend(id);
+    ok(API._isPlatonic(f) === false, id + ': still charged after the _FLIRT_TEXT narrowing');
+    ok(API.buildPersona(f, 'rich').includes('## Pace — intimacy is earned'),
+      id + ': charged persona carries the pace/escalation material');
+  }
+  // Direction 2: a genuinely platonic hand-built profile — plain prose that
+  // happens to contain the word "tension", type friend, low sliders — now
+  // reaches the !charged "Being a good friend" branch instead of being
+  // welded charged by the overbroad regex.
+  const plainProse = 'Easygoing homebody who hates tension at work, keeps the peace in her group chat, and would rather talk sourdough than gossip.';
+  ok(!API._FLIRT_TEXT.test(plainProse), 'bare "tension" in plain prose no longer reads as flirt evidence');
+  ok(API._FLIRT_TEXT.test('plays open sexual tension like a sport'), 'authored flirt text still matches (kelly-grade)');
+  ok(API._FLIRT_TEXT.test('the unspoken tension between them since the lake'), 'relational tension still matches');
+  const dana = {
+    id: 'custom-dana-1',
+    profile: {
+      name: 'Dana', type: 'friend', userName: 'Jon', template: 'custom',
+      personality: plainProse,
+      style: 'Short casual texts, replies when she can.',
+      interests: 'Running club, sourdough starters, her sister\'s dog.',
+      sliders: { closeness: 40, flirtiness: 20, warmth: 60, confidence: 50, curiosity: 40 }
+    },
+    createdAt: Date.now() - 20 * DAY,
+    state: { mood: 'fine, a bit tired', comfort: 40, closeness: 40, attraction: 5, tension: 0,
+             opinion_notes: 'Solid guy.', unsaid: '', _carry: {} },
+    memories: [], vibeSeed: 3
+  };
+  ok(API._isPlatonic(dana) === true, 'hand-built platonic friend passes the gate');
+  const danaPersona = API.buildPersona(dana, 'rich');
+  ok(danaPersona.includes('## Being a good friend'), 'platonic door: the !charged branch is reachable');
+  ok(!danaPersona.includes('## Intimacy, if it gets there'), 'platonic persona does not carry the intimacy rulebook');
+  // Invariant 8 counter-case: the gate still reads stable properties only —
+  // the same friend with a high flirtiness dial stays charged.
+  const danaFlirty = JSON.parse(JSON.stringify(dana));
+  danaFlirty.profile.sliders.flirtiness = 85;
+  ok(API._isPlatonic(danaFlirty) === false, 'the flirtiness dial alone still keeps a friend charged');
+
+  // --- compact ships worked examples again (code now agrees with the
+  //     design comment that weak/capped models need them MOST) ---
+  const ck = API._exampleSetFor('kelly-1', 'compact', Personas.byId('kelly').style);
+  ok(ck.length === 3, 'compact ships the first three examples (' + ck.length + ')');
+  ok(ck.every(e => API._EXAMPLES.includes(e)) && ck[0] === API._EXAMPLES[0],
+    'compact draws the FIRST three — the ones authored to cover both failure modes');
+  const ct = API._exampleSetFor('tay-1', 'compact', Personas.byId('tay').style);
+  ok(ct.every(e => API._EXAMPLES_PUNCTUATED.includes(e)), 'compact respects the register-matched bank (invariant 10)');
+  ok(API.buildPersona(mkFriend('samantha'), 'compact').includes('BAD:'), 'compact persona carries the worked examples');
+  ok(API._exampleSetFor('x-1', 'rich', '').length === 2, 'rich tier example count unchanged (2)');
+
+  // --- _UPGRADES hygiene: no rules for deleted personas, and rules bind to
+  //     template identity, not to a shared first name ---
+  const liveNames = new Set(Personas.templates.map(t => t.name));
+  ok(Personas._UPGRADES.every(r => liveNames.has(r.name)),
+    'no upgrade rules target deleted personas (' + Personas._UPGRADES.length + ' rules)');
+  ok(!Personas._UPGRADES.some(r => r.from === 'Best friends since sophomore year of college.'
+      || r.from === 'A decade of every embarrassing story since'),
+    'superseded twelve-year Bre rules removed (fifteen-year canon owns backstory via templateRev)');
+  const handBre = { name: 'Bre', template: 'custom', style: 'Rapid-fire fragments, no punctuation, keysmashes when something is actually funny. "PLS". 1am voice memos she regrets by ten.' };
+  const before = handBre.style;
+  ok(Personas.upgradeProfile(handBre) === false && handBre.style === before,
+    'stamped hand-built friend named Bre is left strictly alone');
+  const legacySam = { name: 'Samantha', plist: 'funny and warm, mother of four with a three-month-old and no sleep, modest' };
+  ok(Personas.upgradeProfile(legacySam) === true && legacySam.plist.includes('stay-at-home mother of four'),
+    'unstamped legacy template friend still upgrades by name (fallback preserved)');
+  const stampedSam = { name: 'Samantha', template: 'samantha', plist: 'funny and warm, mother of four with a three-month-old and no sleep, modest' };
+  ok(Personas.upgradeProfile(stampedSam) === true, 'stamped template friend upgrades normally');
+}
+
 console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
   + (intendedRed ? ', ' + intendedRed + ' intended-red (expected — see RED* lines)' : ''));
 process.exit(fail ? 1 : 0);

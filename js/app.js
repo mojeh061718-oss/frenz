@@ -263,6 +263,10 @@ async function startConversation(e) {
     // gave last time rather than shipping a nameless relationship.
     userName: $('#c-username').value.trim() || localStorage.getItem('frenz-user-name') || '',
     userGender: $('#c-usergender').value,
+    // Which gallery template she was built from. Upgrade machinery
+    // (_UPGRADES rules, templateRev refreshes) keys on this, so a hand-built
+    // friend who happens to share a template's NAME is never rewritten.
+    template: t.id,
     plist: t.plist || '',
     appearance: $('#c-appearance').value.trim() || t.appearance || '',
     beats: t.beats || [],
@@ -658,6 +662,11 @@ async function saveFriendFromForm(e) {
     // swap silently destroyed reveals, sliders, and greetings on every edit.
     Object.assign(friend.profile, profile);
   } else {
+    // Hand-built in the editor: stamped 'custom' so template upgrade rules
+    // and templateRev refreshes can never mistake her for a gallery persona,
+    // whatever name she was given. (Edits above MERGE, so an existing
+    // friend's template stamp survives the editor untouched.)
+    profile.template = 'custom';
     friend = {
       id: uid(),
       profile,
@@ -1218,11 +1227,10 @@ async function deliverBubble(friend, b, atTs) {
     }).catch(() => {});
   };
   try {
-    // stable per-friend seed: her photos lean toward the same body and the
-    // same rooms instead of rerolling a stranger every time
     const dataUrl = await ClaudeAPI.generateImage(entry, desc, {
-      seed: ClaudeAPI._hash32(String(friend.id) + '|photolook') % 1e9,
-      // who she is, so every photo is the same woman instead of a new one
+      // who she is — the appearance sheet is the identity anchor (no image
+      // route here takes a seed; consistency comes from the sheet plus the
+      // faceless framings)
       appearance: friend.profile.appearance || '',
       // the photo tracks where the thread actually is, not a fixed neutral
       heat: ClaudeAPI._imageHeat(friend)
@@ -1881,7 +1889,7 @@ function openEntryEditor(id) {
       : 'grok-imagine-image (≈2¢/photo) sends her pictures through xAI — paste an xAI key below and your chat keeps running on Bedrock. A Bedrock image model ID like amazon.nova-canvas-v1:0 also works if your account has access to it. Clear the field to turn photos off.';
   }
   $('#e-modelhint').textContent = isBedrock
-    ? 'Claude models are listed. For anything else on Bedrock — Grok, GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'
+    ? 'The suggested Grok ID is listed. For anything else on Bedrock — GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'
     : 'Fetched live from the provider, so the list is never stale.';
   if (isBedrock) {
     $('#e-region').value = e.region || 'us-east-1';
@@ -2068,7 +2076,12 @@ async function upgradeTemplateFriends() {
   }
   for (const f of friends) {
     let changed = Personas.upgradeProfile(f.profile);
-    const tpl = Personas.templates.find(x => x.name === f.profile.name);
+    // Template identity: the name match is the historical key, and a stamp
+    // (profile.template, set at creation) can only VETO it — a stamped
+    // custom friend named "Bre" must not inherit Bre's rewrites, while an
+    // unstamped legacy friend keeps exactly the old behavior.
+    const byName = Personas.templates.find(x => x.name === f.profile.name);
+    const tpl = (f.profile.template && byName && f.profile.template !== byName.id) ? null : byName;
     // Reveals sync from the template wholesale: they are not user-editable
     // (no editor field), so a stale copy is pure loss — and substring upgrade
     // rules can't reach inside an array of objects, which is exactly how a
@@ -2179,7 +2192,7 @@ async function upgradeTemplateFriends() {
     // day-one numbers no matter what actually happened between them. Friends
     // below today's seed get lifted to it — never lowered, never repeated.
     if (!f.stateReseeded) {
-      const t = Personas.templates.find(x => x.name === f.profile.name);
+      const t = tpl; // same identity rule as above — a stamp vetoes the name match
       if (t && t.sliders && f.state && (Number(f.state.attraction) || 0) < t.sliders.attraction) {
         f.state.attraction = t.sliders.attraction;
       }
