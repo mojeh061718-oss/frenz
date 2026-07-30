@@ -1,0 +1,24 @@
+ENGINE @ /home/user/frenz/.claude/worktrees/agent-ab5cf8ae7d76155a6
+
+[1] 30-day arc (20 sessions of 3 exchanges, 40% charged, drift before each session)
+  kelly: comfort 40->89, closeness 40->56, attraction 35->41, tension 69 | bandFlips 2, releases 2, driftCost c0/cl0, humTurnsInZone 0, floors {"comfort":75,"closeness":50,"attraction":25}
+  bre: comfort 40->92, closeness 40->57, attraction 35->42, tension 75 | bandFlips 2, releases 3, driftCost c0/cl0, humTurnsInZone 0, floors {"comfort":75,"closeness":50,"attraction":25}
+  anna: comfort 40->87, closeness 40->56, attraction 35->39, tension 51 | bandFlips 2, releases 1, driftCost c0/cl0, humTurnsInZone 0, floors {"comfort":75,"closeness":50,"attraction":25}
+  samantha: comfort 40->86, closeness 40->55, attraction 35->39, tension 0 | bandFlips 2, releases 3, driftCost c0/cl0, humTurnsInZone 0, floors {"comfort":75,"closeness":50,"attraction":25}
+  tay: comfort 40->87, closeness 40->56, attraction 35->40, tension 27 | bandFlips 2, releases 3, driftCost c0/cl0, humTurnsInZone 0, floors {"comfort":75,"closeness":50,"attraction":25}
+
+[2] pure absence: comfort 62 / closeness 62 / attraction 40, then 30 silent days (weekly drift checks)
+  after 30 days: comfort 50, closeness 58, attraction 40, floors {"comfort":50,"closeness":50,"attraction":25}
+
+[3] invariant 15: contact every 5 days (one 2-exchange burst) for 60 days — gains must outrun drift
+  comfort 40->35, closeness 40->47 (both must rise)
+
+[4] beat & texture dice over 60 days (frequency and 21/8-day no-repeat must match across engines)
+  samantha: beats 29/60, repeats<21d 0, textures 40/60
+  tay: beats 26/60, repeats<21d 0, textures 38/60
+
+[5] hum hysteresis: charge to ~34, then mundane decay through the 24-30 zone
+  hum held on 6/6 prompt builds inside the 24-30 zone (hysteresis: want all; pre-fix: 0)
+
+[6] trickle arc: 30 days, one charged 3-exchange session/day, attraction 0-reported throughout
+  attraction 35->51 over 30 charged days (band traversal expected in both engines)
