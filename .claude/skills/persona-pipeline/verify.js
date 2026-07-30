@@ -1694,6 +1694,499 @@ console.log('\n== removals: platonic gate, compact examples, upgrade identity ==
   ok(Personas.upgradeProfile(stampedSam) === true, 'stamped template friend upgrades normally');
 }
 
-console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
-  + (intendedRed ? ', ' + intendedRed + ' intended-red (expected — see RED* lines)' : ''));
-process.exit(fail ? 1 : 0);
+/* ================================================================
+   == detectors ==  (audit Phase 4A/4B — appended block; existing
+   sections above are never renumbered. Sub-parts D1-D10.)
+   ================================================================ */
+
+// Intended-red support: an assertion that is RED against pre-audit code and
+// goes green when the coordinated fix (audit/engine) merges is deferred by
+// default and enforced with AUDIT_STRICT=1.
+const STRICT = process.env.AUDIT_STRICT === '1';
+function okOrDefer(cond, name, detail) {
+  if (cond) { ok(true, name); }
+  else if (STRICT) { ok(false, name, detail); }
+  else { console.log('  DEFER ' + name + ' (intended-red: depends on the audit/engine merge; enforce with AUDIT_STRICT=1)'); }
+}
+// Async assertions register their promise here; the footer awaits them.
+global.__asyncChecks = global.__asyncChecks || [];
+
+console.log('\n== detectors D1: [end]/[noreply]/silence are different things ==');
+{
+  // invariant 18: [noreply] is a reply (left on read), [end] is a clean
+  // exit, and neither token may ever render as a bubble.
+  ok(API._stripEnd(['[end]']).length === 0, 'a lone [end] renders nothing');
+  ok(API._stripEnd(['[noreply]']).length === 0, 'a lone [noreply] renders nothing');
+  ok(JSON.stringify(API._stripEnd(['see you tomorrow', '[end]'])) === '["see you tomorrow"]',
+    '[end] stapled to a real bubble is stripped, the bubble survives');
+  ok(API._wantsSilence(['[noreply]']) === true, '[noreply] alone means she read it and said nothing');
+  ok(API._wantsSilence(['[end]']) === false, '[end] is an ending, NOT a left-on-read');
+  ok(API._wantsSilence(['[noreply]', 'also this']) === false, 'noreply plus content is not silence');
+  ok(API._NOREPLY_RE.test(' [ no reply ] ') && API._NOREPLY_RE.test('leave on read'), 'noreply variants all recognized');
+  ok(!API._END_RE.test('weekend') && !API._END_RE.test('the end of an era'), 'END matches the bare token only');
+  // counter-case: a real sentence containing "end" is a message, not a token
+  ok(API._stripEnd(['ok end of story lol']).length === 1, 'nearest good case: "end of story" is a real bubble');
+}
+
+console.log('\n== detectors D2: _injectDepth at 2/3/6/10, assistant-first ==');
+{
+  // The documented silent failure (api.js ~2079): every thread here opens
+  // with HER greeting, and the old backward-only search never injected the
+  // plist for the whole opening stretch — exactly when the voice gets set.
+  const P = 'PLIST-SENTINEL';
+  const probe = (roles) => {
+    const out = API._injectDepth(roles.map((r, i) => ({ role: r, content: 'm' + i })), P, 'system');
+    const idx = out.findIndex(m => m.content === P);
+    return { idx, count: out.filter(m => m.content === P).length, prevRole: idx > 0 ? out[idx - 1].role : null, len: out.length };
+  };
+  const p2 = probe(['assistant', 'assistant']);          // her greeting only
+  ok(p2.count === 1, 'len-2 all-assistant history STILL gets the plist (was the silent failure)');
+  const p3 = probe(['assistant', 'assistant', 'user']);
+  ok(p3.count === 1 && p3.prevRole === 'user', 'len-3 assistant-first: injected once, after a user turn');
+  const p6 = probe(['user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
+  ok(p6.count === 1 && p6.prevRole === 'user', 'len-6: injected once at a user boundary');
+  const p10 = probe(['user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
+  ok(p10.count === 1 && p10.prevRole === 'user', 'len-10: injected once at a user boundary');
+  ok(Math.abs(p10.idx - (p10.len - 1 - 4)) <= 1, 'len-10: lands at ~depth 4 (idx ' + p10.idx + ' of ' + p10.len + ')');
+}
+
+console.log('\n== detectors D3: scene pipeline end-to-end ==');
+{
+  ok(API.SCENE_CHUNK === 35, 'SCENE_CHUNK is 35 (tests below assume it)');
+  ok(API.sceneStale({ scenesCovered: 0 }, 44) === false, 'no scene while the uncovered tail is short');
+  ok(API.sceneStale({ scenesCovered: 0 }, 45) === true, 'scene due at CHUNK+10 uncovered');
+  ok(API.sceneStale({ scenesCovered: 35 }, 79) === false && API.sceneStale({ scenesCovered: 35 }, 80) === true,
+    'coverage pointer moves the threshold with it');
+  // recordScene: chunking + normalization, provider stubbed (no network)
+  global.__asyncChecks.push((async () => {
+    const orig = API._plainCompletion;
+    API._plainCompletion = async () => 'sure! {"title":"The Fence Week","summary":"They talked about fences.","keywords":["Fence","WINE"],"facts":["Jon builds fences"],"importance":9}';
+    try {
+      const hist = Array.from({ length: 50 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'm' + i }));
+      const rec = await API.recordScene({ scenesCovered: 0, profile: { name: 'K', userName: 'Jon' } }, hist, {});
+      ok(!!rec && rec.covered === 35 && JSON.stringify(rec.scene.covers) === '[0,35]',
+        'recordScene consumes exactly one SCENE_CHUNK and advances coverage');
+      ok(!!rec && JSON.stringify(rec.scene.keywords) === '["fence","wine"]' && rec.scene.importance === 5,
+        'scene record normalized: lowercased keywords, importance clamped');
+      const short = await API.recordScene({ scenesCovered: 20, profile: { name: 'K' } }, hist, {});
+      ok(short === null, 'a partial chunk (30 msgs) records nothing');
+    } finally { API._plainCompletion = orig; }
+  })());
+  // _sceneContext: chronological spine of the last 3 + keyword-matched extras
+  const scenes = [];
+  for (let i = 0; i < 6; i++) scenes.push({ title: 'Scene ' + i, summary: 'Summary of the thing number ' + i + '.', keywords: i === 0 ? ['kayak'] : ['misc' + i] });
+  const hit = API._sceneContext({ scenes }, [{ role: 'user', text: 'thinking about that kayak trip' }], 2000);
+  ok(hit.length === 4 && /Scene 0/.test(hit[0]) && /Scene 5/.test(hit[3]),
+    'keyword-relevant older scene rides ahead of the recent-3 spine');
+  const miss = API._sceneContext({ scenes }, [{ role: 'user', text: 'ordinary tuesday' }], 2000);
+  ok(miss.length === 3 && !miss.some(l => /Scene 0/.test(l)), 'no keyword match -> just the recent 3');
+  const budget = 320;
+  const tight = API._sceneContext({ scenes: scenes.map(s => ({ title: s.title, summary: s.summary + ' ' + 'x'.repeat(150), keywords: s.keywords })) }, [{ role: 'user', text: 'kayak' }], budget);
+  ok(tight.reduce((s, l) => s + l.length, 0) <= Math.max(300, budget), 'scene lines respect the char budget');
+  // scenes reach the prompt ONLY once history has actually been omitted
+  const kf = mkFriend('kelly');
+  const sl = ['- Scene 0: the early days'];
+  ok(!/story so far/.test(API.buildDynamicContext(kf, API._now() - 3600000, 0, 40, null, sl, [{ role: 'user', text: 'hey' }])),
+    'omitted=0: scenes stay out of the dynamic block');
+  ok(/story so far/.test(API.buildDynamicContext(kf, API._now() - 3600000, 5, 40, null, sl, [{ role: 'user', text: 'hey' }])),
+    'omitted>0: scenes appear');
+}
+
+console.log('\n== detectors D4: cache invariant — byte-stable system, stepped window, disclosed trims ==');
+{
+  // system block byte-stable per (friend, tier) across days: per-day rotation
+  // belongs in the injected messages, never the system block.
+  for (const id of ['kelly', 'bre', 'samantha', 'tay', 'anna']) {
+    const f = mkFriend(id);
+    const p1 = API.buildPersona(f, 'rich');
+    API._timeOffset = null; API.addTimeOffset(3 * DAY);
+    const p2 = API.buildPersona(f, 'rich');
+    API.resetTimeOffset();
+    ok(p1 === p2, id + ': persona byte-stable across simulated days (rich tier)');
+  }
+  const entry = { id: 'x', enabled: true, kind: 'openai', baseUrl: 'https://api.x.ai/v1', apiKey: 'k', model: 'grok-4', contextTokens: 1000000 };
+  const mkHist = (L) => Array.from({ length: L }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'msg number ' + i + ' padding words here' }));
+  const firstKept = (req) => {
+    const m = req.messages.find(x => /^msg number /.test(x.content));
+    return m ? Number(m.content.match(/msg number (\d+)/)[1]) : -1;
+  };
+  // window left edge moves ONLY in HISTORY_STEP chunks
+  const edges = {};
+  for (const L of [72, 95, 96, 119, 120, 150]) {
+    edges[L] = firstKept(API._buildPlainRequest(entry, mkFriend('kelly'), mkHist(L), Date.now() - 600000, API._jsonInstruction(), true));
+  }
+  ok(edges[72] === 0 && edges[95] === 0, 'window edge holds at 0 until a full HISTORY_STEP has accumulated (L95: ' + edges[95] + ')');
+  ok(edges[96] === 24 && edges[119] === 24, 'edge advances to 24 at L96 and HOLDS through L119 (prefix-cache friendly)');
+  ok(edges[120] === 48 && edges[150] === 72, 'edge keeps stepping in HISTORY_STEP=24 chunks (L120: ' + edges[120] + ', L150: ' + edges[150] + ')');
+  ok(Object.values(edges).every(e => e % API.HISTORY_STEP === 0), 'every observed edge is a multiple of HISTORY_STEP');
+  // trim disclosure == reality, across budgets (any trim must be disclosed)
+  for (const ct of [12000, 15000, 1000000]) {
+    const req = API._buildPlainRequest(Object.assign({}, entry, { contextTokens: ct }), mkFriend('kelly'), mkHist(200), Date.now() - 600000, API._jsonInstruction(), true);
+    const kept = req.messages.filter(m => /^msg number /.test(m.content)).length;
+    const actual = 200 - kept;
+    const dis = req.messages.map(m => m.content).join('\n').match(/About (\d+) earlier messages aren't shown/);
+    ok(req.omitted === actual, 'ct ' + ct + ': returned omitted matches what was actually left out (' + req.omitted + ' vs ' + actual + ')');
+    ok(actual === 0 ? !dis : (!!dis && Number(dis[1]) === actual),
+      'ct ' + ct + ': in-prompt disclosure matches the actual trim (' + (dis ? dis[1] : 'none') + ' vs ' + actual + ')');
+  }
+  // The CORRECT behavior for the final safety trim (plan Phase 2A: the
+  // disclosure must be rebuilt after the trim). Today the dynamic block
+  // bakes its count BEFORE the final trim, so when the finished request
+  // outgrows the estimate the extra drops are undisclosed. Simulated by
+  // letting the dynamic block grow between the probe and the real build —
+  // exactly the divergence the reserve constant is guessing at.
+  {
+    const orig = API.buildDynamicContext;
+    API.buildDynamicContext = function (friend, ts, omitted) {
+      const out = orig.apply(this, arguments);
+      return omitted === 1 ? out : out + '\n' + 'X'.repeat(30000); // probe passes omitted=1
+    };
+    let req;
+    try {
+      req = API._buildPlainRequest(Object.assign({}, entry, { contextTokens: 15000 }), mkFriend('kelly'), mkHist(200), Date.now() - 600000, API._jsonInstruction(), true);
+    } finally { API.buildDynamicContext = orig; }
+    const kept = req.messages.filter(m => /^msg number /.test(m.content)).length;
+    const actual = 200 - kept;
+    const dis = req.messages.map(m => m.content).join('\n').match(/About (\d+) earlier messages aren't shown/);
+    okOrDefer(!!dis && Number(dis[1]) === actual,
+      'final safety trim keeps the disclosure honest (disclosed ' + (dis ? dis[1] : 'none') + ' vs actual ' + actual + ')',
+      'silent-trim bug: dynamic block baked the pre-trim count');
+  }
+}
+
+console.log('\n== detectors D5: parse-salvage layer ==');
+{
+  ok(JSON.stringify(API._looseParse('```json\n{"a":1}\n```')) === '{"a":1}', 'fenced JSON parses');
+  ok(JSON.stringify(API._looseParse('Sure! {"messages":["hi"]} hope that helps')) === '{"messages":["hi"]}', 'prose-wrapped JSON parses');
+  ok(API._looseParse('{"messages":["hi"') === null, 'truncated JSON returns null, never throws');
+  // state blob written INTO the visible reply: stripped from the text,
+  // salvaged into state, deltas clamped
+  const fr = API._finishReply('She smiled. {"state": {"comfort_delta": 9, "mood": "warm"}} anyway that was my day, pretty wild honestly');
+  ok(fr.parsedOk === false && fr.bubbles.length === 2 && fr.bubbles.every(b => !/[{}]/.test(b)),
+    'prose reply: state blob never reaches the screen');
+  ok(!!fr.state && fr.state.comfort_delta === 3 && fr.state.mood === 'warm',
+    'salvaged state still lands, delta clamped to MAX_DELTA (9 -> 3)');
+  const tr = API._finishReply('{"messages":["hi"');
+  ok(tr.parsedOk === false && tr.state === null && tr.bubbles.every(b => !/^[{["]/.test(b)),
+    'truncated JSON: no artifact shrapnel ships as a bubble');
+  // missing fields come back typed, not undefined
+  const st = API._normStateRaw({ comfort_delta: 9, confidence: 3 });
+  ok(st.comfort_delta === 3 && st.closeness_delta === 0 && st.confidence === 1 && st.mood === '' && Array.isArray(st.new_memories),
+    '_normStateRaw fills and clamps every field');
+  ok(API._normStateRaw(null) === null && API._normStateRaw('x') === null, 'non-objects normalize to null');
+  // counter-case: unrelated braces in a real text are left alone
+  const ex = API._extractStateBlob('use {this} emoticon');
+  ok(ex.text === 'use {this} emoticon' && ex.state === null, 'nearest good case: non-state braces are not eaten');
+}
+
+console.log('\n== detectors D6: readTheRoom branches ==');
+{
+  const at = (tpl, attr) => {
+    const f = mkFriend(tpl);
+    f.state.attraction = attr; f.bands = null;
+    return f;
+  };
+  const room = (f, t, h) => (API.readTheRoom(f, h || [{ role: 'user', text: t }], false) || []).join(' ');
+  // the four explicit forks
+  ok(/serve, not a trespass/.test(room(at('kelly', 60), 'what are you wearing')), 'explicit + flirt-sport persona: her sport');
+  ok(/not welcome/.test(room(at('samantha', 10), 'what are you wearing')), 'explicit at low attraction: temperature drops');
+  ok(/threw you/.test(room(at('samantha', 40), 'what are you wearing')), 'explicit at building: bolder than where you are');
+  ok(/It landed/.test(room(at('samantha', 60), 'what are you wearing')), 'explicit at high: it landed');
+  // innuendo and frame
+  ok(API._classifyUserTurn("can't get off 🤣") === 'innuendo', 'the classic double-read classifies as innuendo');
+  ok(/second reading/.test(room(at('samantha', 40), "can't get off 🤣")), 'innuendo: she HEARD it');
+  ok(API._classifyUserTurn('hypothetically if you were here we would be in trouble') === 'frame', 'hypothetical classifies as frame');
+  ok(/deniable FRAME/.test(room(at('samantha', 40), 'hypothetically if you were here we would be in trouble')), 'frame: playable at any level');
+  // withdrawal
+  const wd = [];
+  for (let i = 0; i < 7; i++) {
+    wd.push({ role: 'user', text: 'a fairly long message about the day and the office and everything else nr ' + i });
+    wd.push({ role: 'assistant', text: 'reply ' + i });
+  }
+  wd.push({ role: 'user', text: 'ya' }, { role: 'assistant', text: 'r' }, { role: 'user', text: 'k' }, { role: 'assistant', text: 'r' }, { role: 'user', text: 'sure' });
+  ok(API._isWithdrawing(wd) === true, 'sharply shorter recent messages read as withdrawal');
+  ok(/pulling back/.test(room(at('samantha', 40), '', wd)), 'room read names the pull-back');
+  const steady = [];
+  for (let i = 0; i < 10; i++) {
+    steady.push({ role: 'user', text: 'an ordinary medium sized message about the day nr ' + i });
+    steady.push({ role: 'assistant', text: 'reply ' + i });
+  }
+  ok(API._isWithdrawing(steady) === false, 'nearest good case: steady message length is not withdrawal');
+  // _recentTone classes
+  const tone = (texts) => API._recentTone(texts.map(t => ({ role: 'user', text: t })));
+  ok(/^charged/.test(tone(['what are you wearing', 'cant stop thinking about you', 'x', 'send nudes'])), 'tone: charged');
+  ok(/^warm and playful/.test(tone(['lol you would say that', 'haha no way jk', 'that is hilarious lol', 'x'])), 'tone: warm and playful');
+  ok(/^flat/.test(tone(['k', 'ok', 'sure', 'lol'])), 'tone: flat');
+  ok(/^easy and ordinary/.test(tone(['the office fire alarm went off', 'got groceries after work', 'long day mostly'])), 'tone: ordinary');
+}
+
+console.log('\n== detectors D7: rationed-frequency dials ==');
+{
+  // playfulNote: 25% + 12/attraction-band + 12 hum, cap 60 (a named balance
+  // dial with no test until now). Statistical over deterministic day rolls.
+  const base = new Date(2026, 0, 1, 20, 0).getTime();
+  const odds = (attr, tension) => {
+    const f = mkFriend('kelly');
+    f.state.attraction = attr; f.state.tension = tension; f.bands = null;
+    let hits = 0;
+    for (let d = 0; d < 400; d++) if (/in the mood to play/.test(API.playfulNote(f, base + d * DAY))) hits++;
+    return hits;
+  };
+  const lowOdds = odds(10, 0);          // pct 25
+  const capOdds = odds(60, 40);         // 25 + 24 + 12 = 61 -> capped 60
+  ok(lowOdds >= 60 && lowOdds <= 140, 'base wit odds ~25% (' + lowOdds + '/400)');
+  ok(capOdds >= 190 && capOdds <= 290, 'high-band + hum odds ~60% (' + capOdds + '/400)');
+  ok(capOdds <= 290, 'the 60% cap holds — wit stays rationed even fully lit');
+  {
+    const f = mkFriend('kelly');
+    let lit = false, plain = false;
+    for (let d = 0; d < 30; d++) {
+      const n = API.playfulNote(f, base + d * DAY);
+      if (/ONE good line/.test(n)) lit = true;
+      if (/not building bits/.test(n)) plain = true;
+    }
+    ok(lit && plain, 'both faces of the note speak across a month — the die never falls silent');
+  }
+  // openerDue at ordinary hours: ROLL_PCT day dice, MIN_GAP_H, DOUBLE_TEXT_GAP_H
+  const twoPm = (d) => new Date(2026, 0, 1, 14, 0).getTime() + d * DAY;
+  let roll = 0, shortGap = 0, dblShort = 0, dblLong = 0;
+  for (let d = 0; d < 200; d++) {
+    const now = twoPm(d);
+    if (API.openerDue(mkFriend('kelly'), [{ role: 'user', text: 'later', ts: now - 8 * 3600000 }], now)) roll++;
+    if (d < 50 && API.openerDue(mkFriend('kelly'), [{ role: 'user', text: 'x', ts: now - 5 * 3600000 }], now)) shortGap++;
+    if (API.openerDue(mkFriend('kelly'), [{ role: 'assistant', text: 'ok talk later', ts: now - 8 * 3600000 }], now)) dblShort++;
+    if (API.openerDue(mkFriend('kelly'), [{ role: 'assistant', text: 'ok talk later', ts: now - 21 * 3600000 }], now)) dblLong++;
+  }
+  ok(roll >= 60 && roll <= 120, 'ordinary afternoon opener fires at ~ROLL_PCT (' + roll + '/200 at 45%)');
+  ok(shortGap === 0, 'no opener under MIN_GAP_H (5h gap: ' + shortGap + '/50)');
+  ok(dblShort === 0, 'she never double-texts inside DOUBLE_TEXT_GAP_H at ordinary hours (8h: ' + dblShort + '/200)');
+  ok(dblLong >= 80 && dblLong <= 175, 'past 20h a double-text becomes possible, still dice-gated (' + dblLong + '/200)');
+}
+
+console.log('\n== detectors D8: photo identity — pov pool, heat, candor, recovery ladder ==');
+{
+  // pov pool variety: near-identical torso framings made every body photo
+  // the same photo. Judged with the pipeline's own echo scorer.
+  const pov = API._FRAMING.pov;
+  ok(pov.length >= 5 && new Set(pov).size === pov.length, 'pov pool has 5+ unique framings');
+  let worstPair = 0;
+  for (let i = 0; i < pov.length; i++) {
+    for (let j = i + 1; j < pov.length; j++) {
+      const a = API._normBubble(pov[i]), b = API._normBubble(pov[j]);
+      worstPair = Math.max(worstPair, API._echoScore(a, b), API._echoScore(b, a));
+    }
+  }
+  ok(worstPair < 0.8, 'no two pov framings are near-identical (worst pairwise echo ' + worstPair.toFixed(2) + ')');
+  ok(pov.every(f => /head|collarbone|shoulders|mid-torso/i.test(f)), 'every pov framing is faceless by construction');
+  // heat: present per level, and only where it belongs
+  ok(API._HEAT_TONE.length === 3 && API._HEAT_TONE[0] === '' && !!API._HEAT_TONE[1] && /implication rather than display/.test(API._HEAT_TONE[2]),
+    '_HEAT_TONE: silent at 0, warm at 1, implication at 2');
+  const heatAt = (attr, comfort, tension) => {
+    const f = mkFriend('samantha');
+    f.state.attraction = attr; f.state.comfort = comfort; f.state.tension = tension; f.bands = null;
+    return API._imageHeat(f);
+  };
+  ok(heatAt(10, 30, 0) === 0 && heatAt(40, 30, 0) === 1 && heatAt(80, 30, 0) === 2, '_imageHeat tracks the attraction band (0/1/2)');
+  ok(heatAt(10, 30, 8) === 2, 'high tension alone can charge the frame');
+  const app = Personas.byId('samantha').appearance;
+  ok(/implication rather than display/.test(API._imagePrompt('curled on the couch', 'pov', app, 2)), 'heat tail rides a pov prompt');
+  ok(!/implication rather than display/.test(API._imagePrompt('the bowl of ramen', 'scene', app, 2)), 'scene photos never carry heat — the room is not flirting');
+  // photoCandor: per-character constraint, open vs guarded text
+  const imgSettings = { pool: [{ id: 'e1', enabled: true, kind: 'bedrock', apiKey: 'k', model: 'x', imageModel: 'stability-image', region: 'us-east-1' }] };
+  const openF = mkFriend('bre'), guardedF = mkFriend('samantha');
+  ok(openF.profile.photoCandor === 'open' && guardedF.profile.photoCandor === 'guarded', 'template candor as authored (bre open, samantha guarded)');
+  ok(/without ceremony/.test(API.photoNote(imgSettings, openF).join(' ')), 'open candor: no ceremony, no apology');
+  ok(/not a small thing/.test(API.photoNote(imgSettings, guardedF).join(' ')), 'guarded candor: a picture is a step');
+  ok(API.photoNote({ pool: [] }, openF) === null, 'no image model configured -> she never hears about photos');
+  // recovery ladder: each rung strictly less of a person
+  ok(JSON.stringify(API._RECOVERY_LADDER.mirror) === '["pov","scene"]'
+    && JSON.stringify(API._RECOVERY_LADDER.pov) === '["scene"]'
+    && JSON.stringify(API._RECOVERY_LADDER.scene) === '[]',
+    '_RECOVERY_LADDER steps mirror -> pov -> scene -> (give up), never sideways');
+}
+
+console.log('\n== detectors D9: sliderText speaks only for moved dials ==');
+{
+  const def = { flirtiness: 55, warmth: 60, confidence: 50, curiosity: 50 };
+  const untouched = Personas.sliderText(Object.assign({}, def), 'Kelly', def);
+  ok(untouched.personality === '' && untouched.style === '', 'untouched dials contribute NOTHING (template prose already says it better)');
+  const flirt = Personas.sliderText(Object.assign({}, def, { flirtiness: 95 }), 'Kelly', def);
+  ok(flirt.personality.length > 0 && /flirt/i.test(flirt.personality + flirt.style), 'a moved flirtiness dial speaks');
+  const warmth = Personas.sliderText(Object.assign({}, def, { warmth: 10 }), 'Kelly', def);
+  ok(warmth.personality.length > 0 && warmth.style === '' && !/flirt/i.test(warmth.personality),
+    'one moved dial -> one clause, no flirt text rides along');
+  const sameBand = Personas.sliderText(Object.assign({}, def, { flirtiness: 60 }), 'Kelly', def);
+  ok(sameBand.personality === '', 'a nudge inside the same band is not a moved dial');
+  const custom = Personas.sliderText(Object.assign({}, def), 'Custom', null);
+  ok(custom.personality.length > 0, 'a characterless custom friend still gets the full set (what sliderText was written for)');
+}
+
+console.log('\n== detectors D10: the archive sees what the live guards see ==');
+{
+  // Synthetic fixture: friend "Echo" exercises every new archive detector;
+  // friend "Clean" is the nearest-good-case for each and must stay clean.
+  const t0 = new Date(2026, 5, 1, 19, 0).getTime();
+  const HOUR = 3600000;
+  const mkMsgs = () => {
+    const msgs = []; let ts = t0;
+    const push = (role, text, extra) => { msgs.push(Object.assign({ role, text, ts }, extra || {})); ts += 3 * 60000; };
+    push('user', 'hey how was the weekend');
+    push('assistant', 'Long. The fence project ate both days and I have the sunburn to prove it.');
+    push('user', 'lol you finish it at least?');
+    push('assistant', 'Mostly. Two panels left and my dignity is gone.');
+    // self-echo run: the same status re-announced, reworded, three times
+    push('user', 'what are you up to tonight');
+    push('assistant', 'just curled up on the couch with wine and trash tv honestly');
+    push('user', 'sounds ideal');
+    push('assistant', 'yeah just on the couch with my wine watching trash tv');
+    push('user', 'living the dream over there');
+    push('assistant', 'honestly just wine on the couch and the trash tv again');
+    // press loop (the cami shape)
+    push('user', 'what kinda cami is it');
+    push('assistant', 'haha its this super old thin cami ive had forever');
+    push('user', 'so its a thin one?');
+    push('assistant', 'yeah its this super thin old one ive had forever');
+    push('user', 'i bet the cami is too thick still');
+    push('assistant', 'its just an old thin cami basically from forever ago');
+    push('user', 'lemme see the cami');
+    push('assistant', 'not a chance mister');
+    // shape rut: 4 of 5 agreement openers
+    ts += 26 * HOUR;
+    push('user', 'that meeting was a disaster');
+    push('assistant', 'yeah i know right');
+    push('user', 'he really doubled down too');
+    push('assistant', 'haha yeah he really did');
+    push('user', 'and then blamed the intern');
+    push('assistant', 'lmao yeah classic him');
+    push('user', 'i almost said something');
+    push('assistant', 'yeah you should have honestly');
+    push('user', 'next time');
+    push('assistant', 'hold me to it');
+    // a delivered photo
+    push('user', 'send me a pic of the fence then');
+    push('assistant', '', { photo: 'data:image/png;base64,x', photoDesc: 'the half-finished fence at dusk' });
+    push('user', 'ok that is actually a fence');
+    push('assistant', 'told you it was real');
+    return msgs;
+  };
+  const dk = API._dayKey(t0);
+  const echoFriend = {
+    id: 'echo-1',
+    profile: { name: 'Echo', userName: 'Jon', type: 'friend', style: 'Proper grammar and full sentences, punctuates everything.', personality: 'A.', interests: 'B.' },
+    createdAt: t0 - 40 * DAY,
+    state: { comfort: 55, closeness: 52, attraction: 30, tension: 12, mood: 'fine', floors: { comfort: 50, closeness: 50, attraction: 25 }, _carry: {} },
+    memories: [], scenes: [],
+    beatLog: [{ day: dk - 30, idx: 4 }, { day: dk - 18, idx: 4 }, { day: dk - 6, idx: 7 }],   // idx 4 repeats after 12d
+    textureLog: [{ day: dk - 20, idx: 1 }, { day: dk - 9, idx: 3 }, { day: dk - 1, idx: 5 }]  // clean
+  };
+  const echoEvents = [];
+  {
+    let ets = t0 + 5 * 60000, comfort = 46;
+    const after = (c, cl, a, tn) => ({ comfort: c, closeness: cl, attraction: a, tension: tn });
+    for (let i = 0; i < 5; i++) {   // one burst, net comfort +8 = SESSION_CAP; crosses into 'high'
+      const d = i < 4 ? 2 : 0;
+      comfort += d;
+      echoEvents.push({ ts: ets, applied: { comfort: d, closeness: 1, attraction: 0 }, deltas: { comfort: 3, closeness: 1, attraction: 0 }, after: after(comfort, 48 + i, 30, 10 + i), tension: 10 + i, confidence: 0.9, reason: 'a good stretch' });
+      ets += 10 * 60000;
+    }
+    ets += 3 * DAY;
+    echoEvents.push({ ts: ets, reason: 'absence — days without a word', confidence: 1, deltas: { comfort: -1, closeness: 0, attraction: 0 }, applied: { comfort: -1, closeness: 0, attraction: 0 }, tension: 8, after: after(comfort - 1, 52, 30, 8) });
+    ets += HOUR;
+    echoEvents.push({ ts: ets, kind: 'senderr', status: 529, message: 'overloaded' });
+    echoEvents.push({ ts: ets + 5 * 60000, kind: 'refusal', message: 'content refusal' });
+    const pts = ets + 10 * 60000;
+    for (let r = 1; r <= 3; r++) echoEvents.push({ ts: pts + r * 20000, kind: 'imgerr', declined: true, status: 400, reframe: r + '/3', message: 'moderation', desc: 'on the couch' });
+  }
+  // Clean: varied riffs on a shared bit (the live counter-case), varied
+  // lengths, questions asked, matching voice, spaced bank logs.
+  const cleanMsgs = [];
+  {
+    let ts = t0;
+    const push = (role, text) => { cleanMsgs.push({ role, text, ts }); ts += 4 * 60000; };
+    push('user', 'the gremlin strikes again');
+    push('assistant', 'He unplugged the router to charge his tablet. Bold move.');
+    push('user', 'the gremlin has no mercy');
+    push('assistant', 'None. Today he negotiated two desserts out of Trevor, held the dog hostage over bath time, and still got tucked in like a prince.');
+    push('user', 'gremlin lore grows');
+    push('assistant', 'Dog bed. Asleep. Again.');
+    push('user', 'the gremlin rests');
+    push('assistant', 'Only until he wakes up hungry. What did your day look like?');
+    push('user', 'meetings mostly, one good one');
+    push('assistant', 'Which one was the good one? I want details, I live vicariously.');
+    push('user', 'the budget one weirdly');
+    push('assistant', 'A budget meeting being the highlight is either great news or a cry for help.');
+    push('user', 'bit of both');
+    push('assistant', 'That tracks. I made an enormous lasagna and regret nothing.');
+    push('user', 'save me a slice');
+    push('assistant', 'Come get it before the gremlin finds the leftovers.');
+  }
+  const cleanFriend = {
+    id: 'clean-1',
+    profile: { name: 'Clean', userName: 'Jon', type: 'friend', style: 'Proper grammar and full sentences, punctuates everything.', personality: 'B.', interests: 'C.' },
+    createdAt: t0 - 40 * DAY,
+    state: { comfort: 55, closeness: 52, attraction: 30, tension: 5, mood: 'fine', floors: { comfort: 50, closeness: 50, attraction: 25 }, _carry: {} },
+    memories: [], scenes: [],
+    beatLog: [{ day: dk - 30, idx: 2 }, { day: dk - 5, idx: 9 }],
+    textureLog: [{ day: dk - 12, idx: 0 }, { day: dk - 2, idx: 4 }]
+  };
+  const cleanEvents = [{ ts: t0 + 10 * 60000, applied: { comfort: 1, closeness: 1, attraction: 0 }, deltas: { comfort: 1, closeness: 1, attraction: 0 }, after: { comfort: 56, closeness: 53, attraction: 30, tension: 5 }, tension: 5, confidence: 0.9, reason: 'easy night' }];
+
+  const md = API.buildArchive(
+    [echoFriend, cleanFriend],
+    { 'echo-1': mkMsgs(), 'clean-1': cleanMsgs },
+    { 'echo-1': echoEvents, 'clean-1': cleanEvents });
+
+  const idxLine = (name) => (md.split('\n').find(l => l.startsWith('- **' + name + '**')) || '');
+  const section = (name) => md.slice(md.indexOf('# ' + name));
+
+  // every new detector fires on Echo — and surfaces at the INDEX
+  const ei = idxLine('Echo');
+  ok(/self-echo rerun/.test(ei), 'index: self-echo reruns flagged (' + ei.replace(/^[^·]*· /, '') + ')');
+  ok(/agreement-opener shape rut/.test(ei), 'index: shape rut flagged');
+  ok(/pressed loop/.test(ei), 'index: pressed loop flagged');
+  ok(/voice mismatch/.test(ei), 'index: voice MISMATCH now surfaces at the index, not only the appendix');
+  ok(/beat repeat/.test(ei), 'index: beat repeat (live-data violation) flagged');
+  const es = section('Echo');
+  ok(/Self-echo.*rerun/.test(es) && /#00/.test(es.match(/- \*\*Self-echo\*\*[^\n]*/)[0]), 'appendix: self-echo cites message numbers');
+  ok(/SHAPE RUT \(live threshold 3-of-5\)/.test(es), 'appendix: worst agreement-opener stretch reported at the live threshold');
+  ok(/Pressed loops\*\*: 1 episode/.test(es), 'appendix: exactly one pressed-loop episode (the cami loop)');
+  ok(/Life beats\*\*.*REPEAT INSIDE THE 21-DAY WINDOW/.test(es), 'appendix: beat repeat inside 21 days is called out');
+  ok(/Textures\*\*.*no repeat inside the 8-day window/.test(es), 'appendix: clean texture log reads clean');
+  ok(/Band traversals\*\*: comfort building→high/.test(es), 'appendix: band traversal with date');
+  ok(/Absence drift\*\*: 1 event, 1 comfort point/.test(es), 'appendix: absence drift totaled');
+  ok(/Floors set.*comfort 50 · closeness 50 · attraction 25/.test(es), 'appendix: floors reported');
+  ok(/Cap saturation\*\*: 1 burst hit the ±8 session cap/.test(es), 'appendix: cap-saturated burst counted');
+  ok(/Outcome ledger\*\*: 1 transport error\(s\) · 1 refusal\(s\) · 3 photo error event\(s\)/.test(es), 'appendix: senderr/refusal/imgerr kept distinct (invariant 18)');
+  ok(/Photos\*\*: 1 delivered · 1 decline episode \(50% decline rate\) · 3 moderation re-framing rungs/.test(es), 'appendix: photo aggregates from markers + imgerr events');
+
+  // the question definition is UNIFIED with the live guard: an unmarked
+  // question counts, and the raw "?" rate stays as the secondary number
+  const qd = API._archDiagnostics([
+    { role: 'user', text: 'hey' },
+    { role: 'assistant', text: 'what do you even do monday to friday' },
+    { role: 'assistant', text: 'my day was long' },
+    { role: 'user', text: 'work mostly' },
+    { role: 'assistant', text: 'figured' }
+  ], { name: 'Q', style: '' });
+  const qline = qd.lines.find(l => /Questions from her/.test(l)) || '';
+  ok(/33% question-shaped/.test(qline) && /raw "\?"-endings 0%/.test(qline),
+    'archive hears the unmarked question exactly like _QUESTION_SHAPED (' + qline.replace(/^- \*\*[^*]*\*\*: /, '') + ')');
+
+  // and every nearest-good-case stays clean: varied riffs on a shared bit,
+  // real questions, matching voice, spaced beats
+  const ci = idxLine('Clean');
+  ok(/no red flags/.test(ci), 'nearest good cases draw NO flags (' + ci.replace(/^- \*\*Clean\*\* — /, '') + ')');
+  const cs = section('Clean');
+  ok(/Self-echo.*no reruns/.test(cs), 'varied riffs on a shared bit are not self-echo');
+  ok(/Pressed loops\*\*: none/.test(cs), 'his running bit without her repeated dodge is not a press loop');
+  ok(/Agreement-opener shape\*\*: 0\//.test(cs), 'no agreement-opener tic on varied openers');
+  ok(/Voice fidelity.*consistent with her stated style/.test(cs), 'matching voice stays unflagged');
+}
+
+// The footer AWAITS any async detector assertions (D3's recordScene); with
+// none registered it behaves exactly as it always did.
+Promise.allSettled(global.__asyncChecks || []).then(() => {
+  console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
+    + (intendedRed ? ', ' + intendedRed + ' intended-red (expected \u2014 see RED* lines)' : ''));
+  process.exit(fail ? 1 : 0);
+});

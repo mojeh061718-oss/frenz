@@ -3677,8 +3677,14 @@ const ClaudeAPI = {
 
   /* Detector sweep over a friend's FULL history, citing message numbers.
      The live detectors only ever see the recent window; here they run in
-     rolling windows across everything, so old ruts are found too. */
-  _archDiagnostics(msgs, profile) {
+     rolling windows across everything, so old ruts are found too.
+     `friend` and `events` are optional (older callers pass only msgs +
+     profile); when present they unlock the beat/texture delivery report,
+     the state-arc aggregate, and the photo aggregates. Every detector here
+     reuses the live pipeline's own primitives (_normBubble, _stem,
+     _echoScore, _QUESTION_SHAPED, _AGREE_OPEN, _pressLoop) so the archive
+     and the live guards agree about a thread by construction. */
+  _archDiagnostics(msgs, profile, friend, events) {
     const out = [];
     this._archProfile = profile || null;
     const assistant = msgs.map((m, i) => ({ m, i })).filter(x => x.m.role === 'assistant' && x.m.text);
@@ -3720,24 +3726,56 @@ const ClaudeAPI = {
     const echoAvg = echoN ? echoSum / echoN : 0;
     out.push(`- **Mirroring** (her words vs his preceding message): average ${echoAvg.toFixed(2)}${echoAvg >= 0.35 ? ' — ELEVATED, she is echoing him' : ' — healthy'}${spikes.length ? `; heavy-echo replies at ${spikes.slice(0, 12).join(', ')}${spikes.length > 12 ? ` (+${spikes.length - 12} more)` : ''}` : ''}`);
 
-    // interview tell
-    const q = assistant.filter(x => /\?\s*$/.test(x.m.text)).length;
-    const qRate = assistant.length ? q / assistant.length : 0;
+    // self-echo: her reply vs her OWN recent replies — the rerun/restatement
+    // class (she re-announces the same status, reworded). The live guard is
+    // _dropEchoes; this pass uses its exact scoring rules (rolling window of
+    // her last 6, tiny reactions pass, verbatim short lines outside her own
+    // last burst are deliberate callbacks) at the guard's stricter 0.7 bar,
+    // so anything flagged here is what the live guard would have dropped.
+    const selfEcho = this._archSelfEcho(assistant);
+    out.push(`- **Self-echo** (her words vs her own recent replies): average ${selfEcho.avg.toFixed(2)}${selfEcho.spikes.length ? ` — ${selfEcho.spikes.length} rerun${selfEcho.spikes.length > 1 ? 's' : ''} of her own earlier line (reworded restatement, ≥0.7) at ${selfEcho.spikes.slice(0, 12).join(', ')}${selfEcho.spikes.length > 12 ? ` (+${selfEcho.spikes.length - 12} more)` : ''}` : ' — no reruns: she does not restate her own messages'}`);
+
+    // interview tell — same definition as the live drought guard
+    // (_QUESTION_SHAPED): unmarked questions ("what do you even do monday
+    // to friday") count. The raw "?"-ending rate stays as a secondary
+    // number, but the verdict and the flag come from the shared definition
+    // so archive and live guards agree about the same thread.
+    const qShaped = assistant.filter(x => this._QUESTION_SHAPED.test(x.m.text)).length;
+    const qMark = assistant.filter(x => /\?\s*$/.test(x.m.text)).length;
+    const qRate = assistant.length ? qShaped / assistant.length : 0;
     // Both tails are tells: >35% is the interview, but 0% across a long
     // thread means she never asks him ANYTHING — all serve, no return —
     // and this line used to call that "healthy" (the July archive: 0
     // questions in 108 messages, labeled green).
     const qLabel = qRate > 0.35 ? ' — ELEVATED, interviewing instead of talking'
-      : (q === 0 && assistant.length >= 20 ? ' — ZERO across the whole thread: she never asks him anything, which is its own bot tell'
+      : (qShaped === 0 && assistant.length >= 20 ? ' — ZERO across the whole thread: she never asks him anything, which is its own bot tell'
         : ' — healthy');
-    out.push(`- **Question endings**: ${Math.round(qRate * 100)}% of her messages${qLabel}`);
+    out.push(`- **Questions from her**: ${Math.round(qRate * 100)}% question-shaped (raw "?"-endings ${Math.round(100 * (assistant.length ? qMark / assistant.length : 0))}%)${qLabel}`);
+
+    // agreement-opener shape (archive counterpart of _shapeRut): rate over
+    // the whole thread plus the worst 5-reply stretch, judged at the live
+    // guard's own threshold (3 of 5 replies opening on an agreement token).
+    const shape = this._archShapeRut(assistant);
+    if (shape.n >= 5) {
+      out.push(`- **Agreement-opener shape**: ${shape.count}/${shape.n} replies open on an agreement token (${Math.round(shape.rate * 100)}%); worst stretch ${shape.worst}/5${shape.at ? ` at ${shape.at}` : ''}${shape.worst >= 3 ? ' — SHAPE RUT (live threshold 3-of-5): agree, restate, small addition, every turn' : ' — normal texting'}`);
+    }
+
+    // pressed-loop episodes (archive counterpart of _pressLoop): the live
+    // detector itself, slid across the thread — her repeated-dodge pair
+    // coinciding with his visible pressing, at the live thresholds.
+    const pressRefs = this._archPressLoops(msgs);
+    out.push(pressRefs.length
+      ? `- **Pressed loops**: ${pressRefs.length} episode${pressRefs.length > 1 ? 's' : ''} where she repeated the same dodge under his repeated ask (live _pressLoop thresholds) — around ${pressRefs.slice(0, 8).join(', ')}`
+      : '- **Pressed loops**: none — no stretch where she repeated a dodge while he pressed');
 
     // cadence: flat reply length is the bot rhythm
     const lens = assistant.map(x => x.m.text.length).sort((a, b) => a - b);
+    let flatCadence = false;
     if (lens.length >= 8) {
       const med = lens[Math.floor(lens.length / 2)];
       const iqr = lens[Math.floor(lens.length * 0.75)] - lens[Math.floor(lens.length * 0.25)];
-      out.push(`- **Reply length**: median ${med} chars, middle-spread ${iqr}${iqr < Math.max(8, med * 0.3) ? ' — FLAT, replies are all the same size' : ' — varied'}`);
+      flatCadence = iqr < Math.max(8, med * 0.3);
+      out.push(`- **Reply length**: median ${med} chars, middle-spread ${iqr}${flatCadence ? ' — FLAT, replies are all the same size' : ' — varied'}`);
     }
 
     // Voice fidelity: does she write the way her style field says she does?
@@ -3745,6 +3783,7 @@ const ClaudeAPI = {
     // the few-shots' register instead of her own — that is exactly what the
     // first archive showed, and nothing flagged it.
     const styleTxt = String((this._archProfile && this._archProfile.style) || '');
+    let voiceMismatch = false;
     if (styleTxt && assistant.length >= 6) {
       const claimsPunct = this._STYLE_PUNCTUATED.test(styleTxt) && !this._STYLE_LOWERCASE.test(styleTxt);
       const claimsLower = this._STYLE_LOWERCASE.test(styleTxt);
@@ -3756,8 +3795,10 @@ const ClaudeAPI = {
       if (claimsPunct && (capStart < 0.5 || endPunct < 0.4)) {
         const offenders = assistant.filter(x => !/^\s*[A-Z]/.test(x.m.text)).slice(0, 8).map(x => this._archRef(x.i));
         verdict = ` — **MISMATCH**: her style says punctuated/proper but she is writing lowercase and unpunctuated (see ${offenders.join(', ')}). She is borrowing the examples' voice instead of her own.`;
+        voiceMismatch = true;
       } else if (claimsLower && capStart > 0.6) {
         verdict = ' — **MISMATCH**: her style says lowercase but she is writing in full capitalized sentences.';
+        voiceMismatch = true;
       } else if (laughOpen > 0.3) {
         verdict = ' — **TIC**: she opens with a laugh token in nearly a third of her messages.';
       }
@@ -3769,12 +3810,203 @@ const ClaudeAPI = {
     if (filler.length) out.push(`- **Filler replies** (courtesy with nobody home): ${filler.slice(0, 12).join(', ')}${filler.length > 12 ? ` (+${filler.length - 12} more)` : ''}`);
     else out.push('- **Filler replies**: none detected');
 
+    // beat/texture delivery: live-data checks over the friend's own logs
+    // (assert-in-report — a repeat inside the no-repeat window means the
+    // shipped no-repeat machinery failed on real data).
+    const banks = { violated: [] };
+    if (friend) {
+      const beats = this._archBankLines(friend, 'beatLog', 'Life beats', 21);
+      const tex = this._archBankLines(friend, 'textureLog', 'Textures', 8);
+      out.push(...beats.lines, ...tex.lines);
+      if (beats.violated) banks.violated.push('beat repeat');
+      if (tex.violated) banks.violated.push('texture repeat');
+    }
+
+    // state-arc aggregate from the events ledger
+    if (events && events.length) out.push(...this._archStateArc(events, friend));
+
+    // photo aggregates from photo markers + imgerr events
+    out.push(...this._archPhotoLines(msgs, events || []));
+
+    // Index-level flags. Cadence and voice-fidelity verdicts propagate here
+    // on purpose: a voice MISMATCH used to live only in this per-friend
+    // appendix, so the invariant-10 failure class never surfaced at the
+    // index where a reviewer actually starts.
     return { lines: out, flags: [
       ...(ruts.size ? [`${ruts.size} worn phrase${ruts.size > 1 ? 's' : ''}`] : []),
       ...(echoAvg >= 0.35 ? ['mirroring elevated'] : []),
+      ...(selfEcho.spikes.length ? [`${selfEcho.spikes.length} self-echo rerun${selfEcho.spikes.length > 1 ? 's' : ''}`] : []),
       ...(qRate > 0.35 ? ['interview tell'] : []),
-      ...(filler.length ? [`${filler.length} filler`] : [])
+      ...(shape.n >= 5 && shape.worst >= 3 ? ['agreement-opener shape rut'] : []),
+      ...(pressRefs.length ? [`${pressRefs.length} pressed loop${pressRefs.length > 1 ? 's' : ''}`] : []),
+      ...(flatCadence ? ['flat cadence'] : []),
+      ...(voiceMismatch ? ['voice mismatch'] : []),
+      ...(filler.length ? [`${filler.length} filler`] : []),
+      ...banks.violated
     ] };
+  },
+
+  /* Her reply vs her OWN earlier replies, rolling window — the live
+     _dropEchoes rules verbatim: last 6 of her messages, comparisons through
+     _normBubble/_stem/_echoScore, 1-2 word reactions pass, and a verbatim
+     short line OUTSIDE her immediately-previous burst is a deliberate
+     callback, not a rerun. Spike bar 0.7 = the guard's stricter
+     trailing-bubble threshold. Bounded: O(6n). */
+  _archSelfEcho(assistant) {
+    const norm = assistant.map(x => ({ i: x.i, n: this._normBubble(x.m.text || '') }));
+    let sum = 0, n = 0;
+    const spikes = [];
+    for (let k = 0; k < norm.length; k++) {
+      const cur = norm[k];
+      const words = cur.n.split(' ').filter(Boolean).length;
+      if (words <= 2) continue;
+      const prior = norm.slice(Math.max(0, k - 6), k);
+      const recent = prior.filter(p => p.n.split(' ').filter(Boolean).length >= 3);
+      if (!recent.length) continue;
+      const lastBurst = new Set(prior.slice(-3).map(p => p.n));
+      const verbatimCallback = words <= 8 && !lastBurst.has(cur.n) && recent.some(p => p.n === cur.n);
+      const score = verbatimCallback ? 0 : Math.max(...recent.map(p => this._echoScore(cur.n, p.n)));
+      sum += score; n++;
+      if (score >= 0.7) spikes.push(this._archRef(cur.i));
+    }
+    return { avg: n ? sum / n : 0, spikes, n };
+  },
+
+  /* Archive counterpart of _shapeRut: same opener test (_AGREE_OPEN), whole
+     thread. Worst stretch is the max agree-opener count over any 5
+     consecutive replies — the live guard speaks at 3 of the last 5. */
+  _archShapeRut(assistant) {
+    const opens = assistant.map(x => ({ i: x.i, a: this._AGREE_OPEN.test(String(x.m.text || '')) }));
+    const count = opens.filter(o => o.a).length;
+    let worst = 0, at = '';
+    for (let k = 0; k + 5 <= opens.length; k++) {
+      const w = opens.slice(k, k + 5);
+      const c = w.filter(o => o.a).length;
+      if (c > worst) { worst = c; at = `${this._archRef(w[0].i)}–${this._archRef(w[4].i)}`; }
+    }
+    return { n: opens.length, count, rate: opens.length ? count / opens.length : 0, worst, at };
+  },
+
+  /* Archive counterpart of _pressLoop: the LIVE detector itself, slid across
+     the thread on a bounded slice (it only ever reads her last 4 replies and
+     his last 4 turns, so 16 messages always suffice). Consecutive hits
+     coalesce into one episode. Bounded: O(n × const). */
+  _archPressLoops(msgs) {
+    const refs = [];
+    let lastHit = -100;
+    for (let i = 0; i < msgs.length; i++) {
+      if (msgs[i].role !== 'assistant' || !msgs[i].text) continue;
+      if (this._pressLoop(msgs.slice(Math.max(0, i - 15), i + 1))) {
+        if (i - lastHit > 8) refs.push(this._archRef(i));
+        lastHit = i;
+      }
+    }
+    return refs;
+  },
+
+  /* Beat/texture delivery report from the friend's own bank logs
+     ({day, idx} entries, the same records _bankPick writes). Live-data
+     assertion: the no-repeat window (21 days beats / 8 days textures) must
+     hold in what actually shipped. */
+  _archBankLines(friend, logKey, label, windowDays) {
+    const log = ((friend && friend[logKey]) || [])
+      .filter(u => u && typeof u.day === 'number')
+      .slice().sort((a, b) => a.day - b.day);
+    if (!log.length) return { lines: [`- **${label}**: none in the delivery log`], violated: false };
+    const span = Math.max(1, log[log.length - 1].day - log[0].day + 1);
+    const repeats = [];
+    for (let i = 0; i < log.length; i++) {
+      for (let j = i + 1; j < log.length; j++) {
+        if (log[j].idx === log[i].idx && log[j].day !== log[i].day && log[j].day - log[i].day < windowDays) {
+          repeats.push(`entry #${log[i].idx} repeated after ${log[j].day - log[i].day} day${log[j].day - log[i].day > 1 ? 's' : ''}`);
+        }
+      }
+    }
+    const head = `- **${label}**: ${log.length} surfaced over ${span} day${span > 1 ? 's' : ''} (${((log.length / span) * 7).toFixed(1)}/week)`;
+    return {
+      lines: [head + (repeats.length
+        ? ` — **REPEAT INSIDE THE ${windowDays}-DAY WINDOW** (live no-repeat machinery failed on real data): ${repeats.join('; ')}`
+        : ` — no repeat inside the ${windowDays}-day window (live-data check: OK)`)],
+      violated: !!repeats.length
+    };
+  },
+
+  /* State-arc aggregate from the events ledger: band traversals with dates
+     (replayed through the same _bandFor hysteresis the live pipeline uses),
+     total absence drift, the floors currently set, cap saturation (bursts
+     that hit ±SESSION_CAP net, days that hit ±DAY_CAP — the same 90-minute
+     burst boundary the session cap itself resets on), and the
+     refusal/senderr/imgerr tallies by kind (invariant 18: silence, refusals
+     and errors are different things, and the ledger keeps them different). */
+  _archStateArc(events, friend) {
+    const lines = [];
+    const STATS = ['comfort', 'closeness', 'attraction'];
+    const stateEvents = (events || []).filter(e => e && !e.kind && (e.applied || e.deltas || typeof e.tension === 'number'));
+    const withAfter = stateEvents.filter(e => e.after);
+    if (withAfter.length) {
+      const trav = [];
+      const band = { comfort: null, closeness: null, attraction: null };
+      for (const ev of withAfter) {
+        for (const k of STATS) {
+          const b = this._bandFor(Number(ev.after[k]) || 0, band[k]);
+          if (band[k] && b !== band[k]) trav.push(`${k} ${band[k]}→${b} (${new Date(ev.ts || 0).toLocaleDateString()})`);
+          band[k] = b;
+        }
+      }
+      lines.push(trav.length
+        ? `- **Band traversals**: ${trav.join('; ')}`
+        : '- **Band traversals**: none — every stat stayed inside its starting band');
+    }
+    const drift = stateEvents.filter(e => /absence/i.test(e.reason || ''));
+    const driftTotal = drift.reduce((s, e) => s + Math.abs((e.applied && e.applied.comfort) || 0), 0);
+    lines.push(`- **Absence drift**: ${drift.length} event${drift.length === 1 ? '' : 's'}, ${driftTotal} comfort point${driftTotal === 1 ? '' : 's'} total`);
+    const floors = friend && friend.state && friend.state.floors;
+    if (floors) lines.push(`- **Floors set** (ratchet — bind time, never fights): comfort ${floors.comfort ?? 0} · closeness ${floors.closeness ?? 0} · attraction ${floors.attraction ?? 0}`);
+    const T = this.STATE_TUNING;
+    const applied = stateEvents.filter(e => e.applied && !/absence/i.test(e.reason || ''));
+    let satBursts = 0, burstNet = null, prevTs = 0;
+    const dayNets = new Map();
+    const satNow = (net) => net && STATS.some(k => Math.abs(net[k]) >= T.SESSION_CAP);
+    for (const ev of applied) {
+      if (!burstNet || (ev.ts || 0) - prevTs > 90 * 60000) {
+        if (satNow(burstNet)) satBursts++;
+        burstNet = { comfort: 0, closeness: 0, attraction: 0 };
+      }
+      for (const k of STATS) burstNet[k] += Number(ev.applied[k]) || 0;
+      prevTs = ev.ts || 0;
+      const dk = this._dayKey(ev.ts || 0);
+      const dn = dayNets.get(dk) || { comfort: 0, closeness: 0, attraction: 0 };
+      for (const k of STATS) dn[k] += Number(ev.applied[k]) || 0;
+      dayNets.set(dk, dn);
+    }
+    if (satNow(burstNet)) satBursts++;
+    const satDays = [...dayNets.values()].filter(dn => STATS.some(k => Math.abs(dn[k]) >= T.DAY_CAP)).length;
+    lines.push(`- **Cap saturation**: ${satBursts} burst${satBursts === 1 ? '' : 's'} hit the ±${T.SESSION_CAP} session cap · ${satDays} day${satDays === 1 ? '' : 's'} hit the ±${T.DAY_CAP} day cap`);
+    const count = (k) => (events || []).filter(e => e && e.kind === k).length;
+    const refusals = count('refusal');
+    lines.push(`- **Outcome ledger**: ${count('senderr')} transport error(s) · ${refusals} refusal(s)${refusals ? '' : ' (none ledgered — a refusal kind only exists once the opener path records them)'} · ${count('imgerr')} photo error event(s)`);
+    return lines;
+  },
+
+  /* Photo aggregates: delivered photos from the message markers; declines,
+     moderation re-framing rungs and hard failures from imgerr events.
+     Framing CHOICES are not ledgered (only re-framing rungs are), so the
+     decline story is told from the rungs. Decline episodes coalesce rung
+     events within 3 minutes — one photo attempt logs each rung it burned. */
+  _archPhotoLines(msgs, events) {
+    const delivered = (msgs || []).filter(m => m && m.photo).length;
+    const errs = (events || []).filter(e => e && e.kind === 'imgerr');
+    if (!delivered && !errs.length) return [];
+    const declined = errs.filter(e => e.declined).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    let episodes = 0, last = -Infinity;
+    for (const e of declined) {
+      if ((e.ts || 0) - last > 3 * 60000) episodes++;
+      last = e.ts || 0;
+    }
+    const rungs = declined.filter(e => e.reframe).length;
+    const hard = errs.length - declined.length;
+    const denom = delivered + episodes;
+    return [`- **Photos**: ${delivered} delivered · ${episodes} decline episode${episodes === 1 ? '' : 's'} (${denom ? Math.round(100 * episodes / denom) : 0}% decline rate) · ${rungs} moderation re-framing rung${rungs === 1 ? '' : 's'} logged · ${hard} hard failure${hard === 1 ? '' : 's'} (key/network/model)`];
   },
 
   /* The whole archive: index + one section per friend. Pure function of the
@@ -3792,7 +4024,7 @@ const ClaudeAPI = {
       const p = f.profile || {};
       const s = f.state || {};
       const name = p.name || 'unnamed';
-      const diag = this._archDiagnostics(msgs, p);
+      const diag = this._archDiagnostics(msgs, p, f, events);
       const first = msgs.find(m => m.ts), last = [...msgs].reverse().find(m => m.ts);
       const span = first && last
         ? `${new Date(first.ts).toLocaleDateString()} – ${new Date(last.ts).toLocaleDateString()}`
