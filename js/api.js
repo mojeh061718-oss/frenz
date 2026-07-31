@@ -2683,7 +2683,7 @@ const ClaudeAPI = {
   // is its only equivalent — it must carry the face rule too (measured:
   // one pov couch shot in five rendered a mostly-visible face before the
   // clause was here; the Bedrock negativeText already had it since v10.2).
-  _IMAGE_AVOID: ' Her face stays out of the picture or out of focus past the frame edge — cropped above the mouth at most. This is an unremarkable amateur self-taken phone photo: one of her own hands is holding the phone, there is no photographer, no studio lighting, no modeling pose, no editorial polish. Not an illustration or 3d render; no text, watermarks, or logos.',
+  _IMAGE_AVOID: ' Her face stays out of the picture or out of focus past the frame edge — cropped above the mouth at most. This is an unremarkable amateur self-taken phone photo: one of her own hands is holding the phone, there is no photographer, no studio lighting, no modeling pose, no editorial polish. No glamour lighting, no airbrushed or beauty-filter skin, no influencer styling, none of the too-clean symmetry of a generated image. Not an illustration or 3d render; no text, watermarks, or logos.',
 
   /* Face-out-of-frame is the consistency mechanism: these models roll a new
      person every generation, so the one identity anchor we can actually hold
@@ -2831,8 +2831,11 @@ const ClaudeAPI = {
      holds that stacking blur+noise+artifacts produces mush, not candor. */
   _CAMERA: ' Shot like a quick snap to a friend: grabbed one-handed mid-moment, framing careless and a little ugly —' +
     ' tilted, awkwardly cropped, too close or too far, composed by nobody, and the camera doing her no favours.' +
+    ' It looks taken on a phone: the slight wide-angle stretch of a phone lens near the frame edges, auto-exposure a beat wrong' +
+    ' so a lamp or window blows out, white balance a little off for the room.' +
     ' Slightly grainy, flat unedited colour, uneven ordinary room light — harsh direct flash with hard shadows if the room is dark —' +
-    ' true skin and fabric texture. Clutter left where it is. No filter, no retouching, no beauty smoothing, no captions or app overlay.',
+    ' true skin and fabric texture, pores and small unevenness where skin shows. Clutter left where it is.' +
+    ' No filter, no retouching, no beauty smoothing, no captions or app overlay — a photo meant to be seen once, not kept.',
 
   _imagePrompt(desc, mode, appearance, heat) {
     const m = this._FRAMING[mode] ? mode : this._modeFor(desc);
@@ -2982,7 +2985,7 @@ const ClaudeAPI = {
        they ever reached the model. 2000 clears the longest persona's full
        prompt; xAI has been accepting well past this with _IMAGE_AVOID
        appended, so the cap is a runaway guard, not an API limit. */
-    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 2000);
+    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 2600);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
@@ -3067,7 +3070,7 @@ const ClaudeAPI = {
         // not a bug. (A heat-1 middle rung was considered and rejected: it
         // would double the ladder's worst-case latency for a marginal tone
         // win, inside a photo budget that is already the slow path.)
-        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 2000));
+        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 2600));
       }
     }
     let declined = null;

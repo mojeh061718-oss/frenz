@@ -335,8 +335,8 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   const longDesc = 'curled up on the couch in my thin cami and sleep shorts, tv on, glass of wine in my hand, one leg tucked under me';
   for (const t of Personas.templates) {
     const full = API._imagePrompt(longDesc, 'pov', t.appearance, 2);
-    ok(full.length <= 2000 && /implication rather than display/.test(full),
-      t.id + ': full pov prompt fits the 2000 budget with heat tail intact (' + full.length + ')');
+    ok(full.length <= 2600 && /implication rather than display/.test(full),
+      t.id + ': full pov prompt fits the 2600 budget with heat tail intact (' + full.length + ')');
   }
   ok(/redhead/i.test(pov), 'body-type fidelity: appearance sheet rides as the phone-holder');
   const mirror = API._imagePrompt('new dress, fit check', 'mirror', app, 0);
@@ -457,7 +457,7 @@ console.log('\n== 16. testlook lens ==');
         }
       }
     }
-    ok(worst <= 2000, 'worst scene prompt fits the 2000 budget (' + worst + ')');
+    ok(worst <= 2600, 'worst scene prompt fits the 2600 budget (' + worst + ')');
   }
 }
 
