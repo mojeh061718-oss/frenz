@@ -248,6 +248,8 @@ details.tune label { margin-top: 12px; }
 .chat-title-text { display: flex; flex-direction: column; align-items: center; gap: 1px; }
 .chat-name { font-weight: 500; font-size: 0.72rem; color: #fff; }
 .chat-name::after { content: ' ›'; color: var(--ios-gray-text); font-size: 0.9em; }
+/* utility friends: no relationship view behind the title, so no chevron */
+.chat-name.no-rel::after { content: ''; }
 .chat-status { font-size: 0.62rem; color: var(--ios-gray-text); }
 
 .chat-messages {
