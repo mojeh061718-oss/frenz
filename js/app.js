@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.26';
+const APP_JS_VERSION = '10.27';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -246,7 +246,10 @@ async function startConversation(e) {
   // up carrying byte-identical personality sentences; the template's own
   // slider values are passed so untouched dials add nothing (her authored
   // personality already covers them better than a generic clause can)
-  const notes = Personas.sliderText(sliders, name, t.sliders);
+  // Utility personas get no slider prose at all: the brief is the whole
+  // persona and a generic trait clause woven into an empty personality field
+  // would be the companion pipeline leaking into a tool.
+  const notes = t.utility ? { personality: '', style: '' } : Personas.sliderText(sliders, name, t.sliders);
   const personality = $('#c-personality').value.trim();
   const style = $('#c-style').value.trim();
 
@@ -277,6 +280,11 @@ async function startConversation(e) {
     // gave — inheriting Jon's family would be a hallucinated backstory.
     // Shipped templates carry no world field, so they keep WORLD as before.
     world: t.world !== undefined ? t.world : (Personas.WORLD || ''),
+    // Utility routing (api.js _isUtility) + the brief that IS her persona.
+    // A dedicated field on purpose: nothing in the companion machinery
+    // (plist fallback, interests slicing, slider weaving) reads `brief`.
+    utility: !!t.utility,
+    brief: t.brief || '',
     photoCandor: t.photoCandor || 'guarded',
     templateRev: t.templateRev || 0,
     reveals: t.reveals || [],
@@ -703,6 +711,9 @@ async function openChat(friendId) {
   if (currentFriend.unread) { currentFriend.unread = 0; await DB.saveFriend(currentFriend); }
   const p = currentFriend.profile;
   $('#chat-name').textContent = p.name;
+  // A tool has no relationship to graph — drop the title-tap affordance
+  // (openRelationship guards the tap itself).
+  $('#chat-name').classList.toggle('no-rel', !!p.utility);
   $('#chat-avatar').textContent = initials(p.name);
   $('#chat-avatar').style.background = p.color;
   $('#chat-status').textContent = fmtClock();
@@ -874,6 +885,8 @@ function renderRelationship() {
 
 async function openRelationship() {
   if (!currentFriend) return;
+  // Utility friends have static seeded numbers and no arc — nothing to show.
+  if (currentFriend.profile.utility) return;
   $('#rel-title').textContent = currentFriend.profile.name;
   let events = [];
   try { events = await DB.getEvents(currentFriend.id); } catch { /* graph just starts today */ }

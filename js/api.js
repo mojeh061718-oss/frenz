@@ -304,8 +304,28 @@ const ClaudeAPI = {
     return true;
   },
 
+  /* Utility personas (profile.utility) are TOOLS that live in a chat thread —
+     invariant 7 (situational loading) taken to its extreme. None of the
+     companionship rulebook applies to a tool, and none of it may load: handed
+     to a worker, the register/pace/intimacy material doesn't sit inert, it
+     tilts every reply toward a person who isn't there. The whole utility
+     path branches on this one predicate. */
+  _isUtility(friend) {
+    return !!(friend && friend.profile && friend.profile.utility);
+  },
+
   buildPersona(friend, tier) {
     const p = friend.profile;
+    // Utility branch: the brief + its output contract are the WHOLE persona.
+    // No register/rhythm/pace/intimacy/on-read sections, no examples, no
+    // world — a tool gets its working doctrine and nothing else.
+    if (this._isUtility(friend)) {
+      return [
+        `You are ${p.name}, a specialist tool operating inside a chat window. Not a companion, not a character — a working expert. The person typing is a user of the tool, not a friend.`,
+        '',
+        p.brief || p.personality || ''
+      ].join('\n');
+    }
     const userName = p.userName || 'them';
     const examples = this._exampleSetFor(friend.id, tier, p.style);
     /* Situational rule loading. The escalation/intimacy rulebook is ~6k
@@ -1095,6 +1115,9 @@ const ClaudeAPI = {
   OPENER: { MIN_GAP_H: 6, DOUBLE_TEXT_GAP_H: 20, ROLL_PCT: 45 },
 
   openerDue(friend, msgs, now) {
+    // A tool never texts first: no openers, no double-texts, no reckoning
+    // machinery — the utility thread only ever moves when the user does.
+    if (this._isUtility(friend)) return false;
     const t = now === undefined ? this._now() : now;
     const lastMsg = msgs && msgs.length ? msgs[msgs.length - 1] : null;
     if (!friend || !lastMsg || !lastMsg.ts) return false;
@@ -2500,8 +2523,9 @@ const ClaudeAPI = {
         const result = await this._chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry);
         this._noteServed(entry);
         if (result.bubbles) {
-          result.leftOnRead = this._wantsSilence(result.bubbles);
-          result.bubbles = this._stripEnd(this._deTic(this._dropEchoes(result.bubbles, history), history));
+          // [noreply] stays inert for utility friends — a tool always answers
+          result.leftOnRead = !this._isUtility(friend) && this._wantsSilence(result.bubbles);
+          result.bubbles = this._guardBubbles(friend, result.bubbles, history);
         }
         result.provider = entry.label || entry.id;
         result.providerKeyed = this._entryKeyed(entry, settings);
@@ -2528,6 +2552,17 @@ const ClaudeAPI = {
     } finally {
       this._closeBudget(budgetTok);
     }
+  },
+
+  /* The post-reply guard chain, in one place so the utility bypass is a
+     branch and not four scattered conditions. Echo/tic guards exist to catch
+     a COMPANION rerunning herself; a tool iterating on a prompt produces
+     legitimately similar consecutive outputs — v2 of a prompt shares most of
+     v1's words by design — and the guards would eat exactly the good case.
+     For utility friends the bubbles pass through untouched. */
+  _guardBubbles(friend, bubbles, history) {
+    if (this._isUtility(friend)) return bubbles;
+    return this._stripEnd(this._deTic(this._dropEchoes(bubbles, history), history));
   },
 
   /* Per-entry retry with backoff. After the attempts are spent, quota and
@@ -2557,7 +2592,11 @@ const ClaudeAPI = {
         const lastUser = [...this._realHistory(history)].reverse().find(m => m.role === 'user');
         const windingDown = (lastUser && this._classifyUserTurn(lastUser.text) === 'signoff')
           || this._isWithdrawing(history);
+        // Utility friends skip the quality regenerate entirely: the filler/
+        // parrot/rerun detectors are calibrated for companion chat, and a
+        // prompt revision legitimately reuses most of the prior reply.
         if (res && res.bubbles && attempt < 2 && !windingDown && !this._underPressure()
+            && !this._isUtility(friend)
             && (this._isFillerReply(res.bubbles) || this._isParrotReply(res.bubbles, history) || this._isRerunReply(res.bubbles, history))) {
           this._strictNext = true;
           strictRegen = true;
@@ -3194,6 +3233,8 @@ const ClaudeAPI = {
      licence to escalate; it is the absence of a constraint that was never
      hers, and where it stops is where it would stop in life. */
   photoNote(settings, friend) {
+    // Utility personas make prompts ABOUT images; they never send photos.
+    if (this._isUtility(friend)) return null;
     if (!this.imageEntry(settings)) return null;
     const candor = (friend && friend.profile && friend.profile.photoCandor) || 'guarded';
     const common = 'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen, consistent with your day and anything you have already told him. Your pictures are grabbed one-handed mid-moment, framed by nobody: aimed down at your own lap and legs and whatever the room holds beyond them, or at the thing in your hands — never staged, never composed. Your face is never in these; that is simply how you take them and you never explain it.';
@@ -3219,7 +3260,7 @@ const ClaudeAPI = {
      hold the reference implementation. */
   _sendEntry(entry, friend, history, settings, lastMessageTs) {
     const oai = entry.kind === 'bedrock' ? this._bedrockOaiEntry(entry) : entry;
-    const call = (messages, format) => this._openaiRequest(oai, messages, format, friend.id);
+    const call = (messages, format) => this._openaiRequest(oai, messages, format, friend.id, this._isUtility(friend));
     return this._plainProviderChat(oai, call, friend, history, lastMessageTs);
   },
 
@@ -3259,6 +3300,24 @@ const ClaudeAPI = {
      doubles RPM consumption against tight free limits. A model that
      repeatedly fumbles the combined JSON self-tunes to 'split' mode. */
   async _plainProviderChat(entry, call, friend, history, lastMessageTs) {
+    // Utility path: one plain-text call, one message back, no state machinery
+    // at all — no JSON asked for, none parsed, `state: null` throughout, so
+    // applyStateDeltas is never reached and the seeded state stays inert.
+    // The reply is deliberately NOT split into bubbles: a diagnosis + prompt
+    // block + variants is one document, and the renderer's pre-wrap bubbles
+    // hold a long single message fine.
+    if (this._isUtility(friend)) {
+      const { req, r } = await this._plainCall(entry, call,
+        () => this._buildPlainRequest(entry, friend, history, lastMessageTs, this._utilityInstruction(), false), 'text');
+      if (r.refusal) return { refusal: true, bubbles: [], state: null, omitted: req.omitted, meta: r.meta };
+      const text = String(r.text || '').trim();
+      if (!text) {
+        const err = new Error('Reply came back empty — retrying.');
+        err.retryable = true;
+        throw err;
+      }
+      return { bubbles: [text], state: null, omitted: req.omitted, meta: r.meta };
+    }
     const modeKey = entry.id + '|' + (entry.model || '');
     const rec = this._modeRec(modeKey, entry);
     let mode = rec.mode;
@@ -3379,6 +3438,39 @@ const ClaudeAPI = {
     // degrades instead of overflowing.
     const tier = budgetTokens <= 10000 ? 'compact'
       : (this._isCapableModel(entry) ? 'rich' : 'full');
+
+    // Utility build: the brief + reply contract in the system block and the
+    // raw history window — nothing else. No dynamic context (no room read,
+    // beats, textures, tension, vibe, or time notes), no plist, no phi, no
+    // recap, no memories/scenes retrieval, no state instruction. The window
+    // math is the same sticky-step scheme as below, so the prefix cache
+    // behaves identically; the omitted disclosure stays (a trim is never
+    // silent) but says it tool-plainly, never in companion voice.
+    if (this._isUtility(friend)) {
+      const persona = this.buildPersona(friend, tier);
+      const system = persona + '\n\n' + instr;
+      const uStart = Math.max(
+        history.length - this.MAX_HISTORY,
+        Math.max(0, Math.floor((history.length - this.HISTORY_WINDOW) / this.HISTORY_STEP) * this.HISTORY_STEP)
+      );
+      const uCapped = history.slice(Math.max(0, uStart));
+      const uRoom = Math.max(1000, budgetChars - system.length - 512);
+      const uKept = [];
+      let uUsed = 0;
+      for (let i = uCapped.length - 1; i >= 0; i--) {
+        const cost = uCapped[i].text.length + 16;
+        if (uKept.length && uUsed + cost > uRoom) break; // newest always survives
+        uKept.unshift(uCapped[i]);
+        uUsed += cost;
+      }
+      while (uKept.length > 1 && uKept[0].role !== 'user') uKept.shift();
+      const uOmitted = history.length - uKept.length;
+      const msgs = uKept.map(m => ({ role: m.role, content: m.text }));
+      if (uOmitted > 0) {
+        msgs.push({ role: this._injectionRole(entry), content: `[ About ${uOmitted} earlier messages in this thread are not shown. Work from what is visible. ]` });
+      }
+      return { system, messages: msgs, omitted: uOmitted };
+    }
 
     // try/finally: _leanContext is a module singleton read by
     // buildDynamicContext/buildPersona — if assembly throws between set and
@@ -3692,6 +3784,9 @@ const ClaudeAPI = {
   /* ---------------- immutable scene records ---------------- */
 
   sceneStale(friend, historyLength) {
+    // Utility threads never fold into scenes: the utility build never reads
+    // them back, so recording one would spend a summarizer call on nothing.
+    if (this._isUtility(friend)) return false;
     const covered = friend.scenesCovered || 0;
     // keep a recent uncovered tail so scenes never describe the live window
     return historyLength - covered >= this.SCENE_CHUNK + 10;
@@ -3831,6 +3926,18 @@ const ClaudeAPI = {
       'Reply with ONLY a single JSON object — no prose before or after it, no markdown fences:',
       '{"messages": ["first bubble", "optional second"], "state": {"mood": "a few words", "comfort_delta": 0, "closeness_delta": 0, "attraction_delta": 0, "reason": "one short sentence", "confidence": 0.8, "opinion_notes": "1-3 candid sentences", "unsaid": "one short clause: what you are thinking but not saying right now", "new_memories": []}}',
       '"messages": your visible reply as 1-4 short chat bubbles. "state" is PRIVATE: deltas are -3..+3 movements caused by this exchange (report real movement when you feel it — a landed line or genuine moment is ±1 or more; 0 only for genuinely neutral exchanges; negative when it stung). A boundary push you deflected — the photo ask, the what-are-you-wearing press, the suggestion you dodged — is NEVER a neutral exchange: it lands somewhere (comfort down when it was unwelcome, attraction up only when part of you genuinely liked it), even while your visible reply stays breezy; the breezy reply is the surface, the delta is the truth. "mood" belongs to your whole LIFE, not just this chat: between sessions it moves for your own reasons — the day you had, the week you are in, the thing you are carrying — so update it whenever it has genuinely moved instead of hauling yesterday\'s mood forward out of inertia. "new_memories": 0-3 objects {"text","keywords","importance"} — text must be a standalone, pronoun-free, subject-first fact about him, about you two, or about YOUR OWN life established OR referenced this exchange (your commitments, stories, opinions — never contradict your own canon later); something you already knew still deserves recording the first time it comes up between you. The event that STARTED this thread and hard concrete facts — who, where, what happened, any cover story — are ALWAYS worth keeping at high importance; a relationship that forgets its own origin reads as fake. [] only when genuinely nothing new.'
+    ].join('\n');
+  },
+
+  /* The utility reply contract — the whole of it. One message, no bubble
+     splitting, no state report: the format section the tool reads instead of
+     _jsonInstruction/_plainInstruction. */
+  _utilityInstruction() {
+    return [
+      '## Reply format (mandatory)',
+      'Write your full answer as ONE message — plain text, as long as the work needs. Never split it into multiple short lines styled as separate texts.',
+      'Blank lines separate your sections, and the prompt block itself must be copy-paste clean: no surrounding quotes, no markdown fences, no name label.',
+      'No JSON, no braces-wrapped metadata, no private-state report of any kind — your reply is the work product and nothing else.'
     ].join('\n');
   },
 
@@ -4559,7 +4666,17 @@ const ClaudeAPI = {
      machinery (_motifs → _phi) is the only pressure, by design. */
   _PENALTY_FREE_MODEL: /^(xai\.)?grok-[4-9]/i,
 
-  async _openaiRequest(entry, messages, format, convId) {
+  /* Output ceilings, distinct from the input budget (SKILL "Budget rules"):
+     persona/history spend input; reasoning + visible text spend from here.
+     Utility sends get double headroom and the high reasoning tier — long
+     lore documents and careful prompt diagnosis both think and write at
+     length, and a chat-shaped time-to-first-token matters less for a tool
+     than the answer being whole. Only generated tokens are billed, so the
+     high ceiling on a short answer costs nothing. */
+  _outputCeiling(utility) { return utility ? 32768 : 16384; },
+  _reasoningEffortFor(utility) { return utility ? 'high' : 'low'; },
+
+  async _openaiRequest(entry, messages, format, convId, utility) {
     const base = (entry.baseUrl || '').replace(/\/+$/, '');
     const url = base + '/chat/completions';
     const headers = { 'content-type': 'application/json' };
@@ -4596,7 +4713,7 @@ const ClaudeAPI = {
       // token chat-shaped — 'high' can sit near 30s, which reads as her
       // ignoring him. Endpoints that don't know the param drop it via the
       // 400-learning below.
-      if (penaltyFree && !this._noReasoningParam[base]) body.reasoning_effort = 'low';
+      if (penaltyFree && !this._noReasoningParam[base]) body.reasoning_effort = this._reasoningEffortFor(utility);
       // Newer OpenAI-compatible endpoints renamed max_tokens; which one an
       // endpoint accepts is learned from its first rejection, per base URL.
       // 16384, not 4096: reasoning models spend from max_tokens BEFORE the
@@ -4604,8 +4721,10 @@ const ClaudeAPI = {
       // shallow — the reasoning ate the budget and the text got the crumbs.
       // Only tokens actually generated are billed, so a high ceiling on a
       // three-word text costs nothing; a low one costs the whole reply.
-      if (this._maxTokensParam[base] === 'max_completion_tokens') body.max_completion_tokens = 16384;
-      else body.max_tokens = 16384;
+      // Utility sends ride a doubled ceiling (_outputCeiling).
+      const ceiling = this._outputCeiling(utility);
+      if (this._maxTokensParam[base] === 'max_completion_tokens') body.max_completion_tokens = ceiling;
+      else body.max_tokens = ceiling;
       if (level === 2) body.response_format = { type: 'json_schema', json_schema: { name: 'reply', schema: this.REPLY_SCHEMA } };
       else if (level === 1) body.response_format = { type: 'json_object' };
 

@@ -257,7 +257,7 @@ console.log('\n== 10. prompt assembly still sane ==');
   }
   const world = Personas.WORLD;
   ok(/inviting him and Toni to something/.test(world), 'WORLD carries the family-adjacent positive spec');
-  ok(Personas.templates.every(t => Array.isArray(t.beats) && t.beats.length >= 10), 'every template ships a beat bank');
+  ok(Personas.templates.every(t => t.utility || (Array.isArray(t.beats) && t.beats.length >= 10)), 'every companion template ships a beat bank');
   // upgrade rule fires for existing Samantha
   const prof = { name: 'Samantha', plist: 'funny and warm, the fun one over the clever one, mother of four with a three-month-old and no sleep, mostly genuinely modest' };
   Personas.upgradeProfile(prof);
@@ -511,7 +511,7 @@ console.log('\n== 18. opening act: the aftermath is a scene, then it retires =='
 console.log('\n== 19. content diet: textures, kids-as-weather, agent-run fixes ==');
 {
   // every template ships a texture bank
-  ok(Personas.templates.every(t => Array.isArray(t.textures) && t.textures.length >= 6), 'every template ships textures');
+  ok(Personas.templates.every(t => t.utility || (Array.isArray(t.textures) && t.textures.length >= 6)), 'every companion template ships textures');
   // evening-gated, deterministic, no repeats inside 8 days
   const f = mkFriend('samantha');
   const at = (d, h) => new Date(2026, 7, d, h, 30).getTime();
@@ -819,6 +819,10 @@ console.log('\n== instruments: the suite runs at REAL seeded states ==');
   // fixtures run on is exactly what app.js creates. Cross-check the
   // derivation per template so a drift in either place turns red here.
   for (const t of Personas.templates) {
+    // utility templates carry an inert seed and no mood/opinion of their own
+    // (the defaults fill in) — companion seed derivation doesn't apply; the
+    // gemma section at the end covers the utility contract.
+    if (t.utility) continue;
     const s = Personas.seedState(t, t.sliders, 123);
     ok(s.closeness === t.sliders.closeness
       && s.comfort === Math.min(88, t.sliders.closeness + 15)
@@ -887,6 +891,7 @@ console.log('\n== instruments: kid content measured by CONTENT, not first word =
   ok(kidClassifier('bre')('Your neighbor has started practicing an instrument.') === false, 'classifier: adult hobby "practicing" is not kid practice');
   ok(kidClassifier('anna')('Sadie fed her dinner to the neighbor\'s dog through the fence, piece by piece.') === true, 'classifier: authored child name flags');
   for (const t of Personas.templates) {
+    if (t.utility) continue; // no life banks: a tool has no beats or textures
     const isKid = kidClassifier(t.id);
     for (const bank of ['beats', 'textures']) {
       const list = t[bank] || [];
@@ -1148,6 +1153,7 @@ console.log('\n== templates: example-bank routing per persona (invariant 10) =='
   // default — a sentence-case mom learning from lowercase few-shots.
   const expect = { kelly: 'lower', bre: 'lower', samantha: 'lower', anna: 'punct', tay: 'punct' };
   for (const t of Personas.templates) {
+    if (t.utility) continue; // utility personas never receive an example bank
     const want = expect[t.id] === 'punct' ? API._EXAMPLES_PUNCTUATED : API._EXAMPLES;
     ok(API._exampleBank(t.style) === want,
       'templates: ' + t.id + ' routes to the ' + expect[t.id] + ' bank');
@@ -1235,6 +1241,7 @@ console.log('\n== templates: style sentence 1 packs register + rhythm + ONE sign
     tay: /nerd reference/i
   };
   for (const t of Personas.templates) {
+    if (t.utility) continue; // no texting voice to pack: the brief is the persona
     const s1 = (t.style || '').split(/[.!]/)[0];
     ok(sig[t.id].test(s1), 'templates: ' + t.id + ' S1 carries her signature marker');
     // moved, not copied (invariant 2): the marker never repeats later in style
@@ -2602,6 +2609,181 @@ console.log('\n== rule-mass (1D): recap deleted, merged rules live once, counter
     'rule-mass: distance rules keep the positive floor (ordinary invitations are natural)');
   ok(persona.includes('the two exceptions below') && !persona.includes('ONE exception'),
     'rule-mass: the on-read section now counts its own exceptions coherently');
+}
+
+/* ================= gemma: the utility persona =================
+   Invariant 7 taken to its extreme: a tool in a chat thread loads NONE of
+   the companionship pipeline. Everything the utility path promises is
+   asserted here — the flag, the brief-only persona, the machinery-free
+   request, the elevated output ceiling, the dead opener path, the guard
+   bypass, and the state that never moves. */
+console.log('\n== gemma: utility template + brief ==');
+{
+  API.resetTimeOffset();
+  const t = Personas.byId('gemma');
+  ok(!!t && t.utility === true, 'gemma: template exists with the utility flag');
+  ok(typeof t.brief === 'string' && t.brief.length > 3000, 'gemma: brief is a real working doctrine (' + (t.brief || '').length + ' chars)');
+  // the craft is actually in the brief: anatomy + order, Gemini specifics,
+  // diagnosis, the flag boundary, the output contract, the lore room
+  ok(/ORDER matters/.test(t.brief) && /focal length/.test(t.brief) && /aperture/.test(t.brief)
+    && /color temperature/i.test(t.brief), 'gemma: brief carries prompt anatomy with camera/lighting language');
+  ok(/keyword soup/.test(t.brief) && /aspect ratio/.test(t.brief) && /quotation marks/.test(t.brief)
+    && /positive presence/i.test(t.brief), 'gemma: brief carries the Gemini-specific craft');
+  ok(/contradictions/i.test(t.brief) && /over-stuffing/i.test(t.brief) && /vague filler/i.test(t.brief),
+    'gemma: brief carries diagnosis mode');
+  ok(/corrector, not a smuggler/.test(t.brief) && /minors under ANY framing/.test(t.brief)
+    && /closest compliant concept/.test(t.brief), 'gemma: brief carries the flag boundary — rephrase the benign, refuse the violating');
+  ok(/DIAGNOSIS/.test(t.brief) && /VARIANTS/.test(t.brief) && /strongest interpretation/.test(t.brief),
+    'gemma: brief carries the output contract');
+  ok(/character sheets/.test(t.brief) && /[Gg]eneration-ready/.test(t.brief), 'gemma: brief carries the lore room');
+  // companion machinery has nothing to read: no plist, no banks, no examples
+  ok(!t.plist && !(t.beats || []).length && !(t.textures || []).length && !t.style,
+    'gemma: template carries no companion fields for the pipeline to pick up');
+}
+
+console.log('\n== gemma: brief-only persona, machinery-free request ==');
+{
+  const g = mkFriend('gemma');
+  const persona = API.buildPersona(g, 'rich');
+  ok(persona.includes(Personas.byId('gemma').brief), 'gemma: assembled persona contains the whole brief');
+  const COMPANION_MARKERS = [
+    '## Pace', '## Register', '## The rhythm', '## Being a real person',
+    '## Your own will', '## Never leave them on read', '## Subtext',
+    '## Intimacy', '## Your private inner life', 'talk, don\'t interview'
+  ];
+  ok(COMPANION_MARKERS.every(m => !persona.includes(m)),
+    'gemma: persona carries NO companion sections', COMPANION_MARKERS.filter(m => persona.includes(m)).join(', '));
+  // and the same persona for a companion still carries them (counter-case)
+  const kp = API.buildPersona(mkFriend('kelly'), 'rich');
+  ok(kp.includes('## Register') && kp.includes('## Never leave them on read'), 'gemma: companion persona still carries its sections');
+
+  const entry = { kind: 'openai', id: 'gx', baseUrl: 'https://api.x.ai/v1', model: 'grok-4', apiKey: 'k', contextTokens: 131072 };
+  const hist = [
+    { role: 'assistant', text: Personas.byId('gemma').greeting[0] },
+    { role: 'user', text: 'make me a prompt: a beautiful epic amazing dragon castle sunset 8k' }
+  ];
+  const req = API._buildPlainRequest(entry, g, hist, API._now() - 60000, API._utilityInstruction(), false);
+  const whole = req.system + '\n' + req.messages.map(m => m.content).join('\n');
+  ok(req.messages.length === hist.length, 'gemma: no injected plist/dynamic/phi messages (' + req.messages.length + ')');
+  ok(!/persona \(binding/.test(whole) && !/private read on/.test(whole)
+    && !/## Your current private state/.test(whole) && !/## (Tonight|Today) \(private/.test(whole)
+    && !/Meanwhile, something real happened in your world/.test(whole)
+    && !/Reply as .* would actually text/.test(whole),
+    'gemma: no plist, no private-state block, no Tonight, no beat, no phi in the request');
+  ok(!/guarded — gives the edited version/.test(whole) && !/## Pace/.test(whole),
+    'gemma: no band contracts or pace rules in the request');
+  ok(!/comfort_delta/.test(whole) && !/new_memories/.test(whole) && !/"state"/.test(whole),
+    'gemma: no state-JSON instruction anywhere in the request');
+  ok(/## Reply format/.test(req.system) && /ONE message/.test(req.system),
+    'gemma: the utility reply contract rides the system block');
+  // companion counter-case: the same builder wires ALL of that machinery in
+  const sf = mkFriend('samantha');
+  const sreq = API._buildPlainRequest(entry, sf, [{ role: 'user', text: 'hey' }], API._now() - 60000, API._jsonInstruction(), true);
+  const swhole = sreq.system + '\n' + sreq.messages.map(m => m.content).join('\n');
+  ok(/persona \(binding/.test(swhole) && /## Your current private state/.test(swhole)
+    && /comfort_delta/.test(sreq.system) && /Reply as .* would actually text/.test(swhole),
+    'gemma: companion request still carries plist + state block + state instruction + phi');
+  // history-window disclosure stays, in tool voice, never companion voice
+  const longHist = [];
+  for (let i = 0; i < 120; i++) longHist.push({ role: i % 2 ? 'assistant' : 'user', text: 'revision pass number ' + i });
+  const lreq = API._buildPlainRequest(entry, g, longHist, API._now() - 60000, API._utilityInstruction(), false);
+  const lwhole = lreq.messages.map(m => m.content).join('\n');
+  ok(lreq.omitted > 0 && /earlier messages in this thread are not shown/.test(lwhole),
+    'gemma: >window thread disclosed plainly (' + lreq.omitted + ' omitted)');
+  ok(!/You still lived them/.test(lwhole) && !/scenes and memories/.test(lwhole),
+    'gemma: the disclosure never fires the companion-flavored line');
+}
+
+console.log('\n== gemma: output ceiling + reasoning tier ==');
+{
+  ok(API._outputCeiling(true) >= 2 * API._outputCeiling(false),
+    'gemma: utility output ceiling at least 2x the companion ceiling (' + API._outputCeiling(true) + ' vs ' + API._outputCeiling(false) + ')');
+  ok(API._reasoningEffortFor(true) === 'high' && API._reasoningEffortFor(false) === 'low',
+    'gemma: utility sends get the high reasoning tier, companions stay chat-shaped');
+  // wire tripwires: the request builder actually consumes both dials, and
+  // the send path passes the utility flag through
+  const wireSrc = String(API._openaiRequest);
+  ok(wireSrc.includes('_outputCeiling(utility)') && wireSrc.includes('_reasoningEffortFor(utility)'),
+    'gemma: _openaiRequest reads both utility dials');
+  ok(String(API._sendEntry).includes('_isUtility(friend)'), 'gemma: _sendEntry passes the utility flag to the wire');
+}
+
+console.log('\n== gemma: no openers, ever ==');
+{
+  API.resetTimeOffset();
+  const noon = new Date(2026, 7, 12, 12, 0).getTime();
+  const msgs = [{ role: 'assistant', ts: noon - 3 * DAY }];
+  // a companion with an unresolved ending FIRES on this shape (the override)
+  const comp = mkFriend('samantha');
+  comp.unresolved = { kind: 'rough', ts: API._now() - 2 * DAY, reason: 'ended badly' };
+  ok(API.openerDue(comp, msgs, noon) === true, 'gemma: control — a companion fires on this exact day');
+  const g = mkFriend('gemma');
+  g.unresolved = { kind: 'rough', ts: API._now() - 2 * DAY, reason: 'ended badly' };
+  ok(API.openerDue(g, msgs, noon) === false, 'gemma: utility friend never fires, even with the unresolved override live');
+  // and across a month of per-day rolls, silence every single day
+  let fired = 0;
+  for (let d = 0; d < 30; d++) {
+    if (API.openerDue(mkFriend('gemma'), [{ role: 'assistant', ts: noon - 3 * DAY }], noon + d * DAY)) fired++;
+  }
+  ok(fired === 0, 'gemma: zero opener fires across 30 days of rolls');
+  // photos off: an image-configured settings object still yields no photo note
+  const settings = { pool: [{ enabled: true, kind: 'openai', baseUrl: 'https://api.x.ai/v1', imageModel: 'grok-imagine-1', imageKey: 'ik', apiKey: 'k', id: 'i' }] };
+  ok(API.photoNote(settings, mkFriend('kelly')) !== null, 'gemma: control — companion gets the photo section');
+  ok(API.photoNote(settings, mkFriend('gemma')) === null, 'gemma: photoNote is off for utility friends');
+}
+
+console.log('\n== gemma: echo/rut guards bypassed ==');
+{
+  // Iterating on a prompt: v2 legitimately shares most of v1's words. The
+  // companion guard eats exactly this shape; the utility path must not.
+  const echoHist = [
+    { role: 'user', text: 'tighten this prompt for me' },
+    { role: 'assistant', text: 'THE PROMPT: a wide 16:9 cinematic frame of a weathered lighthouse keeper on the gallery deck' },
+    { role: 'user', text: 'same thing but at night' }
+  ];
+  const revision = [
+    'THE PROMPT: a wide 16:9 cinematic frame of a weathered lighthouse keeper on the gallery deck at night',
+    'VARIANT: the same keeper seen from the water below, lamp room blazing overhead'
+  ];
+  const cOut = API._guardBubbles(mkFriend('kelly'), revision, echoHist);
+  ok(cOut.length < revision.length, 'gemma: control — a companion\'s near-duplicate revision bubble is dropped (' + cOut.length + '/' + revision.length + ' survive)');
+  const uOut = API._guardBubbles(mkFriend('gemma'), revision, echoHist);
+  ok(uOut.length === revision.length && uOut[0] === revision[0],
+    'gemma: both highly-similar consecutive utility replies survive untouched');
+  // the deTic/laugh machinery never rewrites a utility reply either
+  const laughHist = [{ role: 'assistant', text: 'lol noted' }];
+  const uLaugh = API._guardBubbles(mkFriend('gemma'), ['lol is not a style keyword — removed it from the prompt'], laughHist);
+  ok(uLaugh[0] === 'lol is not a style keyword — removed it from the prompt', 'gemma: deTic never rewrites utility text');
+  // the invisible quality-regenerate is utility-gated at the source
+  ok(/!this\._isUtility\(friend\)/.test(String(API._chatOnEntry)), 'gemma: filler/parrot/rerun regenerate is utility-gated');
+  ok(String(API.chat).includes('_guardBubbles'), 'gemma: chat() routes bubbles through the gated guard chain');
+}
+
+console.log('\n== gemma: one plain call, state stays null ==');
+{
+  ok(API.sceneStale(mkFriend('gemma'), 500) === false, 'gemma: utility threads never fold into scenes');
+  global.__asyncChecks = global.__asyncChecks || [];
+  global.__asyncChecks.push((async () => {
+    const entry = { kind: 'openai', id: 'gx2', baseUrl: 'https://api.x.ai/v1', model: 'grok-4', apiKey: 'k', contextTokens: 131072 };
+    const g = mkFriend('gemma');
+    const before = JSON.stringify(g.state);
+    let seen = null;
+    const call = async (messages, format) => {
+      seen = { messages, format };
+      return { text: 'DIAGNOSIS\n- "beautiful" steers nothing\n\nTHE PROMPT\nA wide 16:9 cinematic frame of a black-scaled dragon coiled around a ruined basalt castle at golden hour.', meta: {} };
+    };
+    const res = await API._plainProviderChat(entry, call, g, [{ role: 'user', text: 'beautiful epic dragon castle' }], API._now());
+    ok(seen.format === 'text', 'gemma: single plain-text call — json mode never requested');
+    ok(seen.messages.length === 2 && seen.messages[0].role === 'system', 'gemma: wire request is system + history, nothing injected');
+    ok(/best image-generation prompt engineer/.test(seen.messages[0].content), 'gemma: brief reaches the wire');
+    ok(res.state === null, 'gemma: reply returns state: null');
+    ok(res.bubbles.length === 1 && /DIAGNOSIS\n/.test(res.bubbles[0]) && /THE PROMPT/.test(res.bubbles[0]),
+      'gemma: reply is ONE bubble with its sections and newlines intact');
+    // the app-side contract: a null state means applyStateDeltas never runs,
+    // so the seeded state is byte-identical after a full reply application
+    if (res.state) API.applyStateDeltas(g, res.state, {});
+    ok(JSON.stringify(g.state) === before, 'gemma: state byte-identical through a full utility reply application');
+  })());
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {
