@@ -3,12 +3,12 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.24';
+const APP_JS_VERSION = '10.23';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
 const $ = (sel) => document.querySelector(sel);
-const views = ['view-friends', 'view-gallery', 'view-builder', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
+const views = ['view-friends', 'view-gallery', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
 
 let currentFriend = null;       // friend object while chatting/editing
 let editingId = null;           // friend id being edited, null = creating
@@ -147,20 +147,6 @@ function openGallery() {
     card.addEventListener('click', () => openCustomize(t));
     grid.appendChild(card);
   }
-  // The guided builder sits beside "Blank / custom": same dashed card
-  // language (both are build-your-own doors), different promise — the
-  // interview compiles a full persona from the user's answers.
-  const guided = document.createElement('div');
-  guided.className = 'template-card blank';
-  guided.id = 'tpl-builder';
-  guided.innerHTML = `
-    <div class="avatar" style="background:var(--bg3)">✎</div>
-    <div class="tpl-meta">
-      <div class="tpl-name">Guided builder</div>
-      <div class="tpl-hook">Answer questions about her — everything she knows comes from your answers, nothing invented.</div>
-    </div>`;
-  guided.addEventListener('click', openBuilder);
-  grid.appendChild(guided);
   const blank = document.createElement('div');
   blank.className = 'template-card blank';
   blank.id = 'tpl-blank';
@@ -263,31 +249,18 @@ async function startConversation(e) {
     // gave last time rather than shipping a nameless relationship.
     userName: $('#c-username').value.trim() || localStorage.getItem('frenz-user-name') || '',
     userGender: $('#c-usergender').value,
-    // Which gallery template she was built from. Upgrade machinery
-    // (_UPGRADES rules, templateRev refreshes) keys on this, so a hand-built
-    // friend who happens to share a template's NAME is never rewritten.
-    template: t.id,
     plist: t.plist || '',
     appearance: $('#c-appearance').value.trim() || t.appearance || '',
     beats: t.beats || [],
     textures: t.textures || [],
     opening: t.opening || null,
-    // A template may opt out of the shared world map: the guided builder
-    // compiles world:'' because her world is exactly what the user's answers
-    // gave — inheriting Jon's family would be a hallucinated backstory.
-    // Shipped templates carry no world field, so they keep WORLD as before.
-    world: t.world !== undefined ? t.world : (Personas.WORLD || ''),
+    world: Personas.WORLD || '',
     photoCandor: t.photoCandor || 'guarded',
     templateRev: t.templateRev || 0,
     reveals: t.reveals || [],
     established: !!t.established,
     sliders,
-    color: t.color,
-    // Builder-made personas keep their interview (re-editing can reopen it
-    // prefilled) and a template id that marks them as user-authored, so
-    // name-matched _UPGRADES rules never rewrite a person the user built.
-    template: t.template || null,
-    builder: t.builder || null
+    color: t.color
   };
   // Only remember a REAL answer. This used to store whatever was in the box,
   // so creating one friend with the name left blank wiped the remembered
@@ -299,10 +272,24 @@ async function startConversation(e) {
   const friend = {
     id: uid(),
     profile,
-    // closeness/attraction seed the private state directly from the sliders.
-    // The derivation lives in Personas.seedState — shared with the verify
-    // harness so the suite tests the exact states friends are created in.
-    state: Personas.seedState(t, sliders, ClaudeAPI._now()),
+    // closeness/attraction seed the private state directly from the sliders
+    state: {
+      mood: t.mood || 'curious, easygoing',
+      // capped at 88, not 95: a friend seeded AT the ceiling (Bre) had a
+      // comfort axis that could never visibly move again — 'deep' should be
+      // reachable in play, not pre-arrived (pipeline audit, finding #1)
+      comfort: Math.min(88, sliders.closeness + 15),
+      closeness: sliders.closeness,
+      attraction: sliders.attraction || 0,
+      opinion_notes: t.opinion || 'Just starting to get to know them. No strong impressions yet.',
+      // the thing on her mind as the thread opens — rides depth-4 from
+      // message one, then lives or expires under the normal unsaid rules
+      unsaid: t.unsaidSeed || '',
+      // scenario personas are born mid-significant-event: the walk-in / the
+      // pool IS the significant last thing between them, so days of silence
+      // after the greeting get the reckoning opener, not cheerful beats
+      lastSignificant: t.significantSeed ? { ts: ClaudeAPI._now(), kind: t.significantSeed } : null
+    },
     // The relationship's origin lives in `backstory` prose, which the state
     // model never records as a memory — it is asked for facts established in
     // THIS exchange, and the walk-in/lake/desk-lunch all predate message one.
@@ -324,272 +311,8 @@ async function startConversation(e) {
     await DB.addMessage({ friendId: friend.id, role: 'assistant', text: g, ts: ClaudeAPI._now() });
   }
   await renderFriendsList();
-  // she exists now — the builder draft has served its purpose
-  if (t.template === 'builder') localStorage.removeItem(BUILDER_DRAFT_KEY);
   customizeTemplate = null;
   openChat(friend.id);
-}
-
-/* ---------------- guided builder ---------------- */
-
-/* An interview that builds a maximally specific persona: ~50 questions, one
-   section per screen, every one skippable. The compiler (Personas.compileBuilder)
-   is deterministic and never invents a fact — a skipped question just leaves
-   that part of her unwritten, which is the entire anti-hallucination bargain.
-   Answers autosave to localStorage on every keystroke; reopening the builder
-   resumes the draft. */
-
-const BUILDER_DRAFT_KEY = 'frenz-builder-draft';
-
-const BUILDER_SECTIONS = [
-  { title: 'Basics', blurb: 'Who she is and where you two stand. Skip anything — a skipped answer is left out, never made up.', questions: [
-    { id: 'b_name', label: 'Her name', type: 'text', ph: 'e.g. Maya' },
-    { id: 'b_age', label: 'Her age', type: 'number' },
-    { id: 'b_rel', label: 'What is she to you?', type: 'choice', options: [['friend', 'Friend'], ['close_friend', 'Close friend'], ['romantic', 'Romantic interest']] },
-    { id: 'b_met', label: 'How did you two meet? The actual incident, in your own words', type: 'textarea', ph: 'e.g. She rear-ended my car in the gym parking lot and left a note that was 80% apology, 20% joke.' },
-    { id: 'b_known', label: 'How long have you known each other?', type: 'text', ph: 'e.g. about three years' },
-    { id: 'b_freq', label: 'How often do you two talk?', type: 'text', ph: 'e.g. most days, in bursts' },
-    { id: 'b_first', label: 'Who usually texts first?', type: 'choice', options: [['her', 'Usually her'], ['you', 'Usually you'], ['even', 'About even']] }
-  ] },
-  { title: 'Looks', blurb: 'Used only for the photos she sends. Her face is never shown — describe her neck-down (build, hair, body markers), and it stays the same person every photo.', questions: [
-    { id: 'l_build', label: 'Height and build', type: 'text', ph: 'e.g. tall and soft-curvy' },
-    { id: 'l_hair', label: 'Her hair', type: 'text', ph: 'e.g. long dark brown, usually in a claw clip' },
-    { id: 'l_marks', label: 'Body identity markers — tattoos, freckles on her shoulders, scars, jewelry she never takes off', type: 'textarea' },
-    { id: 'l_home', label: 'What she wears around the house', type: 'text' },
-    { id: 'l_out', label: 'What she wears going out', type: 'text' },
-    { id: 'l_proud', label: "One thing about her look she's proud of — or self-conscious about", type: 'text' }
-  ] },
-  { title: 'Texting voice', blurb: 'How her messages actually read. This is the strongest anti-clone signal she has.', questions: [
-    { id: 'v_caps', label: 'Capitalization and punctuation', type: 'choice', options: [['lowercase', 'all lowercase, punctuation optional'], ['sentence', 'Sentence case, casual punctuation'], ['punctuated', 'Properly punctuated and capitalized']] },
-    { id: 'v_rhythm', label: 'Bubble rhythm', type: 'choice', options: [['one', 'One-liners'], ['burst', 'Bursts of 2-3 bubbles'], ['para', 'Paragraphs']] },
-    { id: 'v_sig', label: 'Her ONE signature marker', type: 'text', ph: 'e.g. keysmashes, rates things out of ten, parenthetical asides (like this), a specific emoji' },
-    { id: 'v_laugh', label: 'Her laugh, in text', type: 'text', ph: 'e.g. "LMAOOO", a single "lol", 😭, dead silence then "im crying"' },
-    { id: 'v_night', label: 'How she says goodnight', type: 'text' },
-    { id: 'v_drunk', label: "How her texting changes when she's been drinking", type: 'text' },
-    { id: 'v_sincere', label: 'Her sincere-tell — how you can tell she actually means it', type: 'text', ph: 'e.g. the jokes stop and she types full sentences' },
-    { id: 'v_typos', label: 'Typo habits', type: 'text', ph: 'e.g. never fixes them / corrects with * a message late' }
-  ] },
-  { title: 'Personality & moods', blurb: 'Who she is on a good day, a bad day, and lately.', questions: [
-    { id: 'p_traits', label: 'Three traits that define her', type: 'text', ph: 'e.g. dry, loyal, stubborn' },
-    { id: 'p_happy', label: "What she's like when she's happy", type: 'text' },
-    { id: 'p_stress', label: "What she's like stressed", type: 'text' },
-    { id: 'p_annoyed', label: "What she does when she's annoyed with YOU", type: 'text', ph: 'e.g. one-word replies until you notice' },
-    { id: 'p_mood', label: 'Her mood lately — and why', type: 'text' },
-    { id: 'p_cheer', label: 'What reliably cheers her up', type: 'text' },
-    { id: 'p_peeve', label: 'A pet peeve', type: 'text' },
-    { id: 'p_never', label: "Something she'd never admit publicly", type: 'textarea' }
-  ] },
-  { title: 'Her world', blurb: 'The life that keeps running when you two are not texting. Names matter — she will never contradict them.', questions: [
-    { id: 'w_people', label: 'People in her life, by name — family, roommates, pets', type: 'textarea', ph: 'e.g. her sister Ro, roommate Dana, an ancient cat named Bug' },
-    { id: 'w_job', label: 'Her job or school — and how she feels about it', type: 'textarea' },
-    { id: 'w_place', label: 'Her place', type: 'text', ph: 'e.g. a third-floor walkup with a fire-escape garden' },
-    { id: 'w_bff', label: 'Her best friend', type: 'text' },
-    { id: 'w_anchors', label: 'Weekly anchors — shifts, practices, classes, standing plans', type: 'textarea', ph: 'e.g. Tuesday closing shifts, Sunday dinner at her mom\'s' },
-    { id: 'w_story', label: 'An ongoing storyline in her life right now', type: 'textarea', ph: 'e.g. slowly losing the war with her landlord over the broken heater' },
-    { id: 'w_logi', label: 'Everyday logistics color — car, money, commute', type: 'text' }
-  ] },
-  { title: 'Interests', blurb: 'What she actually cares about, not a dating-profile list.', questions: [
-    { id: 'i_three', label: "Three things she's genuinely into", type: 'text' },
-    { id: 'i_over', label: 'The one she overshares about', type: 'text' },
-    { id: 'i_media', label: 'What she watches / reads / listens to', type: 'text' },
-    { id: 'i_evening', label: 'How she spends a free evening', type: 'textarea', ph: 'e.g. wine and trash TV, sometimes baking at midnight' },
-    { id: 'i_bad', label: 'Something she loves but is bad at', type: 'text' }
-  ] },
-  { title: 'Your history together', blurb: 'Shared memories become durable from message one — she will treat them as things you both lived, never recap them at you.', questions: [
-    { id: 'h_mem1', label: 'A favorite memory of you two — what happened, roughly when', type: 'textarea' },
-    { id: 'h_mem2', label: 'A second memory', type: 'textarea' },
-    { id: 'h_joke', label: 'An inside joke or phrase you two use', type: 'text' },
-    { id: 'h_last', label: 'The last thing you did together', type: 'text' },
-    { id: 'h_open', label: 'Anything unresolved or charged between you right now?', type: 'textarea' }
-  ] },
-  { title: 'Under the surface', blurb: 'The private layer. She acts shaped by these — she never announces them.', questions: [
-    { id: 'u_noticed', label: "Things you've noticed about her that she doesn't know you've noticed", type: 'textarea' },
-    { id: 'u_feels', label: 'What you think she secretly feels about you but would never say', type: 'textarea', hint: "This becomes her private unspoken side — it colors her tone and choices; she will never state it outright." },
-    { id: 'u_avoid', label: 'A topic she avoids', type: 'text' },
-    { id: 'u_gone', label: "How she'd react if you disappeared for a week", type: 'text' }
-  ] }
-];
-
-/* The review step shows every compiled field editable; hand-edits are final. */
-const BUILDER_REVIEW_FIELDS = [
-  ['plist', 'Core traits — the binding short list', 2, 'text'],
-  ['style', 'Texting style — the FIRST sentence is the one that binds her voice', 3, 'text'],
-  ['personality', 'Personality', 4, 'text'],
-  ['interests', 'Life & interests', 4, 'text'],
-  ['appearance', 'Appearance — photos only, her face is never shown', 3, 'text'],
-  ['backstory', 'How you know each other', 3, 'text'],
-  ['greeting', 'Her opening texts — one bubble per line', 2, 'lines'],
-  ['beats', 'Life beats — things that happen in her world, one per line', 5, 'lines'],
-  ['textures', 'Her evenings — scenery lines, one per line', 3, 'lines'],
-  ['mood', 'Her mood as the thread opens', 1, 'text'],
-  ['unsaidSeed', 'On her mind, unsaid — shapes her, never spoken', 2, 'text'],
-  ['significantSeed', 'The charged thing between you (leave empty for none)', 1, 'text']
-];
-
-let builderStep = 0;           // 0..7 = sections, 8 = review
-let builderAnswers = {};
-let builderCompiled = null;    // the compiled template while the review is open
-
-function builderSaveDraft() {
-  try { localStorage.setItem(BUILDER_DRAFT_KEY, JSON.stringify({ answers: builderAnswers, step: builderStep })); } catch (e) { /* storage full: the session copy still works */ }
-}
-
-function builderLoadDraft() {
-  try {
-    const d = JSON.parse(localStorage.getItem(BUILDER_DRAFT_KEY) || 'null');
-    if (d && d.answers && typeof d.answers === 'object') {
-      builderAnswers = d.answers;
-      builderStep = Math.min(Number(d.step) || 0, BUILDER_SECTIONS.length - 1);
-      return true;
-    }
-  } catch (e) { /* corrupt draft: start clean */ }
-  return false;
-}
-
-function openBuilder() {
-  builderAnswers = {};
-  builderStep = 0;
-  builderCompiled = null;
-  if (builderLoadDraft()) toast('Draft restored — pick up where you left off.');
-  renderBuilderStep();
-  showView('view-builder');
-}
-
-function renderBuilderStep() {
-  builderCompiled = null;
-  const total = BUILDER_SECTIONS.length;
-  const sec = BUILDER_SECTIONS[builderStep];
-  $('#builder-step').textContent = 'Section ' + (builderStep + 1) + ' of ' + total + ' — ' + sec.title;
-  $('#builder-bar-fill').style.width = Math.round(((builderStep) / (total + 1)) * 100) + '%';
-  $('#builder-blurb').textContent = sec.blurb;
-  const body = $('#builder-body');
-  body.innerHTML = '';
-  for (const q of sec.questions) {
-    const label = document.createElement('label');
-    label.textContent = q.label;
-    let input;
-    if (q.type === 'choice') {
-      input = document.createElement('select');
-      const skip = document.createElement('option');
-      skip.value = ''; skip.textContent = '— skip —';
-      input.appendChild(skip);
-      for (const [val, text] of q.options) {
-        const o = document.createElement('option');
-        o.value = val; o.textContent = text;
-        input.appendChild(o);
-      }
-    } else if (q.type === 'textarea') {
-      input = document.createElement('textarea');
-      input.rows = 3;
-    } else {
-      input = document.createElement('input');
-      input.type = q.type === 'number' ? 'number' : 'text';
-      if (q.type === 'number') { input.min = 18; input.max = 99; }
-    }
-    if (q.ph) input.placeholder = q.ph;
-    input.value = builderAnswers[q.id] != null ? builderAnswers[q.id] : '';
-    input.addEventListener('input', () => {
-      builderAnswers[q.id] = input.value;
-      builderSaveDraft();
-    });
-    label.appendChild(input);
-    if (q.hint) {
-      const s = document.createElement('small');
-      s.textContent = q.hint;
-      label.appendChild(s);
-    }
-    body.appendChild(label);
-  }
-  $('#btn-builder-prev').textContent = builderStep === 0 ? '← Gallery' : '← Back';
-  $('#btn-builder-next').textContent = builderStep === total - 1 ? 'Review her →' : 'Next →';
-  $('#builder-form').scrollTop = 0;
-}
-
-function renderBuilderReview() {
-  const tpl = Personas.compileBuilder(builderAnswers);
-  builderCompiled = tpl;
-  $('#builder-step').textContent = 'Review — your words, compiled';
-  $('#builder-bar-fill').style.width = Math.round((BUILDER_SECTIONS.length / (BUILDER_SECTIONS.length + 1)) * 100) + '%';
-  $('#builder-blurb').textContent = 'Everything below was compiled from your answers and nothing else. Edit any field — your edits are final. Sliders come next.';
-  const body = $('#builder-body');
-  body.innerHTML = '';
-  // sanitizer + dedupe notes first, so the user sees WHY a phrase moved
-  for (const w of tpl.warnings || []) {
-    const div = document.createElement('div');
-    div.className = 'builder-warn';
-    div.textContent = w;
-    body.appendChild(div);
-  }
-  for (const [field, labelText, rows, kind] of BUILDER_REVIEW_FIELDS) {
-    const label = document.createElement('label');
-    label.textContent = labelText;
-    const ta = document.createElement('textarea');
-    ta.rows = rows;
-    ta.dataset.field = field;
-    ta.dataset.kind = kind;
-    const v = tpl[field];
-    ta.value = kind === 'lines' ? (Array.isArray(v) ? v.join('\n') : '') : (v || '');
-    label.appendChild(ta);
-    body.appendChild(label);
-  }
-  $('#btn-builder-prev').textContent = '← Back to questions';
-  $('#btn-builder-next').textContent = 'Looks right — set her sliders';
-  $('#builder-form').scrollTop = 0;
-}
-
-/* Hand-edits from the review textareas are the final say. */
-function builderApplyReviewEdits() {
-  const tpl = builderCompiled;
-  document.querySelectorAll('#builder-body textarea[data-field]').forEach(ta => {
-    const field = ta.dataset.field;
-    if (ta.dataset.kind === 'lines') {
-      tpl[field] = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
-    } else {
-      tpl[field] = ta.value.trim();
-    }
-  });
-  if (!tpl.significantSeed) tpl.significantSeed = null;
-  if (!tpl.mood) tpl.mood = '';
-  return tpl;
-}
-
-function builderNext() {
-  if (builderStep < BUILDER_SECTIONS.length - 1) {
-    builderStep++;
-    builderSaveDraft();
-    renderBuilderStep();
-  } else if (builderStep === BUILDER_SECTIONS.length - 1) {
-    builderStep = BUILDER_SECTIONS.length;
-    renderBuilderReview();
-  } else {
-    // review accepted: hand the compiled template to the EXISTING customize
-    // flow — sliders show the derived defaults, and Start conversation runs
-    // the same startConversation as every other template. The draft stays
-    // until she is actually created, so backing out loses nothing.
-    const tpl = builderApplyReviewEdits();
-    openCustomize(tpl);
-  }
-}
-
-function builderPrev() {
-  if (builderStep === 0) { showView('view-gallery'); return; }
-  if (builderStep >= BUILDER_SECTIONS.length) {
-    builderStep = BUILDER_SECTIONS.length - 1;
-    renderBuilderStep();
-    return;
-  }
-  builderStep--;
-  builderSaveDraft();
-  renderBuilderStep();
-}
-
-function builderRestart() {
-  if (!confirm('Clear the whole draft and start the interview over?')) return;
-  localStorage.removeItem(BUILDER_DRAFT_KEY);
-  builderAnswers = {};
-  builderStep = 0;
-  builderCompiled = null;
-  renderBuilderStep();
 }
 
 /* ---------------- friend editor ---------------- */
@@ -662,11 +385,6 @@ async function saveFriendFromForm(e) {
     // swap silently destroyed reveals, sliders, and greetings on every edit.
     Object.assign(friend.profile, profile);
   } else {
-    // Hand-built in the editor: stamped 'custom' so template upgrade rules
-    // and templateRev refreshes can never mistake her for a gallery persona,
-    // whatever name she was given. (Edits above MERGE, so an existing
-    // friend's template stamp survives the editor untouched.)
-    profile.template = 'custom';
     friend = {
       id: uid(),
       profile,
@@ -901,10 +619,7 @@ async function openRelationship() {
 let lastSweepAt = 0;
 const SWEEP_COOLDOWN_MS = 15 * 60000;
 async function sweepOpeners(force) {
-  // App time, not wall time: every other clock in the opener system drinks
-  // from _now(), and a cooldown ticking in a different timeline than the
-  // dice it gates is the kind of skew that only shows up around time-skips.
-  const nowT = ClaudeAPI._now();
+  const nowT = Date.now();
   if (!force && nowT - lastSweepAt < SWEEP_COOLDOWN_MS) return;
   lastSweepAt = nowT;
   let friends = [];
@@ -963,61 +678,20 @@ let openerFlight = null;
       foreground ones). */
 const openerBusy = new Set();
 
-/* Absence cooling, priced ONCE per silence. Both entry points — his send
-   and her opener — call this, so cooling no longer depends on who texts
-   first; the drift anchor on the friend records how far the silence has
-   already been charged, because the opener path can cool-and-save without
-   producing a message, and his later send must not charge the same days
-   again. The anchor lives on the friend root (state is rebuilt every turn).
-   It goes in the ledger like any other movement: an invisible drift made
-   the graph disagree with the meter. */
-function coolForAbsence(friend, lastTs) {
-  if (!lastTs || !friend.state) return;
-  const now = ClaudeAPI._now();
-  const from = Math.max(lastTs, Number(friend.driftAnchor) || 0);
-  const gap = now - from;
-  if (gap < 2 * 86400000) return;
-  const beforeCloseness = Number(friend.state.closeness) || 0;
-  const cooled = ClaudeAPI.applyAbsenceDrift(friend, gap);
-  friend.driftAnchor = now;
-  const cooledCloseness = beforeCloseness - (Number(friend.state.closeness) || 0);
-  if (cooled || cooledCloseness) {
-    DB.addEvent({
-      friendId: friend.id, ts: now, reason: 'absence — days without a word', confidence: 1,
-      deltas: { comfort: -cooled, closeness: -cooledCloseness, attraction: 0 },
-      applied: { comfort: -cooled, closeness: -cooledCloseness, attraction: 0 },
-      tension: Number(friend.state.tension) || 0,
-      after: { comfort: friend.state.comfort, closeness: friend.state.closeness, attraction: friend.state.attraction, tension: Number(friend.state.tension) || 0 }
-    }).catch(() => {});
-  }
-}
-
 async function maybeOpener(friend, background) {
   if (sending && !background) return;
   if (openerBusy.has(friend.id)) return;
   openerBusy.add(friend.id);
-  const flight = { cancelled: false, friendId: friend.id };
+  const flight = { cancelled: false };
   if (!background) openerFlight = flight;
-  let marked = null;  // the day-roll stamp, so a transport error can undo it
-  let landed = 0;     // bubbles that actually reached the thread
   try {
     friend = (await DB.getFriend(friend.id)) || friend;
     const msgs = await DB.getMessages(friend.id);
     const last = msgs[msgs.length - 1];
     if (!ClaudeAPI.openerDue(friend, msgs)) return;
-    // Cooling must not depend on who texts first: the same absence drift
-    // his send applies runs here too, before the prompt is built, so her
-    // opener's tone reflects the silence she noticed.
-    coolForAbsence(friend, last.ts);
-    // mark first so a slow request can't double-fire — but remember what we
-    // overwrote: a transport error has to be able to hand the roll back
-    marked = {
-      at: ClaudeAPI._now(),
-      prevDay: friend.lastOpenerDay,
-      prevAt: friend.lastOpenerAt
-    };
-    friend.lastOpenerDay = ClaudeAPI._dayKey(marked.at);
-    friend.lastOpenerAt = marked.at; // second-surprise spacing reads this
+    // mark first so a slow request can't double-fire
+    friend.lastOpenerDay = ClaudeAPI._dayKey(ClaudeAPI._now());
+    friend.lastOpenerAt = ClaudeAPI._now(); // second-surprise spacing reads this
     friend.vibeSeed = ClaudeAPI._now() % 1e9; // openers always start a fresh burst
     friend.burstStart = ClaudeAPI._now();
     await DB.saveFriend(friend);
@@ -1044,23 +718,14 @@ async function maybeOpener(friend, background) {
     const freshMsgs = await DB.getMessages(friend.id);
     const lastFresh = freshMsgs[freshMsgs.length - 1];
     if (freshMsgs.length !== msgs.length || (lastFresh && last && lastFresh.ts !== last.ts)) return;
-    // A content refusal is the PROVIDER'S decision (invariant 18): distinct
-    // from silence, never persisted as sent, and counted in the ledger so
-    // the archive can finally see the class. The day stays burned — she
-    // doesn't re-ask the provider to text first today.
-    if (result.refusal) {
-      DB.addEvent({ friendId: friend.id, ts: ClaudeAPI._now(), kind: 'refusal', path: 'opener' }).catch(() => {});
-      return;
-    }
     // The echo guard may decide the opener had nothing new to say (every
     // bubble restated a finished topic) — on this path silence is a real
-    // outcome, not an error: she simply didn't text first today. NOTHING is
-    // saved — not even the life beat the nudge rolled: the roll only lives
-    // in this in-memory copy, so returning here is what keeps a beat from
-    // being consumed (and its 21-day slot burned) by a message that never
-    // shipped. The day mark was already persisted above, which is all this
-    // outcome leaves behind.
-    if (!result.bubbles || !result.bubbles.length) return;
+    // outcome, not an error: she simply didn't text first today. Nothing is
+    // saved, nothing is cleared; the day was already marked above.
+    if (!result.bubbles || !result.bubbles.length) {
+      await DB.saveFriend(friend);   // keep the beat log the nudge may have rolled
+      return;
+    }
     // She texted while he was away, not the instant he opened the app: place
     // the message at a believable past moment inside her waking hours since
     // the gap began. Nothing else in the app makes her feel like a person with
@@ -1089,12 +754,6 @@ async function maybeOpener(friend, background) {
         if (p) openerPreviews.push(p);
       }
     }
-    landed = openerPreviews.length;
-    // A turn whose ONLY content was dropped (a background opener that was
-    // all photo markers, or a foreground one whose photos all failed) is a
-    // skip, not a message: applying its state delta or clearing unresolved
-    // would credit a conversation that never happened.
-    if (!landed) return;
     if (result.state) {
       const outcome = ClaudeAPI.applyStateDeltas(friend, result.state, { history, gapMs: ClaudeAPI._now() - last.ts });
       friend.state = outcome.state;
@@ -1112,31 +771,8 @@ async function maybeOpener(friend, background) {
       }
     }
     await DB.saveFriend(friend);
-    // Keep the module global fresh: this save wrote opener bookkeeping,
-    // state and memories that the stale `currentFriend` object would
-    // silently wipe on his next whole-record save (the lost-update hole).
-    if (currentFriend && currentFriend.id === friend.id) currentFriend = friend;
     renderFriendsList();
-  } catch {
-    // A transport error is an OUTAGE, not an outcome (invariant 18): the
-    // request died before the provider ever decided anything, so the day's
-    // roll must survive for a later sweep to retry — silently burning it
-    // turned every flaky morning into "she never texts first". Only when
-    // nothing landed: once a bubble is in the thread, the opener happened.
-    // The un-mark goes through a FRESH read and only if our own stamp is
-    // still in place, so it can never clobber work a parallel path saved.
-    if (marked && !landed) {
-      try {
-        const fresh = await DB.getFriend(friend.id);
-        if (fresh && fresh.lastOpenerAt === marked.at) {
-          fresh.lastOpenerDay = marked.prevDay;
-          fresh.lastOpenerAt = marked.prevAt;
-          await DB.saveFriend(fresh);
-          if (currentFriend && currentFriend.id === fresh.id) currentFriend = fresh;
-        }
-      } catch (_) { /* she just didn't text first today */ }
-    }
-  } finally {
+  } catch { /* silent — she just didn't text first today */ } finally {
     openerBusy.delete(friend.id);
     if (openerFlight === flight) openerFlight = null;
     // If the user trumped this opener, his send owns the typing indicator
@@ -1309,10 +945,11 @@ async function deliverBubble(friend, b, atTs) {
     }).catch(() => {});
   };
   try {
+    // stable per-friend seed: her photos lean toward the same body and the
+    // same rooms instead of rerolling a stranger every time
     const dataUrl = await ClaudeAPI.generateImage(entry, desc, {
-      // who she is — the appearance sheet is the identity anchor (no image
-      // route here takes a seed; consistency comes from the sheet plus the
-      // faceless framings)
+      seed: ClaudeAPI._hash32(String(friend.id) + '|photolook') % 1e9,
+      // who she is, so every photo is the same woman instead of a new one
       appearance: friend.profile.appearance || '',
       // the photo tracks where the thread actually is, not a fixed neutral
       heat: ClaudeAPI._imageHeat(friend)
@@ -1428,10 +1065,7 @@ async function sendMessage() {
   }
 
   // Her in-flight opener yields to him: discard it and let his send run.
-  // Scoped to THIS thread — a flight drafting for a different friend is not
-  // in his way, and cancelling it threw away an opener his send could never
-  // have collided with (lock 3 already protects the cross-thread case).
-  if (openerFlight && openerFlight.friendId === currentFriend.id) {
+  if (openerFlight) {
     openerFlight.cancelled = true;
     openerFlight = null;
     $('#typing').classList.add('hidden');
@@ -1448,21 +1082,25 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
 
-  // Re-read the record at the send boundary. The opener path re-reads and
-  // saves its own fresh copy, so the module global can be STALE here — and
-  // a whole-record save of the stale object at the end of this send would
-  // silently wipe the opener's bookkeeping, state and memories (the
-  // lost-update that reopened the double-opener hole from a direction the
-  // three delivery locks don't cover).
-  const friend = (await DB.getFriend(currentFriend.id)) || currentFriend;
-  currentFriend = friend;
+  const friend = currentFriend;
   const priorMsgs = await DB.getMessages(friend.id);
   const lastTs = priorMsgs.length ? priorMsgs[priorMsgs.length - 1].ts : null;
 
-  // a multi-day silence cools her a little before we even ask — she noticed
-  // the absence. Shared with the opener path: cooling can't depend on who
-  // texts first.
-  coolForAbsence(friend, lastTs);
+  // a multi-day silence cools her comfort a little before we even ask —
+  // she noticed the absence. It goes in the ledger like any other movement:
+  // an invisible drift made the graph disagree with the meter.
+  if (lastTs) {
+    const cooled = ClaudeAPI.applyAbsenceDrift(friend, ClaudeAPI._now() - lastTs);
+    if (cooled) {
+      DB.addEvent({
+        friendId: friend.id, ts: ClaudeAPI._now(), reason: 'absence — days without a word', confidence: 1,
+        deltas: { comfort: -cooled, closeness: 0, attraction: 0 },
+        applied: { comfort: -cooled, closeness: 0, attraction: 0 },
+        tension: Number(friend.state.tension) || 0,
+        after: { comfort: friend.state.comfort, closeness: friend.state.closeness, attraction: friend.state.attraction, tension: Number(friend.state.tension) || 0 }
+      }).catch(() => {});
+    }
+  }
 
   // a fresh conversation burst rerolls tonight's dice — same afternoon,
   // different sit-down, different her. burstStart anchors the energy's
@@ -1589,10 +1227,6 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
     if (result.refusal) {
       // Not persisted — a hiccup here shouldn't leave a permanent scar in the
       // conversation or in their memory of you. Show a transient note instead.
-      // But COUNT it (invariant 18): refusals are the provider's decisions,
-      // and an archive that can't see them can't tell a refusing model from
-      // a silent one.
-      DB.addEvent({ friendId: friend.id, ts: ClaudeAPI._now(), kind: 'refusal', path: 'reply' }).catch(() => {});
       $('#typing').classList.add('hidden');
       const note = document.createElement('div');
       note.className = 'msg sys transient-note';
@@ -1669,13 +1303,6 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
     friend.lastActivity = ClaudeAPI._now();
     refreshTails();
     friend.lastPreview = previews.length ? previews[previews.length - 1] : fallbackPreview;
-    // Archival compaction (opt-in; settings.compactArchives, OFF by default
-    // — memories are the long-arc carrier and a wrong retirement is
-    // invisible later, so the conservative compactor stays behind a flag
-    // until real archives prove it safe).
-    if (settings && settings.compactArchives) {
-      try { ClaudeAPI.compactArchives(friend); } catch (_) { /* compaction must never break a send */ }
-    }
     await DB.saveFriend(friend);
     renderFriendsList();
 
@@ -1981,7 +1608,7 @@ function openEntryEditor(id) {
       : 'grok-imagine-image (≈2¢/photo) sends her pictures through xAI — paste an xAI key below and your chat keeps running on Bedrock. A Bedrock image model ID like amazon.nova-canvas-v1:0 also works if your account has access to it. Clear the field to turn photos off.';
   }
   $('#e-modelhint').textContent = isBedrock
-    ? 'The suggested Grok ID is listed. For anything else on Bedrock — GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'
+    ? 'Claude models are listed. For anything else on Bedrock — Grok, GLM, Kimi — open the model in the AWS console and paste its Model ID here exactly.'
     : 'Fetched live from the provider, so the list is never stale.';
   if (isBedrock) {
     $('#e-region').value = e.region || 'us-east-1';
@@ -2168,12 +1795,7 @@ async function upgradeTemplateFriends() {
   }
   for (const f of friends) {
     let changed = Personas.upgradeProfile(f.profile);
-    // Template identity: the name match is the historical key, and a stamp
-    // (profile.template, set at creation) can only VETO it — a stamped
-    // custom friend named "Bre" must not inherit Bre's rewrites, while an
-    // unstamped legacy friend keeps exactly the old behavior.
-    const byName = Personas.templates.find(x => x.name === f.profile.name);
-    const tpl = (f.profile.template && byName && f.profile.template !== byName.id) ? null : byName;
+    const tpl = Personas.templates.find(x => x.name === f.profile.name);
     // Reveals sync from the template wholesale: they are not user-editable
     // (no editor field), so a stale copy is pure loss — and substring upgrade
     // rules can't reach inside an array of objects, which is exactly how a
@@ -2198,15 +1820,6 @@ async function upgradeTemplateFriends() {
     // anything while the relationship is still inside the opening window,
     // so reaching existing early-stage friends is the whole point.
     if (tpl && tpl.opening && !f.profile.opening) { f.profile.opening = tpl.opening; changed = true; }
-    // Unsaid seeds are STATE, not profile — mirror creation seeding
-    // (state.unsaid = t.unsaidSeed) for friends still inside the opening
-    // exchange window: the seed is the aftermath's inner voice, and a thread
-    // past the window has its own unsaid life that must never be overwritten.
-    if (tpl && tpl.unsaidSeed && f.state && !f.state.unsaid) {
-      const win = (tpl.opening && tpl.opening.until) || 40;
-      const msgCount = (await DB.getMessages(f.id)).length;
-      if (msgCount < win) { f.state.unsaid = tpl.unsaidSeed; changed = true; }
-    }
     // Significance seed: stamped at the friend's creation time, so a thread
     // already weeks past its origin event falls outside the reckoning
     // window and nothing changes for it.
@@ -2240,11 +1853,24 @@ async function upgradeTemplateFriends() {
       const earned = (f.memories || []).filter(m => m && !m.pinned && (m.ts || 0) > born + 60000);
       f.memories = (tpl.seedMemories || []).map(m => ClaudeAPI._normMemory(
         Object.assign({ ts: born || ClaudeAPI._now(), lastAccessed: ClaudeAPI._now() }, m))).concat(earned);
-      // A wrong template SEED gets corrected in live state exactly once —
-      // the logic (and its rev-comparison story) lives in
-      // Personas.applySeedFix, shared with the verify harness. Must run
-      // BEFORE templateRev is stamped below, or the fix never fires.
-      Personas.applySeedFix(f, tpl);
+      // When a template's SEED was wrong, existing friends keep running on it
+      // forever — Samantha and Tay were seeded as though Jon were close to
+      // them, and he is not related to either. `seedFix` is the correction
+      // stated outright by the template rather than inferred from a slider
+      // the user may have set themselves: shift live state by exactly that
+      // much, so everything earned on top of the bad seed survives.
+      const fix = tpl.seedFix;
+      // "The friend's rev is still below the fix's rev" — not "the fix rev
+      // equals the template's". The old equality check meant a template that
+      // moved past the fix's revision (rev 8) silently skipped the rev-7
+      // state correction for any install upgrading across both at once.
+      if (fix && f.state && (fix.rev || 0) > (f.profile.templateRev || 0)) {
+        ['closeness', 'comfort', 'attraction'].forEach(k => {
+          if (typeof fix[k] === 'number') {
+            f.state[k] = Math.max(0, Math.min(100, (Number(f.state[k]) || 0) + fix[k]));
+          }
+        });
+      }
       f.profile.templateRev = tpl.templateRev;
       changed = true;
     }
@@ -2284,7 +1910,7 @@ async function upgradeTemplateFriends() {
     // day-one numbers no matter what actually happened between them. Friends
     // below today's seed get lifted to it — never lowered, never repeated.
     if (!f.stateReseeded) {
-      const t = tpl; // same identity rule as above — a stamp vetoes the name match
+      const t = Personas.templates.find(x => x.name === f.profile.name);
       if (t && t.sliders && f.state && (Number(f.state.attraction) || 0) < t.sliders.attraction) {
         f.state.attraction = t.sliders.attraction;
       }
@@ -2327,10 +1953,6 @@ function init() {
   $('#btn-gallery-back').addEventListener('click', () => showView('view-friends'));
   $('#btn-customize-back').addEventListener('click', () => showView('view-gallery'));
   $('#customize-form').addEventListener('submit', startConversation);
-  $('#btn-builder-back').addEventListener('click', () => showView('view-gallery'));
-  $('#btn-builder-prev').addEventListener('click', builderPrev);
-  $('#btn-builder-next').addEventListener('click', builderNext);
-  $('#btn-builder-restart').addEventListener('click', builderRestart);
   $('#btn-editor-back').addEventListener('click', () => {
     if (editingId && currentFriend) { openChat(currentFriend.id); }
     else showView('view-friends');

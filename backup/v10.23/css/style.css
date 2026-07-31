@@ -204,13 +204,6 @@ details.tune label { margin-top: 12px; }
 .muted { color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
 .muted.small { font-size: 0.78rem; }
 
-/* ---------- guided builder ---------- */
-.builder-bar { height: 4px; background: var(--bg3); flex: none; }
-.builder-bar-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.2s; }
-.builder-step { color: var(--muted); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
-#builder-body { display: flex; flex-direction: column; gap: 16px; }
-.builder-warn { border: 1px solid #ffb454; border-radius: 12px; padding: 10px 12px; color: #ffb454; font-size: 0.82rem; line-height: 1.5; }
-
 .color-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .color-dot { width: 34px; height: 34px; border-radius: 50%; cursor: pointer; border: 3px solid transparent; }
 .color-dot.selected { border-color: #fff; }

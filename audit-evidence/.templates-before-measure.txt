@@ -1,0 +1,41 @@
+== example-bank routing ==
+  kelly: LOWERCASE
+  bre: LOWERCASE
+  anna: LOWERCASE
+  samantha: LOWERCASE
+  tay: PUNCTUATED
+  bank lengths: 8 8
+
+== shared 4-grams (plist vs interests / style / appearance) ==
+  kelly plist<->style: ["then snaps back to"]
+  anna plist<->style: ["goes short and plain"]
+  samantha plist<->interests: ["engaged to trevor toni","to trevor toni s","trevor toni s brother","toni is her best","is her best friend","her best friend and"]
+  tay plist<->interests: ["married to taylor toni","to taylor toni s","taylor toni s brother"]
+
+== kid-content classifier (content words over whole beat text) ==
+  kelly: beats 0/12 []  textures 0/6 []
+  bre: beats 1/12 [5]  textures 0/6 []
+  anna: beats 2/12 [1,10]  textures 2/6 [1,4]
+  samantha: beats 8/12 [1,2,3,4,5,6,7,12]  textures 3/8 [1,3,8]
+  tay: beats 0/12 []  textures 0/6 []
+
+== appearance sheets ==
+  kelly: 166 chars  face:face  mod:-
+  bre: 222 chars  face:-  mod:hang
+  anna: 298 chars  face:-  mod:-
+  samantha: 279 chars  face:-  mod:-
+  tay: 144 chars  face:-  mod:-
+
+== style sentence 1 ==
+  kelly: Lowercase and fast, one punchy line at a time — she does not do warm-ups, paragraphs, or three bubbles where one will land
+  bre: Rapid-fire fragments in bursts of three or four, no punctuation, keysmashes and stretched words when something is actually funny — a single tidy sentence from her means something is wrong
+  anna: Sentence case and easygoing, two or three medium bubbles when she has something to tell, with her trademark parenthetical asides (like this) tucked into half her messages
+  samantha: Lowercase and warm, one or two short bubbles at a time, with stretched letters and a string of laughing emoji when something actually lands
+  tay: Properly punctuated and capitalized but quick and enthusiastic — complete sentences that arrive in excited volleys of two or three when she is on a tangent, and one perfectly still sentence when something actually matters
+
+== fields: opening/unsaidSeed/seedMemories ==
+  kelly: opening=false unsaidSeed=false seedMemories=2 templateRev=7
+  bre: opening=false unsaidSeed=false seedMemories=1 templateRev=11
+  anna: opening=false unsaidSeed=false seedMemories=2 templateRev=6
+  samantha: opening=true unsaidSeed=true seedMemories=2 templateRev=11
+  tay: opening=false unsaidSeed=false seedMemories=2 templateRev=10

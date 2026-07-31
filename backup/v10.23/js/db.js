@@ -43,7 +43,7 @@ const DB = {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(store, mode);
       const result = fn(tx.objectStore(store));
-      tx.oncomplete = () => resolve(result.result);
+      tx.oncomplete = () => resolve(result._value !== undefined ? result._value : result.result);
       tx.onerror = () => reject(tx.error);
     });
   },
@@ -56,13 +56,6 @@ const DB = {
     await this._tx('friends', 'readwrite', s => s.delete(id));
     await this._deleteByFriend('messages', id);
     await this._deleteByFriend('events', id); // her ledger goes with her
-    // A parked in-flight send goes with her too — a stranded outbox record
-    // would otherwise resurrect a deleted friend's reply on the next boot.
-    // No byFriend index on this store; the scan is at most a handful of rows.
-    const parked = await this.listOutbox();
-    for (const r of parked) {
-      if (r && r.friendId === id) await this.clearOutbox(r.id);
-    }
   },
 
   // ---- messages ----
@@ -120,28 +113,13 @@ const DB = {
     if (!data || data.app !== 'frenz' || !Array.isArray(data.friends)) {
       throw new Error('Not a valid frenz backup file');
     }
-    for (const f of data.friends) await this.saveFriend(f); // put() is idempotent by id
-    // Messages and events autoIncrement, so a re-imported backup used to
-    // duplicate every one of them — the same conversation twice, interleaved.
-    // Identity is by content instead: skip a record that already exists with
-    // the same friend, timestamp, author, and text (photo description folded
-    // in so two captionless photos in one second stay distinct).
-    const msgKey = m => [m.friendId, m.ts, m.role, m.text, m.photoDesc || ''].join('\u0000');
-    const haveMsgs = new Set((await this._getAll('messages')).map(msgKey));
+    for (const f of data.friends) await this.saveFriend(f);
     for (const m of (data.messages || [])) {
       const { id, ...rest } = m; // let autoIncrement assign new ids
-      const key = msgKey(rest);
-      if (haveMsgs.has(key)) continue;
-      haveMsgs.add(key);
       await this.addMessage(rest);
     }
-    const evKey = ev => [ev.friendId, ev.ts, ev.kind].join('\u0000');
-    const haveEvs = new Set((await this._getAll('events')).map(evKey));
     for (const ev of (data.events || [])) {
       const { id, ...rest } = ev;
-      const key = evKey(rest);
-      if (haveEvs.has(key)) continue;
-      haveEvs.add(key);
       await this.addEvent(rest);
     }
   },
@@ -149,13 +127,10 @@ const DB = {
   async wipe() {
     const db = await this.open();
     return new Promise((resolve, reject) => {
-      // outbox included: a wipe that leaves a parked send behind delivers a
-      // ghost reply into the fresh install's first boot.
-      const tx = db.transaction(['friends', 'messages', 'events', 'outbox'], 'readwrite');
+      const tx = db.transaction(['friends', 'messages', 'events'], 'readwrite');
       tx.objectStore('friends').clear();
       tx.objectStore('messages').clear();
       tx.objectStore('events').clear();
-      tx.objectStore('outbox').clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -170,6 +145,7 @@ const DB = {
    only symptom was that she suddenly wrote badly; one provider that says "I
    couldn't reach Grok" is worth more than three that quietly write worse. */
 const DEFAULT_SETTINGS = {
+  apiKey: '', model: 'claude-opus-5', effort: 'low',
   // Both routes ship disabled-until-keyed: Grok has no keyless tier, so a
   // fresh install genuinely cannot talk until a key is in. The entries exist
   // so Settings shows two labelled slots to paste into rather than a blank.

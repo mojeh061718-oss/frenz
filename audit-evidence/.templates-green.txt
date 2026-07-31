@@ -1,0 +1,367 @@
+
+== 1. depth-4 life slice rotates ==
+  ok  slice varies across days (6 distinct in 14 days)
+  ok  Rocky no longer rides every day (2/14 days)
+  ok  plist stable within a day
+  ok  baby fact deduped from plist traits
+
+== 2. the reported restatement is now caught ==
+  ok  echo score on restatement now 1.00 (was 0.40)
+  ok  (informational)
+  ok  mid-conversation fallback still replies
+  ok  opener path drops the all-echo double-text entirely
+
+== 3. parrot/rerun guards target real history on opener path ==
+  ok  parrot guard catches restatement of his real last message
+  ok  nudge recognized as synthetic
+  ok  real history excludes the nudge
+
+== 4. his-words rut exemption expires ==
+  ok  her solo "rocky" rut is flagged now (was invisible)
+  ok  live shared bit ("gremlin", he plays it back) stays exempt
+
+== 5. life beats ==
+  ok  beat frequency sane (25/60 days)
+  ok  variety across two months (12 distinct beats)
+  ok  no beat repeats within 21 days
+  ok  beat line present in dynamic context on a beat day
+  ok  no bank -> no beat, no error
+  ok  opener nudge offers the beat as material
+  ok  no beat material on an unresolved night
+
+== 6. unsaid expiry ==
+  ok  unsaid stamped when reported
+  ok  unsaid survives a day unrefreshed
+  ok  unsaid expires after three days unrefreshed
+  ok  legacy unsaid gets a start-of-clock stamp
+
+== 7. mood fade ==
+  ok  fresh mood unchanged (2h gap)
+  ok  any mood breaks after 3+ days of silence
+  ok  seeded scenario mood holds until the FIRST exchange
+  ok  intoxication fade still works
+
+== 8. memory theme-saturation cap ==
+  ok  same-theme memories capped at 2 (2 selected)
+  ok  off-theme memory survives
+
+== 9. regression: state still moves (30-day sanity) ==
+  ok  attraction can traverse a band in 30 good days (35 -> 82)
+  ok  state carries unsaidTs field
+
+== 10. prompt assembly still sane ==
+  ok  kelly: all prompt stages assemble
+  ok  bre: all prompt stages assemble
+  ok  samantha: all prompt stages assemble
+  ok  tay: all prompt stages assemble
+  ok  WORLD carries the family-adjacent positive spec
+  ok  every template ships a beat bank
+  ok  plist dedupe upgrade reaches existing friends
+
+== 11. night norms: 3am is earned per relationship ==
+  ok  deep friendships have night hours (bre/kelly/anna: normal,normal,normal)
+  ok  family-orbit near-strangers do not (samantha/tay: strange,strange)
+  ok  samantha can EARN night hours (normal)
+  ok  samantha at 3am: the hour is an event
+  ok  bre at 3am: the hour is unremarkable
+  ok  3am no longer reads as daytime (pre-existing bug)
+  ok  noon unchanged
+  ok  samantha never opens at 3am at seed state (0/120)
+  ok  bre opens at 3am rarely but really (11/120)
+
+== 12. Anna ==
+  ok  template registered (gallery renders from templates)
+  ok  married to Courtney, kid exists
+  ok  beat bank of 12
+  ok  a beat proposes plans including Toni
+  ok  style sentence one carries register + signature
+  ok  close_friend -> charged ruleset (light, via low attraction band)
+  ok  plist assembles with her traits
+  ok  full persona assembles
+  ok  old-best-friend night norm
+
+== 13. photos: faceless amateur POV ==
+  ok  legs+TV -> pov
+  ok  the bowl -> scene (thing, not her)
+  ok  pov framing keeps the head out of frame
+  ok  snapchat-register cues present
+  ok  natural-but-hot pose clause: unposed, mind left wandering
+  ok  kelly: full pov prompt fits the 2000 budget with heat tail intact (1561)
+  ok  bre: full pov prompt fits the 2000 budget with heat tail intact (1609)
+  ok  anna: full pov prompt fits the 2000 budget with heat tail intact (1682)
+  ok  samantha: full pov prompt fits the 2000 budget with heat tail intact (1663)
+  ok  tay: full pov prompt fits the 2000 budget with heat tail intact (1687)
+  ok  body-type fidelity: appearance sheet rides as the phone-holder
+  ok  mirror framing: phone over face
+  ok  scene framing keeps her out
+  ok  face in the negative prompt
+  ok  photoNote tolerates no image entry
+
+== 14. relationship floors: levels that absence cannot undo ==
+  ok  seed floor at the band she starts in
+  ok  entering "high" locks a floor at 50
+  ok  a year of silence stops at the floor (50)
+  ok  fights are not floored (47)
+  ok  below-floor stat is frozen to time: no dig, no refund
+  ok  floors never move down
+
+== 15. significant nights get reckoned with, not small-talked past ==
+  ok  release night sets the marker
+  ok  note fires days later
+  ok  offers the honest check-in
+  ok  quiet inside the first day (same conversation breathing)
+  ok  lapses after ten days
+  ok  cleared once a later conversation ended the silence
+  ok  rough endings outrank it
+  ok  opener nudge carries the reckoning
+  ok  beats and bold openers suppressed
+  ok  reply path carries it when HE breaks the silence
+  ok  not restated on opener runs (one statement per prompt)
+  ok  unresolved note now survives 10+ days
+
+== 16. testlook lens ==
+  ok  kelly: prompt survives the 1000-char slice (826)
+  ok  bre: prompt survives the 1000-char slice (874)
+  ok  anna: prompt survives the 1000-char slice (947)
+  ok  samantha: prompt survives the 1000-char slice (928)
+  ok  tay: prompt survives the 1000-char slice (952)
+  ok  phone-over-face full figure (the framing grok renders cleanly — 4 live rounds)
+  ok  appearance sheet is the subject
+  ok  raw-photo cues intact (not truncated)
+  ok  tolerates a persona with no appearance
+  ok  scene lens carries the sheet and the action
+  ok  scene lens is faceless by construction
+  ok  spicy rides the charged heat tone
+  ok  normal stays uncharged
+  ok  same action re-rolls composition across invocations (4/8 distinct)
+  ok  worst scene prompt fits the 2000 budget (1862)
+
+== 17. v10.4 backstory rewrites ==
+  ok  samantha at rev 10+
+  ok  the five seconds are in the backstory
+  ok  …and marked as the thing she never mentions
+  ok  her first text is mortified + sorry, nothing more
+  ok  the greeting never mentions the five seconds
+  ok  seed memory carries the real event
+  ok  tay at rev 9+
+  ok  number comes from Toni everywhere
+  ok  no stale from-Taylor left
+  ok  nerdy, outgoing, off-the-wall
+  ok  still takes a lot to get through her
+  ok  greeting apologizes for the top
+  ok  anna at rev 3+
+  ok  kid-free night + riding like old times opener
+  ok  the riding history is real backstory, not an orphan line
+  ok  seedFix skips rev-7 friends crossing to 8 (7 > 7 is false)
+  ok  seedFix still fires for a pre-correction rev-6 friend
+
+== 18. opening act: the aftermath is a scene, then it retires ==
+  ok  samantha: rides the early stretch
+  ok  the five seconds stay hers unless HE raises them
+  ok  retires after the window (60 exchanges)
+  ok  personas without one are untouched
+  ok  unsaid seed exists on the template
+  ok  seeded unsaid reaches the generation point
+
+== 19. content diet: textures, kids-as-weather, agent-run fixes ==
+  ok  every template ships textures
+  ok  no texture at 10am (evening layer)
+  ok  texture frequency sane (22/30 evenings)
+  ok  no texture repeats within 8 days
+  ok  the edible night exists
+  ok  interests: at most 1 of 6 sentences leads with the kids
+  ok  interests carry her adult evening life
+  ok  beats: kid-led entries a minority (3/12)
+  ok  kids-as-weather rule authored into her
+  ok  declarative desire reads as flirty, not ordinary
+  ok  scenario personas born significant
+  ok  unresolved overrides the opener dice
+  ok  significant last night overrides the opener dice
+  ok  no false-history band qualifiers on day 1
+  ok  energy holds across an hour boundary inside one burst
+  ok  room read defers to the live opening act
+  ok  settled-stays-settled clause present
+  ok  a held boundary on a charged line stamps significance
+
+== 20. signal pickup + self-motion ==
+  ok  "your alone time seemed fun" resolves to the walk-in memory
+  ok  a genuinely plain line stays plain
+  ok  "couch" fires for HER — after that night she would hear it
+  ok  tay: the pool reference lands
+  ok  room read redirects to the reference
+  ok  asking what he means is a licensed move
+  ok  clarify license is general law in the persona
+  ok  interest STARTS from sustained right register (35 -> 36)
+  ok  no trickle without charged context (35 -> 35)
+  ok  mood ownership in the state instruction
+
+== 21. the July archive: loops, shape, drive, clocks ==
+  ok  the cami loop trips the pressed-loop detector
+  ok  room note demands a strategy change, not new wording
+  ok  varied riff on a shared bit does not trip the loop guard
+  ok  one repeated dodge amid short ones now trips it (agent-run gap)
+  ok  ordinary varied conversation never trips it
+  ok  plain confession reads as earnest, not playful
+  ok  joke shell vetoes the earnest read
+  ok  "Night sam" is a goodbye
+  ok  a bare "lol" is a shrug, not playful energy
+  ok  a bare "nice" is flat
+  ok  a real laugh line is still playful
+  ok  "because" is a function word, never a rut
+  ok  her fiance's name at 3-of-8 is a life, not a rut
+  ok  the same name at 6-of-8 is still the Rocky failure
+  ok  stale reference is not re-litigated when SHE texts first
+  ok  four agree-opens in five replies flag the shape tic
+  ok  two agree-opens in five is normal texting, no flag
+  ok  phi carries the shape note at the generation point
+  ok  nine replies with zero questions is a drought
+  ok  one real question resets the drought
+  ok  a question without the "?" still resets the drought
+  ok  six two-bubble replies are six exchanges, not twelve — no drought yet
+  ok  drought surfaces the one-question license
+  ok  incurious persona never gets the contradicting order
+  ok  stated drinks flip the register
+  ok  wine as scenery does not
+  ok  the live register reaches the Tonight block
+  ok  slip fires on a rare minority of evenings (13/60)
+  ok  no slips at lunchtime
+  ok  flirt-sport persona never slips — she flirts on purpose
+  ok  early evening carries the not-bedtime clause
+  ok  late night activates her authored register
+  ok  multi-hour gap carries the reply-to-NOW clause
+  ok  a five-day silence gets clocked in her first reply
+  ok  a three-hour gap is stale but not a silence
+  ok  push-never-neutral reaches the state ask
+
+== 22. the she-drives layer reaches the WIRE (tier gating) ==
+  ok  curiosity section rides the real request
+  ok  question license reaches the wire under drought
+  ok  wit note rides the real request
+  ok  compact survival tier still trims the layer (by design, for tiny budgets only)
+
+== templates: example-bank routing per persona (invariant 10) ==
+  ok  templates: kelly routes to the lower bank
+  ok  templates: kelly style sentence 1 alone carries the register signal
+  ok  templates: bre routes to the lower bank
+  ok  templates: bre style sentence 1 alone carries the register signal
+  ok  templates: anna routes to the punct bank
+  ok  templates: anna style sentence 1 alone carries the register signal
+  ok  templates: samantha routes to the lower bank
+  ok  templates: samantha style sentence 1 alone carries the register signal
+  ok  templates: tay routes to the punct bank
+  ok  templates: tay style sentence 1 alone carries the register signal
+  ok  templates: example banks are index-parallel (8/8)
+  ok  templates: bank index 0 carries BAD/GOOD in both registers
+  ok  templates: bank index 0 is the same scenario in both registers (1.00)
+  ok  templates: bank index 1 carries BAD/GOOD in both registers
+  ok  templates: bank index 1 is the same scenario in both registers (0.93)
+  ok  templates: bank index 2 carries BAD/GOOD in both registers
+  ok  templates: bank index 2 is the same scenario in both registers (1.00)
+  ok  templates: bank index 3 carries BAD/GOOD in both registers
+  ok  templates: bank index 3 is the same scenario in both registers (1.00)
+  ok  templates: bank index 4 carries BAD/GOOD in both registers
+  ok  templates: bank index 4 is the same scenario in both registers (1.00)
+  ok  templates: bank index 5 carries BAD/GOOD in both registers
+  ok  templates: bank index 5 is the same scenario in both registers (1.00)
+  ok  templates: bank index 6 carries BAD/GOOD in both registers
+  ok  templates: bank index 6 is the same scenario in both registers (1.00)
+  ok  templates: bank index 7 carries BAD/GOOD in both registers
+  ok  templates: bank index 7 is the same scenario in both registers (1.00)
+
+== templates: kid/dependent content stays a minority of every bank ==
+  ok  templates: kelly beats kid content 0/12 (at most a third)
+  ok  templates: kelly textures kid content 0/6 (at most a third)
+  ok  templates: bre beats kid content 1/12 (at most a third)
+  ok  templates: bre textures kid content 0/6 (at most a third)
+  ok  templates: anna beats kid content 2/12 (at most a third)
+  ok  templates: anna textures kid content 2/6 (at most a third)
+  ok  templates: samantha beats kid content 4/12 (at most a third)
+  ok  templates: samantha textures kid content 2/8 (at most a third)
+  ok  templates: tay beats kid content 0/12 (at most a third)
+  ok  templates: tay textures kid content 0/6 (at most a third)
+  ok  templates: samantha beats at most 4/12 kid-led by content words (4/12)
+
+== templates: Tay opening act + unsaid seed (scene-premise parity) ==
+  ok  templates: tay ships an opening act with an exchange window
+  ok  templates: tay ships an unsaid seed
+  ok  templates: tay unsaid seed references without restating what he saw
+  ok  templates: tay unsaid seed still points at the founding moment
+  ok  templates: tay opening act never restates the wardrobe detail
+  ok  templates: tay opening act live inside the exchange window
+  ok  templates: tay opening act retires at the window edge
+  ok  templates: tay seeded unsaid reaches the generation point
+  ok  templates: app.js backfills opening on existing friends
+  ok  templates: app.js backfills the unsaid seed (window-gated)
+  ok  templates: templateRev path wholesale-replaces beats and textures
+  ok  templates: samantha templateRev bumped for the bank rebalance
+
+== templates: style sentence 1 packs register + rhythm + ONE signature (invariant 11) ==
+  ok  templates: kelly S1 carries her signature marker
+  ok  templates: kelly signature marker appears once in style
+  ok  templates: bre S1 carries her signature marker
+  ok  templates: bre signature marker appears once in style
+  ok  templates: anna S1 carries her signature marker
+  ok  templates: anna signature marker appears once in style
+  ok  templates: samantha S1 carries her signature marker
+  ok  templates: samantha signature marker appears once in style
+  ok  templates: tay S1 carries her signature marker
+  ok  templates: tay signature marker appears once in style
+
+== templates: appearance sheets — faceless, no measured moderation triggers ==
+  ok  templates: kelly appearance names no face feature
+  ok  templates: kelly appearance avoids measured moderation triggers
+  ok  templates: bre appearance names no face feature
+  ok  templates: bre appearance avoids measured moderation triggers
+  ok  templates: anna appearance names no face feature
+  ok  templates: anna appearance avoids measured moderation triggers
+  ok  templates: samantha appearance names no face feature
+  ok  templates: samantha appearance avoids measured moderation triggers
+  ok  templates: tay appearance names no face feature
+  ok  templates: tay appearance avoids measured moderation triggers
+  ok  templates: tay appearance sheet in range of the others (303 chars, was 144)
+
+== templates: depth-4 fact dedupe — no 4-gram shared across plist/interests/style (invariant 2) ==
+  ok  templates: kelly plist<->interests share no 4-gram
+  ok  templates: kelly plist<->style share no 4-gram
+  ok  templates: kelly interests<->style share no 4-gram
+  ok  templates: bre plist<->interests share no 4-gram
+  ok  templates: bre plist<->style share no 4-gram
+  ok  templates: bre interests<->style share no 4-gram
+  ok  templates: anna plist<->interests share no 4-gram
+  ok  templates: anna plist<->style share no 4-gram
+  ok  templates: anna interests<->style share no 4-gram
+  ok  templates: samantha plist<->interests share no 4-gram
+  ok  templates: samantha plist<->style share no 4-gram
+  ok  templates: samantha interests<->style share no 4-gram
+  ok  templates: tay plist<->interests share no 4-gram
+  ok  templates: tay plist<->style share no 4-gram
+  ok  templates: tay interests<->style share no 4-gram
+
+== templates: authoring parity + upgrade idempotency ==
+  ok  templates: bre carries a second seed memory (parity)
+  ok  templates: kelly upgradeProfile is idempotent
+  ok  templates: bre upgradeProfile is idempotent
+  ok  templates: anna upgradeProfile is idempotent
+  ok  templates: samantha upgradeProfile is idempotent
+  ok  templates: tay upgradeProfile is idempotent
+  ok  templates: kelly pre-audit appearance upgrades in place to current text
+  ok  templates: kelly pre-audit interests upgrades in place to current text
+  ok  templates: kelly pre-audit style upgrades in place to current text
+  ok  templates: kelly pre-audit plist upgrades in place to current text
+  ok  templates: kelly upgraded snapshot is a fixpoint
+  ok  templates: bre pre-audit appearance upgrades in place to current text
+  ok  templates: bre pre-audit plist upgrades in place to current text
+  ok  templates: bre upgraded snapshot is a fixpoint
+  ok  templates: anna pre-audit plist upgrades in place to current text
+  ok  templates: anna upgraded snapshot is a fixpoint
+  ok  templates: samantha pre-audit plist upgrades in place to current text
+  ok  templates: samantha pre-audit interests upgrades in place to current text
+  ok  templates: samantha upgraded snapshot is a fixpoint
+  ok  templates: tay pre-audit appearance upgrades in place to current text
+  ok  templates: tay pre-audit style upgrades in place to current text
+  ok  templates: tay pre-audit plist upgrades in place to current text
+  ok  templates: tay pre-audit interests upgrades in place to current text
+  ok  templates: tay upgraded snapshot is a fixpoint
+
+---
+306 passed, 0 failed
