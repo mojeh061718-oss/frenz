@@ -2833,7 +2833,8 @@ const ClaudeAPI = {
     ' tilted, awkwardly cropped, too close or too far, composed by nobody, and the camera doing her no favours.' +
     ' It looks taken on a phone: the slight wide-angle stretch of a phone lens near the frame edges, auto-exposure a beat wrong' +
     ' so a lamp or window blows out, white balance a little off for the room.' +
-    ' Slightly grainy, flat unedited colour, uneven ordinary room light — harsh direct flash with hard shadows if the room is dark —' +
+    ' Slightly grainy, flat unedited colour, uneven ordinary room light — and indoors after dark the phone flash fires:' +
+    ' foreground washed bright, colours flattened, hard shadows thrown on the wall behind, the true late-night amateur look —' +
     ' true skin and fabric texture, pores and small unevenness where skin shows. Clutter left where it is.' +
     ' No filter, no retouching, no beauty smoothing, no captions or app overlay — a photo meant to be seen once, not kept.',
 
