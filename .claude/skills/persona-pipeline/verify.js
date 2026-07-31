@@ -2623,12 +2623,27 @@ console.log('\n== gemma: utility template + brief ==');
   const t = Personas.byId('gemma');
   ok(!!t && t.utility === true, 'gemma: template exists with the utility flag');
   ok(typeof t.brief === 'string' && t.brief.length > 3000, 'gemma: brief is a real working doctrine (' + (t.brief || '').length + ' chars)');
-  // the craft is actually in the brief: anatomy + order, Gemini specifics,
+  // the craft is actually in the brief: anatomy + order, Grok specifics,
   // diagnosis, the flag boundary, the output contract, the lore room
   ok(/ORDER matters/.test(t.brief) && /focal length/.test(t.brief) && /aperture/.test(t.brief)
     && /color temperature/i.test(t.brief), 'gemma: brief carries prompt anatomy with camera/lighting language');
-  ok(/keyword soup/.test(t.brief) && /aspect ratio/.test(t.brief) && /quotation marks/.test(t.brief)
-    && /positive presence/i.test(t.brief), 'gemma: brief carries the Gemini-specific craft');
+  ok(/keyword soup/.test(t.brief) && /quotation marks/.test(t.brief)
+    && /positive presence/i.test(t.brief), 'gemma: brief carries the Grok-specific craft');
+  // rev 2 retarget: the measured Grok lessons ride the brief, and the old
+  // target model is gone from every user-facing surface — a half-swapped
+  // persona would diagnose prompts against the wrong filter.
+  ok(/weak at exclusion and strong at composition/.test(t.brief)
+    && /viewpoints, never equipment/.test(t.brief)
+    && /no negative-prompt field/.test(t.brief), 'gemma: brief carries the measured Grok craft — exclusion-blind, viewpoint-not-device, no parameter dials');
+  ok(/Grok/.test(t.brief) && !/Gemini/.test(t.brief)
+    && !/Gemini/.test(t.hook || '') && !/Gemini/.test((t.greeting || []).join(' ')),
+    'gemma: fully retargeted — Grok named, Gemini gone from brief, hook, and greeting');
+  ok((t.templateRev || 0) >= 2, 'gemma: templateRev bumped so installed friends refresh the brief');
+  // Source tripwire (harness can't boot app.js): the templateRev refresh
+  // list must carry `brief`, or a utility persona's revision refreshes
+  // nothing — her brief IS the persona.
+  const appSrcG = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  ok(/'photoCandor', 'age', 'brief'\]/.test(appSrcG), 'gemma: app.js templateRev refresh carries brief to installed friends');
   ok(/contradictions/i.test(t.brief) && /over-stuffing/i.test(t.brief) && /vague filler/i.test(t.brief),
     'gemma: brief carries diagnosis mode');
   ok(/corrector, not a smuggler/.test(t.brief) && /minors under ANY framing/.test(t.brief)
