@@ -332,13 +332,67 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   // v10.18 budget bug: the 1000-char slice was shorter than every assembled
   // pov prompt, silently cutting the camera register and heat tone. Guard
   // the full chain: longest persona + a long scene desc + max heat must fit.
+  // Reads API.PROMPT_CAP rather than a literal — a hardcoded number here is
+  // how the cap and its test drifted apart in the first place.
   const longDesc = 'curled up on the couch in my thin cami and sleep shorts, tv on, glass of wine in my hand, one leg tucked under me';
+  let longestPov = 0;
   for (const t of Personas.templates) {
     const full = API._imagePrompt(longDesc, 'pov', t.appearance, 2);
-    ok(full.length <= 2600 && /implication rather than display/.test(full),
-      t.id + ': full pov prompt fits the 2600 budget with heat tail intact (' + full.length + ')');
+    longestPov = Math.max(longestPov, full.length);
+    ok(full.length <= API.PROMPT_CAP && /implication rather than display/.test(full),
+      t.id + ': full pov prompt fits the PROMPT_CAP budget with heat tail intact (' + full.length + ')');
   }
+  /* The cap must keep REAL headroom, not merely clear today's longest
+     prompt by a hair. Both realism tails (_SKIN, _CAMERA + heat) ride at
+     the very end of _imagePrompt, so a cap that only just fits is one
+     added clause away from silently truncating exactly the material that
+     makes a render look real. 400 chars is roughly one more clause of
+     room — the next person to add one fails here instead of shipping a
+     quietly degraded picture. */
+  ok(API.PROMPT_CAP - longestPov >= 400,
+    'photo prompt cap keeps a clause of headroom over the longest assembled prompt (' +
+    (API.PROMPT_CAP - longestPov) + ' spare, cap ' + API.PROMPT_CAP + ')');
+  /* Both prompt slices must read the constant. Deliberately NOT phrased as
+     "no numeric slices in these functions" — _generateImage legitimately
+     truncates provider error strings with slice(0, 180), and that spelling
+     would fail on an unrelated line. */
+  ok(/slice\(0, *this\.PROMPT_CAP\)/.test(String(API._generateImage)),
+    'photo prompt cap: the main path slices on PROMPT_CAP, not a literal');
+  ok(/slice\(0, *this\.PROMPT_CAP\)/.test(String(API._xaiImageWithRecovery)),
+    'photo prompt cap: the recovery ladder slices on the same constant');
   ok(/redhead/i.test(pov), 'body-type fidelity: appearance sheet rides as the phone-holder');
+
+  /* Realism clauses (v10.29). Skin and build are the two tells that
+     separate a photo from a render: models default to airbrushed skin and
+     an idealised body, and _IMAGE_AVOID had been asking for the opposite
+     by exclusion — the move Grok drops. Assert the positive specification
+     is present, that it is scoped to shots with a body in them, and that
+     the sibling fragment did not survive in _CAMERA (invariant 2: a fact
+     lives in exactly one place). */
+  ok(/visible pores/.test(pov) && /downy hair/.test(pov) && /scattered unevenly/.test(pov),
+    'skin realism: epidermal detail stated positively in a body shot');
+  ok(/real softness and real weight/.test(pov) && /where they actually fall/.test(pov),
+    'build fidelity: the sheet is told to render honestly, not idealised');
+  const sceneShot = API._imagePrompt('the bowl of ramen on the counter', 'scene', app, 0);
+  ok(!/visible pores/.test(sceneShot) && !/real softness and real weight/.test(sceneShot),
+    'skin/build clauses stay OUT of scene shots — nobody is in the frame');
+  ok(!/pores and small unevenness/.test(API._CAMERA),
+    'the old skin fragment is GONE from _CAMERA (moved, not copied)');
+  ok(/fabric and surface texture/.test(API._CAMERA),
+    '_CAMERA keeps general surface texture, which scene shots still need');
+  // Positive-presence law: these clauses must describe what IS there. A
+  // "not slimmed, not airbrushed" phrasing is the one Grok ignores.
+  ok(!/\bnot (slimmed|firmed|idealised|idealized|airbrushed)\b/i.test(API._SKIN + API._BUILD),
+    'realism clauses are positive specification, never exclusion');
+  // Moderation: the measured triggers are blunt anatomical nouns near a
+  // full-figured sheet. The realism language must not reintroduce them.
+  ok(!/\b(breasts?|braless|cleavage|nipples?)\b/i.test(API._SKIN + API._BUILD),
+    'realism clauses avoid the measured moderation triggers');
+  const povHeat0 = API._imagePrompt('my legs stretched out on the couch, tv on', 'pov', app, 0);
+  ok(/visible pores/.test(povHeat0) && /real softness/.test(povHeat0),
+    'realism is not heat-gated: an ordinary Tuesday photo renders just as real');
+  ok(/visible pores/.test(API.testLookScenePrompt(mkFriend('anna'), 'folding laundry', false, 1)),
+    'testlook inspects the real chain — realism clauses reach the debug lens');
   const mirror = API._imagePrompt('new dress, fit check', 'mirror', app, 0);
   ok(/covers her face completely|where her head would be/.test(mirror), 'mirror framing: phone over face');
   const scene = API._imagePrompt('the bowl of ramen on the counter', 'scene', app, 0);
@@ -457,7 +511,7 @@ console.log('\n== 16. testlook lens ==');
         }
       }
     }
-    ok(worst <= 2600, 'worst scene prompt fits the 2600 budget (' + worst + ')');
+    ok(worst <= API.PROMPT_CAP, 'worst testlook scene prompt fits the PROMPT_CAP budget (' + worst + '/' + API.PROMPT_CAP + ')');
   }
 }
 
