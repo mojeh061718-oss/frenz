@@ -2942,6 +2942,33 @@ const ClaudeAPI = {
     return !!(p && p.photoFace === 'shown' && p.referenceImage);
   },
 
+  /* Reference downscale dials (v10.33). The reference the owner picks rides
+     in EVERY /images/edits body — i.e. every photo she sends — sits on the
+     friend record, and lands in every backup export, which is written
+     uncompressed. So a raw phone photo (4-8MB → 5-11MB base64) is not
+     storable; it gets re-encoded on the way in.
+
+     Measured live before these were fixed (audit-evidence/edits-spike):
+     /images/edits accepts a data:image/jpeg URI (every earlier spike call
+     had been PNG), and a 1024px q85 JPEG holds identity as well as the
+     full-size PNG on the same prompt — 151KB of base64 against 1.34MB, a
+     9x saving with no visible fidelity cost. */
+  REFERENCE_MAX_EDGE: 1024,
+  REFERENCE_MIME: 'image/jpeg',
+  REFERENCE_QUALITY: 0.85,
+  /* Pure so the harness can assert the whole table headlessly — the canvas
+     plumbing that consumes this lives in app.js and is source-asserted only.
+     NEVER upscales: an upscaled reference is a blurry reference, strictly
+     worse than the original, and small source photos are common (the first
+     real test photo was 402x697, well under the cap). */
+  _fitDimensions(w, h, max) {
+    const cap = Math.max(1, Math.round(Number(max) || this.REFERENCE_MAX_EDGE));
+    const W = Math.max(1, Math.round(Number(w) || 1));
+    const H = Math.max(1, Math.round(Number(h) || 1));
+    const scale = Math.min(1, cap / Math.max(W, H));
+    return { w: Math.max(1, Math.round(W * scale)), h: Math.max(1, Math.round(H * scale)) };
+  },
+
   _imageHeat(friend) {
     if (!friend || !friend.state) return 0;
     const b = this.bandsFor(friend);
@@ -3088,24 +3115,6 @@ const ClaudeAPI = {
     return 'A full-length mirror photo she took on her phone, standing square to a tall wall mirror, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet exactly as she is, relaxed at home in simple everyday clothes that show her true build.' +
       ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.') +
       ' Shot like a quick snap: careless tilted framing, slightly grainy, flat unedited colour, ordinary room light, true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.';
-  },
-
-  /* The reference-candidate render (v10.32) — what `testlook ref` shows the
-     owner before `testlook ref keep` locks it as friend.profile.
-     referenceImage. Same out-of-band contract as every testlook path.
-     Hidden personas reuse the proven mirror check byte-for-byte; a 'shown'
-     persona gets a pose-neutral square-on stand with the face visible —
-     deliberately NOT a mirror shot, because the spike measured reference
-     pose bleeding into edits (a mirror reference nudged pov compositions
-     mirror-ward). The face itself comes from ROLLING candidates, never from
-     sheet prose — _B_FACE keeps face words out of sheets for everyone, which
-     is what keeps the portrait-commission failure buried. */
-  referenceCandidatePrompt(friend) {
-    const p = friend && friend.profile;
-    if (!p || p.photoFace !== 'shown') return this.testLookPrompt(friend);
-    const appearance = p.appearance || 'an adult woman';
-    return 'A full-length casual phone photo of a woman standing relaxed in her bedroom at home, square-on to the camera, arms easy at her sides, her face clearly visible with a natural everyday expression, hair the way she normally wears it, simple everyday clothes that show her true build. She is: ' + String(appearance).trim().replace(/\.?$/, '.') +
-      ' Shot like a quick snap: slightly careless framing, slightly grainy, flat unedited colour, ordinary room light, true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.';
   },
 
   /* testlook [action] [normal|spicy] — the SCENE variant of the debug lens.

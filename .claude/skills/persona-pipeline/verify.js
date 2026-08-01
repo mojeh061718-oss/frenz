@@ -3193,14 +3193,9 @@ console.log('\n== reference-locked photos: per-persona faces, owner-approved ref
   ok(/Your face is never in these/.test(API.photoNote(poolOn, shownNoRef)[1]),
     'ref: shown-but-unlocked persona still reads the hidden note');
 
-  /* Candidate prompts: hidden reuses the proven testlook mirror check;
-     shown gets the pose-neutral face-visible stand (mirror-bleed caveat). */
-  const cand = API.referenceCandidatePrompt(shownSam);
-  ok(cand.includes('Redhead of thirty'), 'ref: candidate prompt is sheet-driven');
-  ok(/face/i.test(cand) && /visible/i.test(cand) && !/mirror/i.test(cand),
-    'ref: shown candidate shows the face and avoids the mirror pose');
-  ok(API.referenceCandidatePrompt(sam) === API.testLookPrompt(sam),
-    'ref: hidden candidate IS the proven testlook mirror check');
+  /* (The generated-candidate prompts asserted here in v10.32 are gone — the
+     reference now comes from a photo the owner picks. Their replacements
+     live in the upload block below.) */
 
   global.__asyncChecks = global.__asyncChecks || [];
   const priorChecks = global.__asyncChecks.slice();
@@ -3270,16 +3265,78 @@ console.log('\n== reference-locked photos: per-persona faces, owner-approved ref
   })());
 
   /* The app wire: deliverBubble passes the reference and the face flag off
-     the ONE shared rule; testlook ref keep is the only writer of
-     referenceImage; the editor carries the photoFace choice. */
+     the ONE shared rule; the editor is the only writer of referenceImage;
+     the editor carries the photoFace choice. */
   const appSrc2 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
   ok(/reference:\s*friend\.profile\.referenceImage/.test(appSrc2), 'wire: deliverBubble passes the locked reference');
   ok(/_faceShown\(/.test(appSrc2) && /faceForbidden/.test(appSrc2),
     'wire: deliverBubble computes the face flag off the shared rule');
   const refWrites = (appSrc2.match(/\.referenceImage\s*=/g) || []).length;
-  ok(refWrites === 1, 'wire: exactly ONE site writes referenceImage (testlook ref keep)', 'found ' + refWrites);
-  ok(/runTestLookRef/.test(appSrc2), 'wire: the testlook ref command family exists');
+  ok(refWrites === 1, 'wire: exactly ONE site writes referenceImage (the editor save)', 'found ' + refWrites);
   ok(/photoFace/.test(appSrc2), 'wire: the editor carries the photoFace choice');
+}
+
+console.log('\n== reference upload: downscale, ack gate, single writer ==');
+{
+  /* v10.33: the reference comes from a photo the owner picks, not from a
+     generated candidate. Measured live before building this (spike.md):
+     /images/edits accepts a JPEG data URI, and a 1024px q85 JPEG holds
+     identity as well as a full PNG at ~1/9th the payload — which matters
+     because the reference rides EVERY edit request, the friend record, and
+     every backup export. */
+  ok(API.REFERENCE_MAX_EDGE === 1024, 'upload: max edge dial is 1024');
+  ok(API.REFERENCE_MIME === 'image/jpeg', 'upload: JPEG (measured accepted by /images/edits)');
+  ok(API.REFERENCE_QUALITY > 0.7 && API.REFERENCE_QUALITY < 0.95, 'upload: quality dial in the sane band');
+
+  const fit = (w, h) => API._fitDimensions(w, h, 1024);
+  // Landscape / portrait / square all cap the LONGEST edge.
+  ok(fit(4032, 3024).w === 1024 && fit(4032, 3024).h === 768, 'upload: landscape caps the long edge, aspect kept');
+  ok(fit(3024, 4032).h === 1024 && fit(3024, 4032).w === 768, 'upload: portrait caps the long edge, aspect kept');
+  ok(fit(2000, 2000).w === 1024 && fit(2000, 2000).h === 1024, 'upload: square stays square');
+  // THE nearest-good-case: a small photo must pass through untouched. An
+  // upscaled reference is a blurry reference — worse than the original, and
+  // the owner's first real test photo was 402x697, well under the cap.
+  ok(fit(402, 697).w === 402 && fit(402, 697).h === 697, 'upload: a small photo is never upscaled');
+  ok(fit(1024, 768).w === 1024 && fit(1024, 768).h === 768, 'upload: an exactly-sized photo is untouched');
+  // Aspect ratio preserved within a rounding pixel.
+  const a = fit(3000, 1997);
+  ok(Math.abs((a.w / a.h) - (3000 / 1997)) < 0.005, 'upload: aspect preserved through rounding');
+  // Degenerate input can never produce a zero/NaN canvas.
+  for (const [w, h] of [[0, 0], [-5, 10], [NaN, 100], [1, 1]]) {
+    const r = fit(w, h);
+    ok(Number.isFinite(r.w) && Number.isFinite(r.h) && r.w >= 1 && r.h >= 1,
+      `upload: degenerate ${w}x${h} yields a drawable size (${r.w}x${r.h})`);
+  }
+
+  const appSrc3 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  // The generator is GONE — upload replaces it, and a half-removed path
+  // would leave a second silent writer.
+  ok(!/runTestLookRef/.test(appSrc3), 'upload: the generated-candidate flow is removed');
+  ok(!/referenceCandidatePrompt/.test(String(API)) && typeof API.referenceCandidatePrompt !== 'function',
+    'upload: referenceCandidatePrompt is removed from the engine');
+  // Picker mirrors the backup-import pattern: hidden input, proxy button,
+  // and the value reset that makes re-picking the SAME file re-fire change.
+  ok(/f-ref-file/.test(appSrc3) && /downscaleImageFile/.test(appSrc3), 'upload: the picker is wired to the downscaler');
+  ok(/f-ref-file[\s\S]{0,900}?value\s*=\s*''/.test(appSrc3),
+    'upload: the file input resets value so re-picking the same file re-fires');
+  // Staged, not committed: picking previews, saving locks (the v10.32
+  // "nothing replaces a reference silently" contract, relocated).
+  ok(/pendingReference/.test(appSrc3), 'upload: a pick is staged, not written');
+  ok(appSrc3.indexOf('frenz-ref-ack') > 0, 'upload: the one-time acknowledgement gate exists');
+  const ackIdx = appSrc3.indexOf('frenz-ref-ack');
+  const writeIdx = appSrc3.search(/\.referenceImage\s*=/);
+  ok(ackIdx < writeIdx, 'upload: the acknowledgement gate precedes the write site');
+  const htmlSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  // Attribute-order-independent: read the whole tag, then check it.
+  const refTag = (htmlSrc.match(/<input[^>]*id="f-ref-file"[^>]*>/) || [''])[0];
+  ok(/type="file"/.test(refTag) && /class="hidden"/.test(refTag),
+    'upload: the file input is hidden, driven by a proxy button', refTag);
+  ok(/accept="image\/\*"/.test(refTag), 'upload: the picker accepts images only');
+  ok(/id="btn-ref-pick"/.test(htmlSrc) && /id="btn-ref-clear"/.test(htmlSrc), 'upload: pick and clear buttons exist');
+  // The measured failure from the owner's first real photo: a face-forward
+  // chest-up reference defeats the faceless framings. The picker must say
+  // what shape of photo actually works.
+  ok(/full[- ]length|waist[- ]up|head to toe/i.test(htmlSrc), 'upload: copy tells the owner to use a body-showing photo');
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {

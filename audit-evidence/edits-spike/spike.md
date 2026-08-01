@@ -97,3 +97,41 @@ base64**. A 9× difference on every photo she sends. Dials fixed at
 photograph* (as opposed to a model-generated reference) holds identity and
 clears moderation the same way. Every render in this file used a generated
 reference; that is the honest limit of what has been tested.
+
+## v10.33 — a REAL photograph as reference (owner-supplied, not committed)
+
+The one thing the earlier spikes could not test. Source: an owner-supplied
+photo of a consenting adult; it and its renders stay out of the repo by
+design — only the findings are recorded here. Two framings through the
+shipped `_imagePrompt`, reference riding, heat 0, `photoFace` hidden.
+
+**Identity: holds.** Freckling, hair (including the same messy bun), build and
+even the source's grey cami carried into both renders. A real photograph
+anchors identity as well as a generated reference — the feature works.
+
+**Framing: a face-forward reference DEFEATS the faceless pov rule.** The
+assembled prompt said "her head is outside the picture entirely" and the render
+came back a face-centred portrait. The source was a chest-up, face-forward
+bathroom selfie, and its composition overrode the framing instruction. This is
+the v10.32 pose-bleed caveat at full strength: the earlier note said a mirror
+reference "nudges pov compositions mirror-ward"; a face-forward reference does
+not nudge, it wins.
+
+The mirror framing rendered correctly (phone over face, full body) — because a
+mirror framing and a face-forward reference agree. Background bleed was also
+strong: the source bathroom appeared in the mirror render.
+
+**Consequences for the upload path:**
+
+1. The v10.31 quality gate is the safety net and it fires correctly here (a
+   visible face where the framing forbade one is exactly what `_screenSystem`
+   flags) — but it burns its single re-roll on most pov shots, and it ships the
+   second roll regardless. A mismatched reference degrades to "one wasted
+   generation per photo", not to a broken feature.
+2. **Reference shape must match the persona's face policy**, and the picker's
+   copy has to say so: for a `hidden` persona the framings show her BODY, so the
+   reference must show her body — full-length or waist-up, neutral stance, plain
+   background. A chest-up portrait leaves everything the framings actually show
+   (build below the shoulders, and in this persona's case leg tattoos and a soft
+   stomach named in her sheet) to be invented fresh each generation, which is the
+   consistency the feature exists to remove.

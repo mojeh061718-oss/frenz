@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.32';
+const APP_JS_VERSION = '10.33';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -631,6 +631,80 @@ function renderColorPicker(selected) {
   wrap.dataset.color = selected;
 }
 
+/* ---- the reference photo (v10.33) ----
+   The owner picks a photo; it becomes her body in every picture the app
+   generates from then on. Staged here and committed only by saving the
+   editor — the v10.32 "nothing replaces a reference silently" contract,
+   relocated from the old testlook flow.
+
+   Downscaling is not an optimisation: the reference rides in EVERY
+   /images/edits body, sits on the friend record, and lands in every backup
+   export (written uncompressed). A raw phone photo is 4-8MB → 5-11MB of
+   base64. Dials measured live before they were fixed — /images/edits accepts
+   a JPEG data URI, and 1024px q85 holds identity as well as a full PNG at
+   ~1/9th the payload (audit-evidence/edits-spike/spike.md). */
+let pendingReference = { dataUrl: null, dirty: false };
+
+/* Canvas is new ground here — nothing else in the app decodes an image.
+   createImageBitmap with imageOrientation honours EXIF, which is what keeps
+   iPhone uploads from arriving rotated; the Image fallback relies on the
+   browser's own auto-orientation. Throws sentences, not codes: the message
+   goes straight into a toast. */
+async function downscaleImageFile(file) {
+  if (!file || !/^image\//.test(file.type || '')) {
+    throw new Error("That file isn't an image this app can read. HEIC photos may need converting to JPEG first.");
+  }
+  let src = null, w = 0, h = 0;
+  try {
+    if (typeof createImageBitmap === 'function') {
+      src = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      w = src.width; h = src.height;
+    }
+  } catch (_) { src = null; }
+  if (!src) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await (img.decode ? img.decode() : new Promise((res, rej) => { img.onload = res; img.onerror = rej; }));
+      src = img; w = img.naturalWidth; h = img.naturalHeight;
+    } catch (_) {
+      throw new Error("That image couldn't be decoded — try a JPEG or PNG.");
+    } finally { URL.revokeObjectURL(url); }
+  }
+  if (!w || !h) throw new Error("That image couldn't be decoded — try a JPEG or PNG.");
+  const fit = ClaudeAPI._fitDimensions(w, h, ClaudeAPI.REFERENCE_MAX_EDGE);
+  const canvas = document.createElement('canvas');
+  canvas.width = fit.w; canvas.height = fit.h;
+  canvas.getContext('2d').drawImage(src, 0, 0, fit.w, fit.h);
+  if (src.close) src.close();
+  return canvas.toDataURL(ClaudeAPI.REFERENCE_MIME, ClaudeAPI.REFERENCE_QUALITY);
+}
+
+const REF_ACK_KEY = 'frenz-ref-ack';
+const REF_ACK_TEXT = 'This photo becomes her face and body in every picture this app generates for her, including suggestive ones. Only use a photo of yourself, or of an adult who knows and has agreed to it.';
+
+function renderReferenceRow(hasRef) {
+  const img = $('#f-ref-preview');
+  if (pendingReference.dataUrl) {
+    img.src = pendingReference.dataUrl;
+    img.classList.remove('hidden');
+  } else {
+    img.removeAttribute('src');
+    img.classList.add('hidden');
+  }
+  const live = pendingReference.dirty ? !!pendingReference.dataUrl : !!hasRef;
+  $('#btn-ref-clear').classList.toggle('hidden', !live);
+  $('#btn-ref-pick').textContent = live ? 'Replace photo' : 'Choose photo';
+  $('#f-refstatus').textContent = pendingReference.dirty
+    ? (pendingReference.dataUrl
+      ? 'New photo staged — saving locks it in.'
+      : 'Reference will be removed when you save.')
+    : (hasRef
+      ? 'Reference locked. Her pictures hold this look, and her Appearance text above is ignored while it is set.'
+      : 'No reference — her pictures come from the Appearance text above, so her look drifts between photos.');
+}
+
 function openEditor(friend) {
   editingId = friend ? friend.id : null;
   $('#editor-title').textContent = friend ? 'Edit friend' : 'New friend';
@@ -652,9 +726,9 @@ function openEditor(friend) {
   // (the _faceShown rule); this select is half of that, testlook ref keep
   // is the other half.
   $('#f-photoface').value = p.photoFace === 'shown' ? 'shown' : 'hidden';
-  $('#f-refstatus').textContent = p.referenceImage
-    ? 'Reference locked — her photos hold this exact look. `testlook ref` in her chat re-rolls it, `testlook ref drop` removes it.'
-    : 'No reference locked yet — render one with `testlook ref` in her chat and lock it with `testlook ref keep`.';
+  // A pick from a previous visit to this screen never carries over.
+  pendingReference = { dataUrl: null, dirty: false };
+  renderReferenceRow(!!p.referenceImage);
   $('#f-backstory').value = p.backstory || '';
   $('#f-username').value = p.userName || '';
   $('#f-usergender').value = p.userGender || 'male';
@@ -712,7 +786,28 @@ async function saveFriendFromForm(e) {
       lastPreview: ''
     };
   }
-  await DB.saveFriend(friend);
+  /* THE single write site for referenceImage. Deliberately not part of the
+     `profile` literal above: that literal is rebuilt from form fields and
+     merged, so a large data URL round-tripping through it is how the field
+     would get clobbered by an unrelated edit. Applied after both branches so
+     it covers create and edit alike. */
+  if (pendingReference.dirty) {
+    if (pendingReference.dataUrl) friend.profile.referenceImage = pendingReference.dataUrl;
+    else delete friend.profile.referenceImage;
+  }
+  try {
+    await DB.saveFriend(friend);
+  } catch (err) {
+    // First feature that makes a quota failure plausible — a reference is
+    // orders of magnitude larger than anything else on the record. Nothing
+    // else in the app handles this, and a raw DOMException here would read
+    // as the save silently doing nothing.
+    toast(/quota/i.test(String(err && err.name) + String(err && err.message))
+      ? "Not enough storage left to save that photo — clear some space or use a smaller image."
+      : 'Save failed — ' + ((err && err.message) || 'storage error'), 7000);
+    return;
+  }
+  pendingReference = { dataUrl: null, dirty: false };
   await renderFriendsList();
   if (editingId) {
     toast('Saved — takes effect on her next reply.');
@@ -1471,14 +1566,6 @@ async function sendMessage() {
     input.style.height = 'auto';
     updateSendButton();
     let rest = tl[1].replace(/[[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    // `testlook ref [keep|drop]` — the reference-approval flow (v10.32).
-    // Same out-of-band contract as every testlook path; `keep` is the ONE
-    // action in the app that writes friend.profile.referenceImage.
-    const refCmd = /^ref\b\s*(keep|drop)?$/i.exec(rest);
-    if (refCmd) {
-      runTestLookRef(currentFriend, (refCmd[1] || '').toLowerCase());
-      return;
-    }
     let spicy = false;
     const heat = /\s*\b(normal|spicy)\s*$/i.exec(rest);
     if (heat) {
@@ -1616,69 +1703,6 @@ async function runTestLook(friend, action, spicy) {
     scrollChat();
   } catch (err) {
     note.textContent = 'test shot failed — ' + ((err && err.message) || 'image error');
-    setTimeout(() => note.remove(), 8000);
-  } finally {
-    testlookBusy = false;
-  }
-}
-
-/* The reference-approval flow (v10.32): `testlook ref` renders a candidate
-   reference from the appearance sheet (re-run to re-roll — the provider
-   varies each roll), `testlook ref keep` locks the last candidate as
-   friend.profile.referenceImage, `testlook ref drop` removes the lock.
-   The candidate lives in a module variable until kept — nothing touches the
-   DB, the history, or the state until the owner says keep, and the rendered
-   candidate is transient DOM exactly like every other testlook output.
-   Locking is deliberate friction: the reference IS her body in every photo
-   from then on (the edits spike measured outfit and pose bleeding through
-   too), so nothing generates or replaces one silently. */
-let refCandidate = null;
-async function runTestLookRef(friend, action) {
-  if (testlookBusy || !friend) return;
-  if (action === 'drop') {
-    if (!friend.profile.referenceImage) { toast('No reference is locked for her.'); return; }
-    delete friend.profile.referenceImage;
-    await DB.saveFriend(friend);
-    toast('Reference dropped — her photos go back to sheet-only rendering.');
-    return;
-  }
-  if (action === 'keep') {
-    if (!refCandidate || refCandidate.friendId !== friend.id) {
-      toast('No candidate to keep — run `testlook ref` first.');
-      return;
-    }
-    friend.profile.referenceImage = refCandidate.dataUrl;
-    refCandidate = null;
-    await DB.saveFriend(friend);
-    toast('Reference locked — her photos hold this exact look from now on. `testlook ref drop` undoes it.');
-    return;
-  }
-  const settings = Settings.get();
-  const entry = ClaudeAPI.imageEntry(settings);
-  if (!entry) {
-    toast('No image model configured — add one in Settings to use testlook.');
-    return;
-  }
-  testlookBusy = true;
-  const note = document.createElement('div');
-  note.className = 'msg sys transient-note';
-  note.textContent = 'candidate reference — rendering…';
-  $('#chat-messages').appendChild(note);
-  scrollChat();
-  try {
-    // Candidate prompt follows photoFace: hidden reuses the proven mirror
-    // check; 'shown' gets the pose-neutral face-visible stand (the spike
-    // measured mirror references nudging every composition mirror-ward).
-    const prompt = ClaudeAPI.referenceCandidatePrompt(friend);
-    const url = await ClaudeAPI.generateImage(entry, prompt, { raw: true, width: 768, height: 1024 });
-    refCandidate = { friendId: friend.id, dataUrl: url, ts: ClaudeAPI._now() };
-    note.textContent = 'candidate reference — `testlook ref keep` locks it, `testlook ref` re-rolls';
-    const div = bubbleEl('assistant', '', { photo: url });
-    div.classList.add('transient-note'); // never persisted; gone on the next real send
-    $('#chat-messages').appendChild(div);
-    scrollChat();
-  } catch (err) {
-    note.textContent = 'candidate render failed — ' + ((err && err.message) || 'image error');
     setTimeout(() => note.remove(), 8000);
   } finally {
     testlookBusy = false;
@@ -2552,6 +2576,32 @@ function init() {
     if (editingId && currentFriend) { openChat(currentFriend.id); }
     else showView('view-friends');
     editingId = null;
+  });
+  /* Reference picker — the hidden-input + proxy-button pattern the backup
+     import already uses, including the value reset that makes re-picking the
+     SAME file fire change again. */
+  $('#btn-ref-pick').addEventListener('click', () => {
+    if (!localStorage.getItem(REF_ACK_KEY)) {
+      if (!confirm(REF_ACK_TEXT)) return;
+      localStorage.setItem(REF_ACK_KEY, '1');
+    }
+    $('#f-ref-file').click();
+  });
+  $('#btn-ref-clear').addEventListener('click', () => {
+    pendingReference = { dataUrl: null, dirty: true };
+    renderReferenceRow(false);
+  });
+  $('#f-ref-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      try {
+        pendingReference = { dataUrl: await downscaleImageFile(file), dirty: true };
+        renderReferenceRow(true);
+      } catch (err) {
+        toast(err.message, 6000);
+      }
+    }
+    e.target.value = '';
   });
   $('#friend-form').addEventListener('submit', saveFriendFromForm);
   $('#btn-delete-friend').addEventListener('click', async () => {

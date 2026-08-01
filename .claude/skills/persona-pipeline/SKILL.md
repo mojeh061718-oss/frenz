@@ -399,6 +399,35 @@ the fixtures were wrong before.
   failure — the v10.31 fail-open assertions crashed silently, never ran,
   and left the engine stubbed for every later block while the count read
   "0 failed".
+- Reference SOURCE is an owner-picked photo (v10.33) — the generated-candidate
+  flow (`testlook ref`, `referenceCandidatePrompt`) is deleted, not kept as a
+  fallback. The editor is the single writer; picking stages into
+  `pendingReference` and SAVING commits, which is the v10.32
+  "nothing replaces a reference silently" contract relocated, not dropped.
+  Downscale dials `REFERENCE_MAX_EDGE 1024` / `REFERENCE_MIME image/jpeg` /
+  `REFERENCE_QUALITY 0.85`, measured not guessed: `/images/edits` accepts a
+  JPEG data URI (every earlier spike call was PNG), and 1024px q85 holds
+  identity as well as a full PNG at 151KB vs 1.34MB of base64 — a 9x saving
+  that matters because the reference rides EVERY edit body, the friend
+  record, and every (uncompressed) backup export. `_fitDimensions` is pure so
+  the table is assertable headlessly and NEVER upscales — an upscaled
+  reference is strictly worse than its original, and small sources are common.
+- **Reference SHAPE must match the persona's face policy** — measured on a real
+  photo, and the sharpest finding of the whole photo workstream. A face-forward
+  chest-up selfie as reference DEFEATED the faceless pov framing outright: the
+  prompt said "her head is outside the picture entirely" and the render came
+  back a face-centred portrait. v10.32's note said a mirror reference "nudges
+  pov compositions mirror-ward"; a face-forward reference does not nudge, it
+  wins. Identity itself carried fine (freckling, hair, build, even the source's
+  top). So: a `hidden` persona needs a reference showing her BODY — full-length
+  or waist-up, neutral stance, plain background — because the framings show
+  everything below the head, and a portrait leaves exactly that to be invented
+  per generation. The picker's copy carries this; it is a quality requirement,
+  not documentation. The v10.31 quality gate is the net (a visible face where
+  the framing forbade one is what `_screenSystem` flags) but it spends its one
+  re-roll doing it, so a mismatched reference degrades to a wasted generation
+  per photo rather than a broken feature. Background bleed is likewise strong —
+  the source room reappears in renders.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

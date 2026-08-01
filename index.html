@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">10.32</span></h1>
+        <h1 class="logo">frenz <span class="app-version">10.33</span></h1>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
       <div id="friends-list" class="friends-list"></div>
@@ -165,7 +165,16 @@
             <option value="hidden">Kept out of frame (default)</option>
             <option value="shown">Can be shown — needs a locked reference</option>
           </select>
+        </label>
+        <label>Reference photo
+          <div class="row">
+            <button type="button" class="btn-secondary" id="btn-ref-pick">Choose photo</button>
+            <button type="button" class="btn-secondary hidden" id="btn-ref-clear">Clear</button>
+          </div>
+          <input type="file" id="f-ref-file" accept="image/*" class="hidden">
+          <img id="f-ref-preview" class="img-preview hidden" alt="reference photo">
           <small id="f-refstatus"></small>
+          <small>Use a photo that shows her <strong>body</strong>, not just her face — full-length or waist-up, standing square on, neutral pose, simple clothes, plain background, even light. When her face is kept out of frame the pictures show everything below it, so a head-and-shoulders portrait leaves her build to be invented fresh every time — and its pose fights the framing. Whatever is in the photo bleeds into her pictures: outfit, background, the lot.</small>
         </label>
         <label>How you met / backstory
           <textarea id="f-backstory" rows="2" placeholder="Met at a mutual friend's party last month, hit it off talking about music..."></textarea>
