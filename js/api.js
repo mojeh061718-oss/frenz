@@ -3146,15 +3146,49 @@ const ClaudeAPI = {
       'relaxed and a little careless with herself, what sits just past the frame edge doing all the talking'
     ]
   },
-  testLookScenePrompt(friend, action, spicy, salt) {
+  /* HEAT is the shipped 0-2 ladder, nothing more. `_HEAT_TONE` has exactly
+     three registers and `_imageHeat` can only ever return 0, 1 or 2 — the
+     top one is "implication rather than display", which is the ceiling the
+     photo rules are written around. The lens exposes those three and stops
+     there; there is no fourth tier to reveal, and inventing one would be
+     raising the ceiling rather than showing a dial. Heat 1 was previously
+     unreachable from testlook (the old boolean jumped 0 straight to 2),
+     which is half the reason this takes a number now.
+     Second arg accepts the legacy boolean so older callers still mean 2. */
+  _tlHeat(h) {
+    if (h === true) return 2;
+    return Math.max(0, Math.min(2, Number(h) || 0));
+  },
+  testLookScenePrompt(friend, action, heat, salt, o) {
+    o = o || {};
+    const heatN = this._tlHeat(heat);
     const appearance = (friend && friend.profile && friend.profile.appearance) || 'an adult woman';
-    const bank = this._TL_GARNISH[spicy ? 'spicy' : 'normal'];
+    // Garnish follows the register: the suggestive bank belongs to the top
+    // tier only, so heat 1 stays the "considered frame" it is in chat.
+    const bank = this._TL_GARNISH[heatN >= 2 ? 'spicy' : 'normal'];
     const g = bank[this._hash32(String(action) + '|tl|' + (salt || 0)) % bank.length];
     const desc = 'at home this evening — the scene: ' + String(action).trim() + ' — ' + g;
     // mode forced to pov: a look test is about HER, and bare nouns like
     // "bed" or "couch" would otherwise route to scene mode (a photo of the
     // furniture with nobody in it — correct for chat, useless here).
-    return this._imagePrompt(desc, 'pov', appearance, spicy ? 2 : 0);
+    return this._imagePrompt(desc, 'pov', appearance, heatN, { reference: !!o.reference, faceShown: !!o.faceShown });
+  },
+
+  /* `testlook face` — the face lens. Forces the selfie framing with the
+     face live, whatever the persona's photoFace is set to, so the owner can
+     SEE what flipping that switch would produce before flipping it. Like
+     every testlook path it is out of band: it changes no setting, writes
+     nothing, and the model never learns it happened. Only meaningful with a
+     reference locked — without one the face is a different stranger every
+     render, which is the whole reason photoFace needs one. */
+  testLookFacePrompt(friend, o) {
+    o = o || {};
+    const appearance = (friend && friend.profile && friend.profile.appearance) || 'an adult woman';
+    return this._imagePrompt(
+      'a quick selfie at home this evening, ordinary and unposed',
+      'selfie', appearance, this._tlHeat(o.heat),
+      { reference: !!o.reference, faceShown: true }
+    );
   },
 
   /* grok-imagine takes an aspect_ratio from a fixed menu, not pixel sizes —

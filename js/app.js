@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.35';
+const APP_JS_VERSION = '10.36';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -1683,23 +1683,34 @@ async function sendMessage() {
   // 'testlook' is a debug lens, not a message: touch NOTHING else — no
   // history, no state, no model call, no acknowledgment, and it does not
   // cancel an opener OR a reply she happens to be drafting (which is why it
-  // is handled BEFORE the supersede logic below). Bare `testlook` renders
-  // the appearance sheet as the fixed neck-down mirror check;
-  // `testlook <action> [normal|spicy]` (brackets optional) runs the action
-  // through the real photo pipeline instead.
+  // is handled BEFORE the supersede logic below).
+  //   testlook                    — the appearance-sheet mirror check
+  //   testlook face               — the selfie framing with her face live
+  //   testlook <action>           — that scene through the real pipeline
+  //   testlook <action> heat|heat2 — the same scene up the heat ladder
+  // Heat words map onto the shipped 0-2 registers and nothing beyond:
+  // heat2 IS the top ('implication rather than display'), so `heatmax` is
+  // an alias for it that says so rather than pretending a hotter tier
+  // exists.
   const tl = /^testlook\b([\s\S]*)$/i.exec(text);
   if (tl) {
     input.value = '';
     input.style.height = 'auto';
     updateSendButton();
     let rest = tl[1].replace(/[[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    let spicy = false;
-    const heat = /\s*\b(normal|spicy)\s*$/i.exec(rest);
-    if (heat) {
-      spicy = heat[1].toLowerCase() === 'spicy';
-      rest = rest.slice(0, heat.index).trim();
+    const HEAT_WORDS = { normal: 0, heat0: 0, heat: 1, heat1: 1, spicy: 2, heat2: 2, heatmax: 2 };
+    let heat = 0, atCeiling = false;
+    const m = /\s*\b(normal|spicy|heat|heat0|heat1|heat2|heatmax)\s*$/i.exec(rest);
+    if (m) {
+      const word = m[1].toLowerCase();
+      heat = HEAT_WORDS[word];
+      atCeiling = word === 'heatmax';
+      rest = rest.slice(0, m.index).trim();
     }
-    runTestLook(currentFriend, rest || null, spicy);
+    const wantsFace = /^face$/i.test(rest);
+    if (wantsFace) rest = '';
+    if (atCeiling) toast('heat2 is the top register — rendering that.', 4000);
+    runTestLook(currentFriend, rest || null, heat, wantsFace);
     return;
   }
 
@@ -1797,7 +1808,7 @@ async function sendMessage() {
    model never sees that this happened. Deliberately does not take the
    composer lock: it is a tool, not a conversation turn. */
 let testlookBusy = false;
-async function runTestLook(friend, action, spicy) {
+async function runTestLook(friend, action, heat, wantsFace) {
   if (testlookBusy || !friend) return;
   const settings = Settings.get();
   const entry = ClaudeAPI.imageEntry(settings);
@@ -1805,12 +1816,27 @@ async function runTestLook(friend, action, spicy) {
     toast('No image model configured — add one in Settings to use testlook.');
     return;
   }
+  /* The lens must show what the PIPELINE would send, and since v10.32 that
+     means the locked reference. Without this the debug shot renders a
+     different woman from every real photo — the one thing a lens must never
+     do. `testlook face` additionally forces the face live so the owner can
+     preview photoFace: 'shown' before committing to it; it changes no
+     setting, exactly like every other testlook path. */
+  const reference = (friend.profile && friend.profile.referenceImage) || null;
+  const faceShown = wantsFace || ClaudeAPI._faceShown(friend);
+  if (wantsFace && !reference) {
+    toast('No reference photo locked — a face shot would be a different stranger each time.', 6000);
+    return;
+  }
   testlookBusy = true;
   const note = document.createElement('div');
   note.className = 'msg sys transient-note';
-  note.textContent = action
-    ? `test shot — rendering: ${action}${spicy ? ' (spicy)' : ''}…`
-    : 'test shot — rendering her appearance sheet…';
+  const heatLabel = heat ? ` (heat ${heat}${heat >= 2 ? ', top register' : ''})` : '';
+  note.textContent = wantsFace
+    ? `test shot — her face, as a selfie${heatLabel}…`
+    : action
+      ? `test shot — rendering: ${action}${heatLabel}…`
+      : 'test shot — rendering her appearance sheet…';
   $('#chat-messages').appendChild(note);
   scrollChat();
   try {
@@ -1818,11 +1844,15 @@ async function runTestLook(friend, action, spicy) {
     // the model invents junk (duplicate torsos) above the mirror. Scene
     // shots use the real photo pipeline's tall default, because they ARE
     // the real photo pipeline.
-    const prompt = action
-      ? ClaudeAPI.testLookScenePrompt(friend, action, spicy, ClaudeAPI._now())
-      : ClaudeAPI.testLookPrompt(friend);
-    const url = await ClaudeAPI.generateImage(entry, prompt,
-      action ? { raw: true } : { raw: true, width: 768, height: 1024 });
+    const prompt = wantsFace
+      ? ClaudeAPI.testLookFacePrompt(friend, { reference: !!reference, heat })
+      : action
+        ? ClaudeAPI.testLookScenePrompt(friend, action, heat, ClaudeAPI._now(), { reference: !!reference, faceShown })
+        : ClaudeAPI.testLookPrompt(friend);
+    const url = await ClaudeAPI.generateImage(entry, prompt, Object.assign(
+      { raw: true, reference, faceShown },
+      (action || wantsFace) ? {} : { width: 768, height: 1024 }
+    ));
     note.remove();
     const div = bubbleEl('assistant', '', { photo: url });
     div.classList.add('transient-note'); // never persisted; gone on the next real send

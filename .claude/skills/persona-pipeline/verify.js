@@ -3370,6 +3370,43 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
   ok(declared.length > 0 && unregistered.length === 0,
     'views: every view section is registered in the views array (else showView blanks the app)',
     unregistered.join(', '));
+
+  /* testlook, v10.36: the lens must show what the PIPELINE sends. Before
+     this it ignored the locked reference entirely and rendered a different
+     woman from every real photo — the one thing a lens must never do. */
+  const lensFriend = { profile: { appearance: Personas.byId('bre').appearance, referenceImage: 'data:x' } };
+  ok(/reference,\s*faceShown/.test(appSrc3) || /reference,\s*faceShown/.test(appSrc3.replace(/\s+/g, ' ')),
+    'lens: runTestLook passes the reference and face flag into generateImage');
+  ok(/referenceImage\)\s*\|\|\s*null/.test(appSrc3), 'lens: the reference is read off the friend');
+
+  // Heat is the shipped 0-2 ladder and nothing past it. heat1 was
+  // previously unreachable (the old boolean jumped 0 -> 2).
+  ok(API._tlHeat(0) === 0 && API._tlHeat(1) === 1 && API._tlHeat(2) === 2, 'lens: heat 0/1/2 map through');
+  ok(API._tlHeat(true) === 2, 'lens: the legacy boolean still means the top register');
+  ok(API._tlHeat(3) === 2 && API._tlHeat(99) === 2, 'lens: nothing above 2 exists — heatmax clamps to the ceiling');
+  ok(API._HEAT_TONE.length === 3, 'lens: there are exactly three heat registers to expose');
+  const h1 = API.testLookScenePrompt(lensFriend, 'bed', 1, 1);
+  const h2 = API.testLookScenePrompt(lensFriend, 'bed', 2, 1);
+  ok(!h1.includes('implication rather than display') && /more considered frame/.test(h1),
+    'lens: heat 1 is the middle register, reachable at last');
+  ok(h2.includes('implication rather than display'), 'lens: heat 2 is the charged register');
+  ok(API.testLookScenePrompt(lensFriend, 'bed', 99, 1) === h2,
+    'lens: an out-of-range heat renders heat 2, never something hotter');
+  // The garnish bank follows the register — the suggestive bank belongs to
+  // the top tier only, so heat 1 does not quietly borrow it.
+  const gsp = API._TL_GARNISH.spicy.some(g => h1.includes(g));
+  ok(!gsp, 'lens: heat 1 uses the plain garnish bank, not the suggestive one');
+
+  // testlook face: forces the selfie framing with the face live, whatever
+  // the persona is set to — a preview of photoFace 'shown', not a change.
+  const face = API.testLookFacePrompt(lensFriend, { reference: true });
+  ok(/Her face is in the picture/.test(face), 'lens: the face lens actually shows her face');
+  ok(/selfie/i.test(face), 'lens: the face lens uses the selfie framing');
+  ok(/same woman as in the reference photo/.test(face), 'lens: the face lens is anchored to the reference');
+  ok(!face.includes(Personas.byId('bre').appearance.slice(0, 40)),
+    'lens: with a reference riding, the sheet stays out (invariant 2)');
+  ok(/No reference photo locked/.test(appSrc3),
+    'lens: a face shot without a reference is refused, not rendered as a stranger');
   ok(/confirm\(`Replace \$\{p\.name\}/.test(appSrc3), 'photos: replacing a locked reference confirms');
   ok(/confirm\(`Remove \$\{p\.name\}/.test(appSrc3), 'photos: clearing a locked reference confirms');
   ok(/DB\.getFriend\(f\.id\)/.test(appSrc3),

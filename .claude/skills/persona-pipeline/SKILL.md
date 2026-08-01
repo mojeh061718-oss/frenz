@@ -443,6 +443,27 @@ the fixtures were wrong before.
   `imgerr {screened:true, attempt}`; clean ones stay out of the ledger.
   testlook stays on raw `generateImage` — the lens exists to show unscreened
   pipeline output.
+- testlook is a LENS and must show what the pipeline sends (v10.36). Until
+  then it ignored `referenceImage` entirely and rendered a different woman
+  from every real photo — a lens that lies about the thing it exists to
+  inspect. Now every testlook path passes the locked reference and the face
+  flag. Surface: bare `testlook` (sheet mirror check), `testlook face` (the
+  selfie framing with the face forced live — a PREVIEW of photoFace 'shown'
+  that changes no setting, and refused outright with no reference locked,
+  because a face shot without one is a different stranger each render),
+  `testlook <action>`, and `heat|heat1` / `spicy|heat2` on the end.
+  **Heat is the shipped 0-2 ladder and there is nothing past it.**
+  `_HEAT_TONE` has exactly three entries, `_imageHeat` can only return 0-2,
+  and heat 2 is "implication rather than display" — the ceiling the photo
+  rules are written around ("suggestion always, never explicit"). `heatmax`
+  is an ALIAS for heat 2 that says so; `_tlHeat` clamps anything higher.
+  Do not add a fourth register: it would not be exposing a dial, it would be
+  raising the content ceiling, and it would mean prompt-engineering against
+  provider moderation — which this codebase's own policy forbids
+  (`_xaiImageWithRecovery`: "no jailbreak here and no moderation flag being
+  flipped"). Heat 1 became reachable here for the first time; the old
+  boolean jumped 0 straight to 2, and the suggestive garnish bank stays
+  bound to the top tier so heat 1 cannot borrow it.
 - Camera & pose register (`_CAMERA` + the `posed` clause in `_imagePrompt`):
   the camera is UGLY (careless tilted framing, grainy, flat colour, "doing
   her no favours") but she is not — a separate positive clause says she's
