@@ -2874,8 +2874,57 @@ const ClaudeAPI = {
     ' so a lamp or window blows out, white balance a little off for the room.' +
     ' Slightly grainy, flat unedited colour, uneven ordinary room light — and indoors after dark the phone flash fires:' +
     ' foreground washed bright, colours flattened, hard shadows thrown on the wall behind, the true late-night amateur look —' +
-    ' true skin and fabric texture, pores and small unevenness where skin shows. Clutter left where it is.' +
+    ' true fabric and surface texture throughout. Clutter left where it is.' +
     ' No filter, no retouching, no beauty smoothing, no captions or app overlay — a photo meant to be seen once, not kept.',
+
+  /* Skin is the strongest realism tell there is, and it used to ride as a
+     six-word fragment inside _CAMERA ("pores and small unevenness where skin
+     shows") — which also put it in the SCENE prompt, where there is no skin
+     in frame. Moved here and given room (invariant 2: move, don't copy), so
+     it fires only when a body is actually in the picture.
+
+     Why it needs to be POSITIVE and specific: these models default hard to
+     airbrushed, poreless, evenly-lit skin, and _IMAGE_AVOID has been asking
+     for the opposite by exclusion ('no airbrushed or beauty-filter skin')
+     — the exact move Grok ignores. Naming the epidermal topology that IS
+     there is what actually defeats the default, the same
+     positive-presence law the rest of this file runs on.
+
+     Deliberately anatomy-neutral and calm-worded: the measured moderation
+     triggers are blunt anatomical nouns near a full-figured sheet, and the
+     same skin described in plain words renders fine. Nothing here
+     concentrates on one body area — it is dermatology, not display. */
+  _SKIN: ' Skin renders as real skin: visible pores, fine downy hair catching the light,' +
+    ' freckles and small marks scattered unevenly rather than placed, faint creases where she bends,' +
+    ' and tone that shifts from one patch to the next — forearms against shoulders,' +
+    ' the faint line where a sleeve usually sits.',
+
+  /* The appearance sheet says what she looks like; this says the render has
+     to MEAN it. Left to themselves these models regress every body toward
+     the same idealised default, so a sheet authored 'curvy, full-figured,
+     soft' comes back quietly slimmed and firmed — the sheet is honest and
+     the picture is not, which is the fidelity gap that makes a render read
+     as generated. Stated as presence (real weight, real softness, where it
+     actually falls) rather than as a ban on idealising, because the ban is
+     the phrasing that gets dropped. */
+  _BUILD: ' Her build is exactly the one described and renders honestly:' +
+    ' real softness and real weight sitting where they actually fall on a body like hers,' +
+    ' the way a real figure sits and settles when she is not holding it in.',
+
+  /* Runaway guard on the assembled photo prompt — NOT an API limit, and the
+     number only ever gets read as one when it is written inline at the two
+     call sites, which is how it went stale twice. It has truncated real
+     content both times it was too low: 1000 through v10.17 cut the camera
+     register and heat tone off every pov prompt, and 2600 left only ~430
+     chars of headroom over the longest assembled prompt — less than the
+     skin and build clauses need. Both tails ride at the END of
+     _imagePrompt, so anything over the cap is silently lost from exactly
+     the material that makes a render look real.
+
+     verify.js pins this: cap minus longest-assembled must stay >= 400, so
+     the next clause added here fails the suite instead of the picture.
+     _IMAGE_AVOID is appended AFTER the slice and is never at risk. */
+  PROMPT_CAP: 3400,
 
   _imagePrompt(desc, mode, appearance, heat) {
     const m = this._FRAMING[mode] ? mode : this._modeFor(desc);
@@ -2897,6 +2946,7 @@ const ClaudeAPI = {
     const who = isScene ? ''
       : ' The woman holding the phone is the same one in every one of these photos: ' +
         (appearance ? String(appearance).trim().replace(/\.?$/, '.') : 'an adult woman.') +
+        this._BUILD +
         ' Only the part of her that falls inside the framing described above appears in the picture.';
 
     const clothed = isScene ? ''
@@ -2930,7 +2980,7 @@ const ClaudeAPI = {
        with nothing — the old free model returned a nude frame from "in the
        kitchen at night, just got home, heels off". */
     return frame + ' The picture shows: ' + String(desc || '').trim().replace(/\.?$/, '.') +
-      who + faceRule + clothed + posed + this._CAMERA +
+      who + faceRule + clothed + posed + (isScene ? '' : this._SKIN) + this._CAMERA +
       (isScene ? '' : (this._HEAT_TONE[Math.max(0, Math.min(2, heat | 0))] || ''));
   },
 
@@ -3019,13 +3069,7 @@ const ClaudeAPI = {
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
     const mode = o.mode || this._modeFor(description);
-    /* Budget bug, caught at v10.18: the old 1000-char slice was SHORTER than
-       every assembled pov prompt (appearance sheet + framing alone run
-       ~1000), so the camera register and heat tone were being cut off before
-       they ever reached the model. 2000 clears the longest persona's full
-       prompt; xAI has been accepting well past this with _IMAGE_AVOID
-       appended, so the cap is a runaway guard, not an API limit. */
-    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 2600);
+    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, this.PROMPT_CAP);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
@@ -3110,7 +3154,7 @@ const ClaudeAPI = {
         // not a bug. (A heat-1 middle rung was considered and rejected: it
         // would double the ladder's worst-case latency for a marginal tone
         // win, inside a photo budget that is already the slow path.)
-        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 2600));
+        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, this.PROMPT_CAP));
       }
     }
     let declined = null;

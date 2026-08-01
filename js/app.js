@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.27';
+const APP_JS_VERSION = '10.29';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -2234,7 +2234,9 @@ async function upgradeTemplateFriends() {
     // the seeded (pinned) memories, while messages, state and everything she
     // has actually EARNED in conversation survive untouched.
     if (tpl && (tpl.templateRev || 0) > (f.profile.templateRev || 0)) {
-      ['personality', 'plist', 'style', 'interests', 'backstory', 'appearance', 'type', 'photoCandor', 'age'].forEach(k => {
+      // `brief` is a utility persona's ENTIRE persona (api.js _isUtility) —
+      // for her, a revision that skipped it would refresh nothing at all.
+      ['personality', 'plist', 'style', 'interests', 'backstory', 'appearance', 'type', 'photoCandor', 'age', 'brief'].forEach(k => {
         if (tpl[k]) f.profile[k] = tpl[k];
       });
       f.profile.world = Personas.WORLD || '';
