@@ -356,6 +356,39 @@ the fixtures were wrong before.
   painting nails, lotion) crop naturally. Grok moderation triggers measured
   live: "breasts", "hang", "braless", "boy shorts" near a busty sheet —
   same anatomy in calmer words renders fine.
+- The faceless doctrine's PREMISE is dead — measured live, 2026-08-01
+  (`audit-evidence/edits-spike/`). xAI's `POST /v1/images/edits` (same key,
+  same default model, base64 data-URI source) COMPOSES new scenes around a
+  reference image with identity held: same build/hair/freckles/tattoos across
+  couch/kitchen/beach, across outfit changes, and under the full assembled
+  pov prompt — while today's generations path rolled a different woman from
+  the identical prompt (the 06/07 pair is the whole argument). Face lock also
+  holds (invented-face test, down to the phone case). Facelessness is now a
+  CHOICE (still in-fiction motivated for some personas), not a constraint.
+  Measured caveats: reference outfit/pose BLEED into unprompted scenes (a
+  mirror-style reference nudges pov compositions mirror-ward — a stored
+  reference should be pose-neutral); tattoos are same-style-same-placement,
+  not stroke-identical; all n=1 per cell, 0 declines in 11 calls, 4.2-7.9s
+  per call. Implementation (friend.profile.referenceImage + an edits route)
+  is GATED on the owner's outcome-(A)-vs-(B) call — do not build it without
+  that answer, and do not partially flip the six places the faceless premise
+  is encoded (framings, faceRule, _IMAGE_AVOID, photoNote, _B_FACE, builder
+  blurb): a half-flip reproduces the portrait-commission failure.
+- Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
+  `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
+  with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s
+  anatomy line is dead weight on the xAI route (no negativeText param there).
+  The gate screens the success path with one vision call and re-rolls the
+  same framing AT MOST once (8s budget floor, same as the ladder). It can
+  never block a photo: unscreenable/crash/flagged-re-roll/dead-re-roll all
+  ship something — its only power is one extra roll. The nearest good case
+  is our OWN camera register (tilt, grain, flash, clutter are ORDERED), so
+  `_screenSystem` whitelists the amateur register before listing defects and
+  never asks for aesthetics — tightening it toward "is this a good photo"
+  re-opens the guard-eats-the-feature failure. Flagged screenings ledger as
+  `imgerr {screened:true, attempt}`; clean ones stay out of the ledger.
+  testlook stays on raw `generateImage` — the lens exists to show unscreened
+  pipeline output.
 - Camera & pose register (`_CAMERA` + the `posed` clause in `_imagePrompt`):
   the camera is UGLY (careless tilted framing, grainy, flat colour, "doing
   her no favours") but she is not — a separate positive clause says she's

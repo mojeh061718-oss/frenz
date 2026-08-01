@@ -2993,6 +2993,105 @@ console.log('\n== gemma: one plain call, state stays null ==');
   })());
 }
 
+console.log('\n== photo quality gate: defects re-roll once, ugly-amateur passes ==');
+{
+  /* The ladder only ever saw declines (api.js:3251); a successful 200 with
+     six fingers shipped straight into the thread, and _IMAGE_NEGATIVE's
+     "extra fingers" line is dead weight on the xAI route (no negativeText
+     param there — Bedrock only). The gate: one vision screening, at most one
+     re-roll of the same framing, and it can NEVER block a photo — its only
+     power is one extra roll. Fail direction is open on every path. */
+  ok(typeof API._photoGateDecision === 'function', 'gate: decision policy exists as a pure function');
+  ok(API._photoGateDecision({ flagged: true, reason: 'extra fingers' }, 0, 60000) === 'reroll',
+    'gate: flagged first roll with budget -> one re-roll');
+  ok(API._photoGateDecision({ flagged: true, reason: 'extra fingers' }, 0, 7999) === 'ship',
+    'gate: no re-roll under the 8s floor (same floor as the ladder, api.js:3180)');
+  ok(API._photoGateDecision({ flagged: true, reason: 'extra fingers' }, 1, 60000) === 'ship',
+    'gate: a re-roll is never re-rolled');
+  ok(API._photoGateDecision({ flagged: false, reason: '' }, 0, 60000) === 'ship', 'gate: clean verdict ships');
+  ok(API._photoGateDecision(null, 0, 60000) === 'ship', 'gate: unscreenable fails OPEN, never closed');
+
+  /* Invariant 1 — nearest good case: our own _CAMERA register ORDERS ugly
+     amateur photos (tilt, grain, flash, clutter). The screen prompt must
+     whitelist that register before it lists a single defect, and it may
+     never ask for aesthetic judgement. */
+  const sys = API._screenSystem(true);
+  ok(/none of (them|that) is a defect/i.test(sys) && /grain/i.test(sys) && /tilted|framing/i.test(sys) && /flash/i.test(sys),
+    'gate: screen prompt whitelists the amateur register before listing defects');
+  ok(/finger|hand|limb/i.test(sys) && /text|caption|watermark/i.test(sys),
+    'gate: screen prompt asks for anatomy + baked-text defects');
+  ok(!/beautiful|aesthetic|well[- ]composed|good photo|high quality/i.test(sys),
+    'gate: screen prompt never asks for aesthetic judgement');
+  // \b because the base text says "app interface" — substring 'face' is a trap
+  ok(/\bface\b/i.test(API._screenSystem(true)) && !/\bface\b/i.test(API._screenSystem(false)),
+    'gate: face check present iff the framing forbade a face');
+
+  global.__asyncChecks = global.__asyncChecks || [];
+  global.__asyncChecks.push((async () => {
+    /* Behavioral, over the real generateScreenedImage with stubbed roll +
+       screen — counts generations, checks what actually ships. */
+    const realGen = API._generateImage, realScreen = API._screenPhoto, realHook = API._onImageScreen;
+    const calls = { gen: 0, ledger: [] };
+    API._generateImage = async () => 'data:image/png;base64,ROLL' + (++calls.gen);
+    API._screenPhoto = async () => ({ flagged: true, reason: 'six fingers on the wine hand' });
+    API._onImageScreen = (v, attempt) => calls.ledger.push(attempt);
+    const entry = { imageModel: 'grok-imagine-image' };
+    const flaggedOut = await API.generateScreenedImage(entry, { pool: [] }, 'my legs on the couch', {});
+    ok(flaggedOut === 'data:image/png;base64,ROLL2', 'gate: flagged photo ships the RE-ROLL, not the flagged original');
+    ok(calls.gen === 2, 'gate: exactly two generations, never a loop');
+    ok(calls.ledger.length === 2 && calls.ledger[0] === 0 && calls.ledger[1] === 1,
+      'gate: both screenings reach the ledger hook with their attempt index');
+
+    calls.gen = 0; calls.ledger.length = 0;
+    API._screenPhoto = async () => ({ flagged: false, reason: '' });
+    const clean = await API.generateScreenedImage(entry, { pool: [] }, 'my legs on the couch', {});
+    ok(clean === 'data:image/png;base64,ROLL1' && calls.gen === 1, 'gate: clean photo ships the first roll, one generation');
+
+    calls.gen = 0;
+    API._screenPhoto = async () => { throw new Error('vision down'); };
+    const failOpen = await API.generateScreenedImage(entry, { pool: [] }, 'my legs on the couch', {});
+    ok(failOpen === 'data:image/png;base64,ROLL1' && calls.gen === 1,
+      'gate: a screening crash can never kill the photo (fail-open)');
+
+    calls.gen = 0;
+    API._screenPhoto = async () => ({ flagged: true, reason: 'melted hand' });
+    API._generateImage = async () => {
+      if (++calls.gen === 2) throw new Error('outage mid-reroll');
+      return 'data:image/png;base64,ROLL' + calls.gen;
+    };
+    const salvaged = await API.generateScreenedImage(entry, { pool: [] }, 'my legs on the couch', {});
+    ok(salvaged === 'data:image/png;base64,ROLL1',
+      'gate: a dead re-roll falls back to the flagged original, never to nothing');
+
+    /* The real _screenPhoto: vision content part on the wire, verdict
+       survives a chatty reply, and an unparseable one is null (fail-open). */
+    API._generateImage = realGen; API._screenPhoto = realScreen; API._onImageScreen = realHook;
+    const realPC = API._plainCompletion;
+    let wire = null;
+    API._plainCompletion = async (s, sysMsg, parts) => { wire = { sysMsg, parts }; return 'Sure! {"flagged": true, "reason": "extra fingers"}'; };
+    const v = await API._screenPhoto({ pool: [] }, 'data:image/png;base64,AA', true);
+    ok(Array.isArray(wire.parts) && wire.parts.some(p => p && p.type === 'image_url'),
+      'gate: screening sends the photo as a vision content part');
+    ok(v && v.flagged === true && /extra fingers/.test(v.reason), 'gate: verdict survives a chatty JSON reply');
+    API._plainCompletion = async () => 'no json here at all';
+    ok((await API._screenPhoto({ pool: [] }, 'data:image/png;base64,AA', true)) === null,
+      'gate: an unparseable screening reply is null, not a guess');
+    API._plainCompletion = realPC;
+  })());
+
+  /* The wire: the chat photo path routes through the gate and ledgers
+     flags; the debug lens (testlook) stays RAW — it exists to show the
+     pipeline's unscreened output. */
+  const appSrc = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  ok(/generateScreenedImage\(/.test(appSrc), 'wire: deliverBubble routes chat photos through the gate');
+  ok(/_onImageScreen\s*=/.test(appSrc) && /screened:\s*true/.test(appSrc),
+    'wire: flagged screenings land in the imgerr ledger');
+  ok(/_onImageScreen\s*=\s*null/.test(appSrc), 'wire: the screen hook is cleared in the finally, like _onImageDecline');
+  const tlIdx = appSrc.indexOf('runTestLook');
+  ok(tlIdx > 0 && !/generateScreenedImage/.test(appSrc.slice(tlIdx, tlIdx + 4000)),
+    'wire: testlook stays on the raw generateImage path (the lens is unscreened by design)');
+}
+
 Promise.allSettled(global.__asyncChecks || []).then(() => {
   console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
     + (intendedRed ? ', ' + intendedRed + ' intended-red (expected \u2014 see RED* lines)' : ''));

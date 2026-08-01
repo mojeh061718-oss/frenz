@@ -1,0 +1,134 @@
+[
+  {
+    "tag": "00-reference",
+    "endpoint": "/images/generations",
+    "ms": 7882,
+    "status": 200,
+    "bytes": 411020,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/00-reference.png"
+  },
+  {
+    "tag": "01-scene-couch",
+    "endpoint": "/images/edits",
+    "ms": 5787,
+    "status": 200,
+    "bytes": 370840,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/01-scene-couch.png"
+  },
+  {
+    "tag": "02-scene-kitchen",
+    "endpoint": "/images/edits",
+    "ms": 7032,
+    "status": 200,
+    "bytes": 459132,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/02-scene-kitchen.png"
+  },
+  {
+    "tag": "03-scene-beach",
+    "endpoint": "/images/edits",
+    "ms": 5883,
+    "status": 200,
+    "bytes": 517748,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/03-scene-beach.png"
+  },
+  {
+    "tag": "04-outfit-sundress",
+    "endpoint": "/images/edits",
+    "ms": 5751,
+    "status": 200,
+    "bytes": 464384,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/04-outfit-sundress.png"
+  },
+  {
+    "tag": "05-outfit-hoodie",
+    "endpoint": "/images/edits",
+    "ms": 6335,
+    "status": 200,
+    "bytes": 466924,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/05-outfit-hoodie.png"
+  },
+  {
+    "tag": "06-full-pipeline",
+    "endpoint": "/images/edits",
+    "ms": 6582,
+    "status": 200,
+    "bytes": 388156,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/06-full-pipeline.png"
+  },
+  {
+    "tag": "07-control-generations",
+    "endpoint": "/images/generations",
+    "ms": 6578,
+    "status": 200,
+    "bytes": 363208,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/07-control-generations.png"
+  },
+  {
+    "tag": "08-face-reference",
+    "endpoint": "/images/generations",
+    "ms": 4229,
+    "status": 200,
+    "bytes": 399792,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/08-face-reference.png"
+  },
+  {
+    "tag": "09-face-cafe",
+    "endpoint": "/images/edits",
+    "ms": 5213,
+    "status": 200,
+    "bytes": 340792,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/09-face-cafe.png"
+  },
+  {
+    "tag": "10-face-park",
+    "endpoint": "/images/edits",
+    "ms": 6443,
+    "status": 200,
+    "bytes": 449304,
+    "keys": [
+      "b64_json",
+      "mime_type"
+    ],
+    "file": "/tmp/claude-0/-home-user-frenz/18527dd8-ff4e-510a-979a-85fdef30b328/scratchpad/spike-edits/out/10-face-park.png"
+  }
+]

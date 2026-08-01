@@ -3195,6 +3195,82 @@ const ClaudeAPI = {
     throw declined || new Error('Image generation failed.');
   },
 
+  /* ---------------- photo quality gate (v10.31) ----------------
+     The re-framing ladder only ever fires on a DECLINE (400/422 or a
+     moderation_reason) — a successful 200 with six fingers shipped straight
+     into the thread, and _IMAGE_NEGATIVE's "extra fingers, deformed hands"
+     line is dead weight on the xAI route, which takes no negative-prompt
+     parameter (Bedrock's negativeText is the only reader). This gate is the
+     success-path counterpart: one vision screening of the returned image,
+     and if it flags a hard defect, ONE re-roll of the same framing (the
+     framing hash is deterministic per description+day, so the retry is the
+     same shot re-taken, not a different photo).
+
+     The gate can never block a photo. Its only power is one extra roll:
+     unscreenable → ship, screening crash → ship, flagged re-roll → ship the
+     re-roll, dead re-roll → ship the flagged original. Two flags in a row is
+     the model's day, not a reason to send nothing — a photo the gate ate
+     would be a new failure mode wearing a quality badge (invariant 1: the
+     nearest good case is our OWN camera register, which orders tilt, grain,
+     flash and clutter on purpose; the screen prompt whitelists that register
+     before it lists a single defect, and never asks for aesthetics). */
+  _screenSystem(faceForbidden) {
+    return 'You are inspecting one casual phone photo for GENERATION DEFECTS only. The photo is SUPPOSED to look amateur — careless tilted framing, grain, flat colour, harsh flash, blown highlights, clutter and imperfect exposure are all correct here, and none of them is a defect. You are not judging beauty or composition. Flag ONLY hard generation defects: malformed anatomy (extra, missing, or deformed fingers, hands, or limbs; impossible body geometry; a duplicated body part or a second partial figure merged into the subject)'
+      + (faceForbidden ? '; a clearly visible human face (this particular photo must not contain one — a face hidden behind a phone, cropped past the frame edge, or fully out of frame is correct and is not a defect)' : '')
+      + '; rendered text, captions, watermarks, or app interface baked into the image. Reply with ONLY JSON: {"flagged": true or false, "reason": "shortest honest phrase, empty when clean"}.';
+  },
+  /* Verdict or null — null means "could not screen" and the caller treats it
+     as a pass. Rides _plainCompletion, so it uses the CHAT pool (photosOnly
+     entries are invisible to it by design) and costs one vision call; on a
+     setup with no OpenAI-shaped chat entry it returns null and the gate is
+     simply off. Never throws: a screening failure must never outrank a
+     working photo. */
+  async _screenPhoto(settings, dataUrl, faceForbidden) {
+    try {
+      const text = await this._plainCompletion(settings, this._screenSystem(faceForbidden), [
+        { type: 'text', text: 'Inspect this photo.' },
+        { type: 'image_url', image_url: { url: dataUrl } }
+      ]);
+      if (!text) return null;
+      const parsed = this._looseParse(text);
+      if (!parsed || typeof parsed.flagged !== 'boolean') return null;
+      return { flagged: parsed.flagged, reason: String(parsed.reason || '').slice(0, 200) };
+    } catch { return null; }
+  },
+  /* Pure policy, so the whole decision table is assertable headlessly.
+     8000ms floor mirrors the ladder's own re-frame floor above. */
+  _photoGateDecision(verdict, attempt, budgetLeftMs) {
+    if (!verdict || !verdict.flagged) return 'ship';
+    if (attempt >= 1) return 'ship';
+    if (budgetLeftMs < 8000) return 'ship';
+    return 'reroll';
+  },
+  /* Screening callback for the app's ledger — same contract as
+     _onImageDecline: set around a send, cleared in its finally, and a
+     throwing hook never breaks the send. */
+  _onImageScreen: null,
+  /* The chat photo path. testlook and testImage stay on generateImage: the
+     lens exists to show the pipeline's RAW output, and screening it would
+     hide exactly what it is for. */
+  generateScreenedImage(entry, settings, description, opts) {
+    return this.withBudget(this.PHOTO_BUDGET_MS, async () => {
+      const first = await this._generateImage(entry, description, opts);
+      // Every current framing hides the face by construction (_FRAMING), so
+      // a visible face on the success path is a defect. If the edits-spike
+      // decision ever flips faces on, this flag follows the framing.
+      const faceForbidden = true;
+      const v = await this._screenPhoto(settings, first, faceForbidden);
+      if (v && this._onImageScreen) { try { this._onImageScreen(v, 0); } catch (_) { /* ledger never breaks a send */ } }
+      if (this._photoGateDecision(v, 0, this._budgetLeft()) !== 'reroll') return first;
+      let second;
+      try { second = await this._generateImage(entry, description, opts); }
+      catch (_) { return first; }   // a dead re-roll falls back to the flagged original, never to nothing
+      const v2 = await this._screenPhoto(settings, second, faceForbidden);
+      if (v2 && this._onImageScreen) { try { this._onImageScreen(v2, 1); } catch (_) { /* as above */ } }
+      return second;                // ship regardless — the gate's power is one extra roll, nothing more
+    });
+  },
+
   /* xAI's images route. No size/quality/style params (quality is the model
      slug, dimensions are aspect_ratio) and no negative-prompt field — the
      exclusions ride inline in the prompt instead. b64_json, not url: the

@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.30';
+const APP_JS_VERSION = '10.31';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -1332,8 +1332,25 @@ async function deliverBubble(friend, b, atTs) {
       desc: String(desc || '').slice(0, 160)
     }).catch(() => {});
   };
+  // The success-path counterpart of the decline ledger: a screening that
+  // FLAGGED a render (six fingers, baked-in text, a face where the framing
+  // forbade one) is worth a row whether or not the re-roll fixed it — clean
+  // screenings are the normal case and stay out of the ledger.
+  ClaudeAPI._onImageScreen = (v, attempt) => {
+    if (!v || !v.flagged) return;
+    DB.addEvent({
+      friendId: friend.id, ts: ClaudeAPI._now(), kind: 'imgerr',
+      screened: true, attempt,
+      message: String(v.reason || '').slice(0, 200),
+      desc: String(desc || '').slice(0, 160)
+    }).catch(() => {});
+  };
   try {
-    const dataUrl = await ClaudeAPI.generateImage(entry, desc, {
+    // generateScreenedImage = the same photo pipeline plus the quality gate
+    // (one vision screening, at most one re-roll of the same framing, never
+    // blocks). testlook stays on raw generateImage — the lens is unscreened
+    // by design.
+    const dataUrl = await ClaudeAPI.generateScreenedImage(entry, Settings.get(), desc, {
       // who she is — the appearance sheet is the identity anchor (no image
       // route here takes a seed; consistency comes from the sheet plus the
       // faceless framings)
@@ -1371,6 +1388,7 @@ async function deliverBubble(friend, b, atTs) {
     return null;
   } finally {
     ClaudeAPI._onImageDecline = null;
+    ClaudeAPI._onImageScreen = null;
     $('#chat-status').textContent = fmtClock();
   }
 }
