@@ -3346,6 +3346,68 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
     'upload: the face warning shows only while her face is kept out of frame');
   ok(/#f-photoface'\)\.addEventListener\('change'/.test(appSrc3),
     'upload: the warning tracks the face select live, not just on open');
+
+  /* END TO END, the configuration the owner is actually turning on:
+     photoFace 'shown' AND an uploaded reference. Every piece is asserted
+     individually above, but nothing proved the two flags travel together
+     from a friend record all the way to the wire — which is the only thing
+     that matters when someone flips the switch. */
+  global.__asyncChecks = global.__asyncChecks || [];
+  const priorEnd = global.__asyncChecks.slice();
+  global.__asyncChecks.push((async () => {
+    await Promise.allSettled(priorEnd);
+    const realEdit = API._xaiImageEdit, realPlain = API._xaiImageWithRecovery;
+    try {
+      const f = mkFriend('bre');
+      f.profile.photoFace = 'shown';
+      f.profile.referenceImage = 'data:image/jpeg;base64,REF';
+      ok(API._faceShown(f) === true, 'e2e: uploaded reference + shown = face live');
+
+      // Exactly the opts deliverBubble builds for a photo send.
+      const faceShown = API._faceShown(f);
+      const opts = {
+        appearance: f.profile.appearance || '',
+        reference: f.profile.referenceImage || null,
+        faceShown, faceForbidden: !faceShown,
+        heat: API._imageHeat(f)
+      };
+      let sent = null;
+      API._xaiImageEdit = async (entry, model, prompt, w, h, refUrl, avoidText) => {
+        sent = { prompt, refUrl, avoidText };
+        return 'data:image/png;base64,OK';
+      };
+      API._xaiImageWithRecovery = async () => { throw new Error('plain path must not be used'); };
+
+      const out = await API._generateImage({ imageModel: 'grok-imagine-image' }, 'new dress, fit check', opts);
+      ok(out === 'data:image/png;base64,OK', 'e2e: the send completes through the edit route');
+      ok(sent.refUrl === 'data:image/jpeg;base64,REF', 'e2e: the uploaded reference reaches the wire');
+      ok(!/Her face stays out of the picture/.test(sent.avoidText),
+        'e2e: the face exclusion is dropped from the avoid clause');
+      ok(/amateur self-taken phone photo/.test(sent.avoidText),
+        'e2e: every non-face exclusion still rides (counter-rule)');
+      ok(/face is visible above it|face is visible/.test(sent.prompt),
+        'e2e: a fit-check renders as the face-visible mirror, not phone-over-face');
+      ok(!/covers her face completely/.test(sent.prompt), 'e2e: the phone-over-face framing is gone');
+      ok(/same woman as in the reference photo/.test(sent.prompt),
+        'e2e: identity is bound to the uploaded photo, not the sheet');
+      ok(!sent.prompt.includes(f.profile.appearance.slice(0, 40)),
+        'e2e: the appearance sheet stays out (invariant 2 — one authority)');
+
+      // A selfie is now reachable, and it is the mode her own words pick.
+      const selfieOut = await API._generateImage({ imageModel: 'grok-imagine-image' }, 'a quick selfie from the couch', opts);
+      ok(selfieOut && /Her face is in the picture/.test(sent.prompt),
+        'e2e: "selfie" in her own words routes to the face-visible selfie framing');
+
+      // And the safety net inverts: a visible face is no longer a defect.
+      ok(API._screenSystem(!faceShown) === API._screenSystem(false)
+        && !/\bface\b/i.test(API._screenSystem(!faceShown)),
+        'e2e: the quality gate stops flagging visible faces once they are intended');
+    } catch (e) {
+      ok(false, 'e2e: block crashed mid-run', e && e.message);
+    } finally {
+      API._xaiImageEdit = realEdit; API._xaiImageWithRecovery = realPlain;
+    }
+  })());
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {
