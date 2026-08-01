@@ -76,3 +76,24 @@ Run after implementation (plan verification item 2), reference =
   arm's-length front camera, room behind her. 7.0s, no decline.
 
 Both branches of the shipped design behave as the spike predicted.
+
+## v10.33 pre-flight — JPEG data URIs and the downscale target
+
+The upload path needs a downscaled reference: the data URL rides in EVERY
+`/images/edits` body, sits on the friend record, and lands in the backup export.
+Two things were unknown, both now measured (`jpeg-probe.js`):
+
+| Question | Answer |
+|---|---|
+| Does `/images/edits` accept a **JPEG** data URI? | **Yes.** `data:image/jpeg;base64,…` at 768×1024 q85 accepted, 200 with an image, no decline. Every prior spike call had been PNG. |
+| Does a downscaled JPEG reference hold identity as well as the full PNG? | **Yes.** `jpeg-1024-ref.png` (151 KB payload) vs `png-full-ref.png` (401 KB payload), same scene prompt: same woman in both — hair, freckling, build, leg tattoos, wedding ring. No visible fidelity cost. |
+
+Payload arithmetic at 1024px longest edge, from the shipped reference:
+JPEG q85 = 116 KB on disk → **151 KB base64**; PNG = 1.0 MB → **1.34 MB
+base64**. A 9× difference on every photo she sends. Dials fixed at
+**1024px longest edge, JPEG, q0.85**.
+
+**Not measured, and left to the owner's smoke test:** whether a *real
+photograph* (as opposed to a model-generated reference) holds identity and
+clears moderation the same way. Every render in this file used a generated
+reference; that is the honest limit of what has been tested.
