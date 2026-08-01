@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.28';
+const APP_JS_VERSION = '10.29';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -14,18 +14,29 @@ let currentFriend = null;       // friend object while chatting/editing
 let editingId = null;           // friend id being edited, null = creating
 let customizeTemplate = null;   // persona template on the customize screen
 let sending = false;
+let replyFlight = null;         // the in-flight reply turn (see runReply)
 
-/* THE COMPOSER MUST ALWAYS COME BACK.
+/* THE COMPOSER MUST ALWAYS COME BACK — AND MOSTLY, NEVER LEAVE.
 
-   `sending` gates typing, and every path that raises it also lowers it in a
-   finally — which is precisely the assumption that stranded one. A single
-   wrong path and the composer is dead for the rest of the session, and
-   because a stranded send used to re-arm itself in the outbox, closing and
-   reopening the app walked straight back into the same lock.
+   `sending` gates the background machinery (opener sweeps, stranded-send
+   resume), and every path that raises it also lowers it in a finally —
+   which is precisely the assumption that stranded one. A single wrong path
+   and the composer is dead for the rest of the session, and because a
+   stranded send used to re-arm itself in the outbox, closing and reopening
+   the app walked straight back into the same lock.
 
    So the flag is no longer set by hand anywhere. It goes up through
    beginSend(), which arms an absolute ceiling, and comes down through
-   endSend() or the watchdog. Whatever else is wrong, the app stays usable. */
+   endSend() or the watchdog. Whatever else is wrong, the app stays usable.
+
+   What `sending` deliberately does NOT do any more is gray out the send
+   button for the whole request. Real texting lets you type while the other
+   person is typing — so while her reply is still being drafted (the long
+   phase, up to the send budget), a new send simply TRUMPS the in-flight
+   one: same contract the opener path has always had, extended to replies
+   (see replyFlight in runReply). The only blocked window is the few
+   seconds she is actually mid-delivery of bubbles, and that block SAYS so
+   with a toast — never a silent dead tap. */
 /* 180s, not 300: every send path is bounded well under this (chat budget
    150s, photo budget 110s), so anything still "typing" at three minutes is
    dead and the composer comes back. Five minutes of locked composer was
@@ -36,13 +47,13 @@ function releaseComposer() {
   clearTimeout(sendWatchdog);
   sendWatchdog = 0;
   sending = false;
+  // heals any stuck disabled state from older shells; the button is no
+  // longer disabled by the send path itself
   const btn = $('#btn-send');
   if (btn) btn.disabled = false;
 }
 function beginSend() {
   sending = true;
-  const btn = $('#btn-send');
-  if (btn) btn.disabled = true;
   clearTimeout(sendWatchdog);
   sendWatchdog = setTimeout(() => {
     if (!sending) return;
@@ -1408,20 +1419,15 @@ function scrollChat(smooth = true) {
 
 async function sendMessage() {
   if (!currentFriend) return;
-  // A blocked send must SAY so — the silent early-return here was the other
-  // half of the freeze: taps on Send doing nothing, with no sign of why.
-  if (sending) {
-    toast('Still working on the last one — it comes back on its own, or frees up within a couple of minutes.');
-    return;
-  }
   const input = $('#composer-input');
   const text = input.value.trim();
   if (!text) return;
 
   // 'testlook' is a debug lens, not a message: touch NOTHING else — no
   // history, no state, no model call, no acknowledgment, and it does not
-  // even cancel an opener she happens to be drafting. Bare `testlook`
-  // renders the appearance sheet as the fixed neck-down mirror check;
+  // cancel an opener OR a reply she happens to be drafting (which is why it
+  // is handled BEFORE the supersede logic below). Bare `testlook` renders
+  // the appearance sheet as the fixed neck-down mirror check;
   // `testlook <action> [normal|spicy]` (brackets optional) runs the action
   // through the real photo pipeline instead.
   const tl = /^testlook\b([\s\S]*)$/i.exec(text);
@@ -1455,6 +1461,28 @@ async function sendMessage() {
     providerDown({ status: 401, message: 'No Grok key yet — tap to add one' });
     openSettings();
     return;
+  }
+
+  // While her reply is still being DRAFTED, his new text wins: the
+  // in-flight reply is answering a thread that no longer exists, so it is
+  // superseded — discarded whole on arrival, no bubbles, no state — and
+  // this send re-asks with both his messages in the history. Exactly the
+  // opener-flight contract, applied to the reply path. Marked only after
+  // every early-return above, so a send that never launches can't discard
+  // the reply it was supposed to replace. Only two cases still block, and
+  // both SAY so (a silent dead tap is a freeze report): she is mid-delivery
+  // of bubbles (seconds), or the in-flight turn belongs to a different
+  // thread.
+  if (sending) {
+    const f = replyFlight;
+    if (f && !f.delivering && f.friendId === currentFriend.id) {
+      f.superseded = true;
+    } else {
+      toast(f && f.delivering && f.friendId === currentFriend.id
+        ? 'She’s mid-message — give it a couple of seconds.'
+        : 'Still working on the last one — it comes back on its own, or frees up within a couple of minutes.');
+      return;
+    }
   }
 
   beginSend();
@@ -1556,6 +1584,15 @@ async function runTestLook(friend, action, spicy) {
    for the page to be evicted — can be finished on the next open without the
    user retyping a thing. */
 async function runReply(friend, history, settings, lastTs, fallbackPreview, attempt) {
+  // Her in-flight reply yields to his next text, like the opener flight
+  // yields to his send. `superseded` is flipped by sendMessage; from that
+  // moment this flight owns NOTHING — not the typing indicator, not the
+  // status line, not the outbox record, not the watchdog — and its result
+  // (or its error) is discarded whole on arrival. The superseding send
+  // re-reads the friend and rebuilds history itself, so nothing this flight
+  // mutated in memory is ever saved.
+  const flight = { friendId: friend.id, superseded: false, delivering: false };
+  replyFlight = flight;
   // Recorded BEFORE the request leaves, so a page that dies mid-flight leaves
   // a trail rather than a hole. One record per friend: a second attempt at
   // the same unanswered message replaces it instead of queueing up.
@@ -1577,6 +1614,7 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
   // a long reasoning stall reads as "still working" instead of a hang.
   const sentAt = Date.now();
   const slowTick = setInterval(() => {
+    if (flight.superseded) return; // the newer send owns the status line
     const s = Math.round((Date.now() - sentAt) / 1000);
     if (s >= 20 && $('#chat-status').textContent.startsWith('typing')) {
       $('#chat-status').textContent = `typing… (${s}s — long one)`;
@@ -1585,6 +1623,7 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
 
   try {
     const result = await ClaudeAPI.chat(friend, history, settings, lastTs, (attempt, retryErr) => {
+      if (flight.superseded) return; // the newer send owns the status line
       // Say WHY when we know: a rate-limit wait reads as dead air unless
       // named — and say how long it has been, because "reconnecting…" with
       // no clock attached is the thing that feels infinite.
@@ -1597,6 +1636,10 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
           ? `no response — trying elsewhere (${attempt})`
           : `reconnecting… (${attempt})`) + clock;
     });
+    // He kept talking while she was drafting — this reply answers a thread
+    // that no longer exists. Discarded whole, exactly like a trumped
+    // opener: no bubbles, no state, no memories, nothing saved.
+    if (flight.superseded) return;
     providerUp();   // something came back, so whatever was wrong isn't any more
 
     if (result.refusal) {
@@ -1625,7 +1668,12 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
       friend.leftOnRead = 0;
     }
 
-    // reveal bubbles one by one with human-ish pacing
+    // reveal bubbles one by one with human-ish pacing. From here to the
+    // save this turn is COMMITTED: bubbles are landing in the thread, so a
+    // new send can no longer trump it (sendMessage blocks with a toast for
+    // these few seconds instead — messages that have started arriving
+    // don't get unsent).
+    flight.delivering = true;
     const previews = [];
     for (let i = 0; i < result.bubbles.length; i++) {
       const b = result.bubbles[i];
@@ -1711,6 +1759,10 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
       }).catch(() => { /* next turn will try again */ });
     }
   } catch (err) {
+    // An outage of a turn that was already trumped is a non-event: the
+    // newer send is the one whose failure (or success) the user hears
+    // about. No badge, no note, no ledger entry for a discarded draft.
+    if (flight.superseded) return;
     $('#typing').classList.add('hidden');
     providerDown(err);
     // The corner badge is easy to miss mid-conversation — say it in the
@@ -1730,12 +1782,19 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
     }).catch(() => {});
   } finally {
     clearInterval(slowTick);
-    endSend();
-    ClaudeAPI._notify = null;
-    // Settled either way — a delivered reply and a reported failure are both
-    // finished business, and neither should be replayed on the next open.
-    DB.clearOutbox('send-' + friend.id).catch(() => {});
-    $('#chat-status').textContent = fmtClock();
+    if (replyFlight === flight) replyFlight = null;
+    if (!flight.superseded) {
+      endSend();
+      ClaudeAPI._notify = null;
+      // Settled either way — a delivered reply and a reported failure are
+      // both finished business, and neither should be replayed on the next
+      // open.
+      DB.clearOutbox('send-' + friend.id).catch(() => {});
+      $('#chat-status').textContent = fmtClock();
+    }
+    // A superseded flight owns nothing: the trumping send re-armed the
+    // watchdog, re-set _notify, and re-wrote the same outbox record —
+    // releasing or clearing any of them here would sabotage the live send.
   }
 }
 
@@ -1799,7 +1858,10 @@ async function resumeIfStranded(friend) {
       (rec.attempts || 0) + 1);
   } finally {
     resuming = false;
-    endSend();
+    // If the user trumped the resumed turn with a fresh send of his own,
+    // that newer flight owns the lock and the watchdog now — releasing
+    // here would drop them mid-request.
+    if (!replyFlight) endSend();
   }
 }
 
