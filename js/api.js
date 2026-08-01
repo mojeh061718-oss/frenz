@@ -2613,7 +2613,20 @@ const ClaudeAPI = {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       if (left() <= 0) break;
       try {
-        const res = await this._sendEntry(entry, friend, history, settings, lastMessageTs);
+        // The FIRST attempt runs under a tighter ceiling than the raw 90s
+        // fetch timeout. Every reply that actually arrives lands well inside
+        // it (the August archive's slowest send was 29.4s including a hidden
+        // regenerate), so a first attempt still dark at 45s is a stall, not
+        // a slow reply — and the old shape meant staring at "typing…" for a
+        // minute and a half before the machinery even tried again, which is
+        // most of what "it gets stuck and there's nothing I can do" feels
+        // like. Implemented as a nested budget (withBudget only tightens),
+        // so every fetch inside the attempt inherits the ceiling; retries
+        // keep the full timeout in case the provider is genuinely slow
+        // tonight and the reply needs the room.
+        const res = attempt === 1
+          ? await this.withBudget(this.FIRST_ATTEMPT_MS, () => this._sendEntry(entry, friend, history, settings, lastMessageTs))
+          : await this._sendEntry(entry, friend, history, settings, lastMessageTs);
         // A reply made entirely of pleasantries is not a reply. Regenerate it
         // once, with the anti-filler rule pushed to the generation point.
         // EXCEPT when he is signing off or pulling back: "you too" is the
@@ -4502,6 +4515,10 @@ const ClaudeAPI = {
      arrives well inside these, so the only thing a generous ceiling bought
      was a longer stare at "typing…" when nothing was coming at all. */
   TIMEOUTS: { chat: 90000, image: 45000, list: 20000, probe: 30000 },
+  /* Ceiling for a send's FIRST attempt only (see _chatOnEntry): stall
+     recovery kicks in at 45s instead of the full chat timeout, while
+     retries keep the generous ceiling for a genuinely slow night. */
+  FIRST_ATTEMPT_MS: 45000,
 
   /* A WHOLE send gets one budget, and it is nothing like the sum of its
      parts. The old arithmetic was 4 attempts x 150s + backoff = 611s per

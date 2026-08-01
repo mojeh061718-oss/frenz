@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.29';
+const APP_JS_VERSION = '10.30';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -1591,7 +1591,7 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
   // (or its error) is discarded whole on arrival. The superseding send
   // re-reads the friend and rebuilds history itself, so nothing this flight
   // mutated in memory is ever saved.
-  const flight = { friendId: friend.id, superseded: false, delivering: false };
+  const flight = { friendId: friend.id, superseded: false, delivering: false, sentAt: Date.now() };
   replyFlight = flight;
   // Recorded BEFORE the request leaves, so a page that dies mid-flight leaves
   // a trail rather than a hole. One record per friend: a second attempt at
@@ -1617,7 +1617,10 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
     if (flight.superseded) return; // the newer send owns the status line
     const s = Math.round((Date.now() - sentAt) / 1000);
     if (s >= 20 && $('#chat-status').textContent.startsWith('typing')) {
-      $('#chat-status').textContent = `typing… (${s}s — long one)`;
+      // "tap to retry" is live, not decoration — the status line's click
+      // handler (boot wiring) supersedes this flight and re-asks. The one
+      // thing worse than a stuck send is a stuck send you can only watch.
+      $('#chat-status').textContent = `typing… (${s}s — tap to retry)`;
     }
   }, 5000);
 
@@ -1771,8 +1774,16 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
     const note = document.createElement('div');
     note.className = 'msg sys transient-note';
     note.textContent = (err && err.quota)
-      ? "Didn't go through — Grok is rate-limiting this key right now. Give it a minute; it recovers on its own."
-      : "Didn't go through — " + ((err && err.message) || 'connection problem') + ' Your message is still here; try again.';
+      ? "Didn't go through — Grok is rate-limiting this key right now. Give it a minute, then tap here to retry."
+      : "Didn't go through — " + ((err && err.message) || 'connection problem') + ' Your message is still here — tap here to retry.';
+    // The note IS the retry button: his message is already in the thread,
+    // so recovery is one tap, not a re-type.
+    note.style.cursor = 'pointer';
+    note.addEventListener('click', () => {
+      if (sending) return; // a newer turn is already running
+      note.remove();
+      retryReply(friend.id).catch(() => {});
+    });
     $('#chat-messages').appendChild(note);
     scrollChat();
     DB.addEvent({
@@ -1863,6 +1874,31 @@ async function resumeIfStranded(friend) {
     // here would drop them mid-request.
     if (!replyFlight) endSend();
   }
+}
+
+/* The user's own retry lever, reachable from two places: tapping the
+   status line while a send runs long (the tapper supersedes the stuck
+   flight first), and tapping a failure note after a send died. His message
+   is already persisted in the thread, so a retry is simply asking for the
+   reply again — same shape as the stranded-send resume, minus its gating,
+   because this one is an explicit human decision. */
+async function retryReply(friendId) {
+  if (replyFlight && !replyFlight.superseded) return; // one live turn at a time
+  const friend = await DB.getFriend(friendId);
+  if (!friend) return;
+  const msgs = await DB.getMessages(friend.id).catch(() => []);
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== 'user') return; // she already answered
+  const settings = Settings.get();
+  if (!ClaudeAPI.activeEntries(settings).length) return;
+  if (currentFriend && currentFriend.id === friend.id) currentFriend = friend;
+  beginSend(); // re-arms the watchdog whether or not a flight was live
+  const prior = msgs.slice(0, -1);
+  const history = msgs
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => ({ role: m.role, text: m.text }));
+  await runReply(friend, history, settings,
+    prior.length ? prior[prior.length - 1].ts : null, last.text, 1);
 }
 
 /* Background notifications are the closest a serverless app gets to push:
@@ -2434,6 +2470,19 @@ function init() {
   input.addEventListener('input', () => { autoGrow(input); updateSendButton(); });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  // The status line's "tap to retry" (armed by runReply's slow ticker once
+  // a send has run 20s+): supersede the stuck flight and ask again. Guarded
+  // to the drafting phase of THIS thread's own turn — a fast send, a
+  // delivery in progress, or another thread's flight all ignore the tap.
+  $('#chat-status').addEventListener('click', () => {
+    const f = replyFlight;
+    if (!f || f.superseded || f.delivering) return;
+    if (!currentFriend || f.friendId !== currentFriend.id) return;
+    if (Date.now() - f.sentAt < 20000) return;
+    f.superseded = true;
+    toast('Gave up on that one — asking again.');
+    retryReply(f.friendId).catch(() => {});
   });
 
   // she may have texted while he was away — populate the main screen first

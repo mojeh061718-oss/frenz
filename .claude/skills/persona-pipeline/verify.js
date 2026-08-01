@@ -2662,6 +2662,39 @@ console.log('\n== aug-archive: direct fetch reads the body under the timer ==');
   })());
 }
 
+console.log('\n== aug-archive: first attempt runs under the stall ceiling ==');
+{
+  // A stalled first attempt must fail fast (FIRST_ATTEMPT_MS) so the retry
+  // machinery moves at 45s, not 90 — while retries keep the full room.
+  global.__asyncChecks = global.__asyncChecks || [];
+  global.__asyncChecks.push((async () => {
+    // Defer past the synchronous main pass: the stub below must never be
+    // the _sendEntry the gemma wire test (later in this file) observes.
+    await new Promise(r => setTimeout(r, 0));
+    const seen = [];
+    const origSend = API._sendEntry;
+    const origPause = API._pause;
+    API._sendEntry = async function () {
+      seen.push(this._budgetLeft());
+      const e = new Error('stall'); e.retryable = true; e.transport = true; throw e;
+    };
+    API._pause = async () => {};
+    try {
+      const tok = API._openBudget(API.SEND_BUDGET_MS);
+      try { await API._chatOnEntry({ id: 't' }, { profile: {} }, [], {}, null, null, tok); }
+      catch (_) { /* expected — every attempt stalls */ }
+      API._closeBudget(tok);
+      ok(seen.length >= 2, 'stalling attempts still retry (' + seen.length + ' attempts)');
+      ok(seen[0] <= API.FIRST_ATTEMPT_MS, 'attempt 1 is capped at the stall ceiling (' + Math.round(seen[0] / 1000) + 's)');
+      ok(seen[1] > API.FIRST_ATTEMPT_MS, 'attempt 2 gets the full remaining budget back (' + Math.round(seen[1] / 1000) + 's)');
+    } finally {
+      API._sendEntry = origSend;
+      API._pause = origPause;
+      API._budgets = [];
+    }
+  })());
+}
+
 console.log('\n== aug-archive: Anna register — rule and examples pull together ==');
 {
   const anna = mkFriend('anna');
