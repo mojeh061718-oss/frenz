@@ -350,7 +350,16 @@ const ClaudeAPI = {
       p.style ? `Your texting style: ${p.style}` : 'You text like a normal person: casual, lowercase sometimes, short messages.',
       'Most texts are PLAIN — ordinary talk with no craft in it. Plain is the baseline, and the bits land BECAUSE of it: a feed where every message is a crafted little quip reads as a sitcom script, not a person. Spend the funny where it counts and let the rest just be talk.',
       'Swearing is normal texture: "shit", "fuck", "hell" go where a real person would put them — emphasis, disbelief, affection, a stubbed toe. Calibrate to who you are and who you\'re talking to, and never perform it; sanitized speech is as fake as forced edge.',
-      'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. Typos, lowercase, dropped punctuation, and stretched words ("tireddddd") are correct when they fit your voice.',
+      // Register-split (invariant 5: co-occurring blocks must not disagree).
+      // The one-size line named "lowercase, dropped punctuation" as correct
+      // for EVERYONE — which sat directly against a sentence-case style
+      // field, and lost: the August archive measured Anna at 29% capitalized
+      // starts against a style that says "Sentence case… punctuation mostly
+      // correct". Routed by the same _exampleBank read the few-shots use, so
+      // the rule and the examples can never pull apart again.
+      this._exampleBank(p.style) === this._EXAMPLES_PUNCTUATED
+        ? 'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. A quick typo is human — but your capitals and punctuation are YOURS: you write in real sentences even when you type fast, and sliding into lazy lowercase would read as someone else holding your phone.'
+        : 'Real texting rhythm: mostly short bubbles, not essays. Sometimes one word. Sometimes you double-text. Typos, lowercase, dropped punctuation, and stretched words ("tireddddd") are correct when they fit your voice.',
       'A laugh token ("lol", "lmao", "haha") is real laughter, not punctuation. If you aren\'t actually amused, there is no laugh in the message; and opening message after message with one is a tic no real person has. Most of your messages carry no laugh token at all.',
       'Never commentate the game. Scoring or reviewing his lines — noting that he\'s bold, that you see what he did, that one landed, that he\'s really trying — is a spectator move, and you are not a spectator. React from INSIDE the moment with content: an answer, a counter, a laugh, a story, a jab. The conversation is the thing; never talk ABOUT the conversation.',
       'Every message you send carries something: a specific detail from your life, an opinion, a real reaction, a question you actually want answered, or a piece of a story. A message that carries none of those — an acknowledgment, a well-wish, a vague status like "not much" or "pretty quiet", a restatement of what he just said — is not a text, it is a receipt. Nobody texts receipts to someone they like. If you have nothing, be short and real ("ugh" / "i know") or say the specific true thing, but never fill the space with courtesy.',
@@ -1982,9 +1991,16 @@ const ClaudeAPI = {
     const hourNow = new Date(this._now()).getHours();
     const spanWord = hourNow >= 17 || hourNow < 3 ? 'Tonight' : 'Today';
     const texture = this._lifeTexture(friend);
+    // Scenery, once (the authored dial): after she has mentioned it, the
+    // standing line flips from an offer to a boundary — the August archive's
+    // porch, narrated twice in three replies, is what an offer that never
+    // learns it was accepted produces.
+    const textureSaid = texture && this._saidInHistory(texture, history, 2);
     const tonight = ['## ' + spanWord + ' (private — your side of the table)',
       `Your energy: ${this.sessionVibe(friend.id, undefined, friend.vibeSeed, friend.burstStart)}. ` + (texture
-        ? `Your actual evening so far: ${texture} It comes up only when it fits.`
+        ? (textureSaid
+          ? `Your actual evening so far: ${texture} You already told him where you are and what you're doing — that's done; it doesn't come up again unless he asks.`
+          : `Your actual evening so far: ${texture} It comes up only when it fits.`)
         : `What you're actually doing right now is yours to invent fresh, different from last time.`)];
     if (this._drinkTell(history)) {
       tonight.push('You said it yourself in this conversation: you have been DRINKING tonight, more than a polite glass. That register is live right now — whatever drinking does to you specifically, your traits and style already say — and at minimum you are visibly looser, bolder, and less careful than sober-you. A person three drinks in who texts in perfectly measured sober sentences is nobody at all.');
@@ -2011,7 +2027,13 @@ const ClaudeAPI = {
     // to keep him talking). Skipping the call also leaves the 21-day
     // no-repeat slot unburned for a night that can actually use it.
     const beat = (openerRun || signingOff || unresLive || sigLive) ? null : this._lifeBeat(friend);
-    if (beat) tonight.push('Meanwhile, something real happened in your world: ' + beat + ' It is yours — bring it up if a natural opening appears (as a story, a complaint, or an invitation), once, in your own words. If no opening comes tonight, it keeps.');
+    // Same flip as the texture: a told story is TOLD. The beat rides every
+    // prompt of its day, and without this the "bring it up" offer stood
+    // after she had already brought it up — measured live as the same dog
+    // story delivered twice in one five-reply evening.
+    if (beat) tonight.push(this._saidInHistory(beat, history, 3)
+      ? 'Meanwhile, the thing from your world today — ' + beat + ' — you ALREADY told him about. It is told: no second telling, no reworded re-announcement. It only comes back if HE asks about it, and then with something genuinely new.'
+      : 'Meanwhile, something real happened in your world: ' + beat + ' It is yours — bring it up if a natural opening appears (as a story, a complaint, or an invitation), once, in your own words. If no opening comes tonight, it keeps.');
     // the "not a mirror" rule lives ONCE, in the persona's '## Your own will'
     // section — repeating it here made it outweigh single-stated rules
     // (audit #9); only the per-day initiative color belongs in this block
@@ -2295,9 +2317,12 @@ const ClaudeAPI = {
       : '') + (shapeNote || '');
     // consume-once: the flag must not leak into later turns (or later tests)
     const wasStrict = this._strictNext;
+    const strictNote = this._strictNoteNext;
     this._strictNext = false;
+    this._strictNoteNext = null;
     const strict = wasStrict
-      ? 'That last attempt was empty agreement — pleasantries, or his own words handed back with a "haha yeah" in front. Do not do that. This reply must carry something of YOURS: a specific detail from your actual life, an opinion (including one that differs from his), a genuine reaction in your own words, or a question you actually want answered. Echoing his phrasing back is the least alive thing you can send. '
+      ? (strictNote
+        || 'That last attempt was empty agreement — pleasantries, or his own words handed back with a "haha yeah" in front. Do not do that. This reply must carry something of YOURS: a specific detail from your actual life, an opinion (including one that differs from his), a genuine reaction in your own words, or a question you actually want answered. Echoing his phrasing back is the least alive thing you can send. ')
       : '';
     return `[ ${strict}Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}${rut}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
@@ -2511,7 +2536,7 @@ const ClaudeAPI = {
     const budgetTok = this._openBudget(this.SEND_BUDGET_MS);
     try {
     for (const entry of entries) {
-      if (this._budgetLeft() <= 0) {
+      if (this._tokenLeft(budgetTok) <= 0) {
         skipped.push({ label: entry.label || entry.id, keyed: this._entryKeyed(entry, settings), reason: 'no time left in this send' });
         continue;
       }
@@ -2520,7 +2545,7 @@ const ClaudeAPI = {
         continue;
       }
       try {
-        const result = await this._chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry);
+        const result = await this._chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry, budgetTok);
         this._noteServed(entry);
         if (result.bubbles) {
           // [noreply] stays inert for utility friends — a tool always answers
@@ -2541,7 +2566,7 @@ const ClaudeAPI = {
         lastErr = err;
       }
     }
-    if (this._budgetLeft() <= 0) {
+    if (this._tokenLeft(budgetTok) <= 0) {
       const secs = Math.round((this._now() - startedAt) / 1000);
       const dead = new Error(`No answer after ${secs}s. Your message is saved — send it again when you're ready.`);
       dead.transport = true;
@@ -2567,10 +2592,17 @@ const ClaudeAPI = {
 
   /* Per-entry retry with backoff. After the attempts are spent, quota and
      transport errors are marked for failover to the next pool entry. */
-  async _chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry) {
+  async _chatOnEntry(entry, friend, history, settings, lastMessageTs, onRetry, budgetTok) {
     const MAX_ATTEMPTS = 4;
     let lastErr;
     let timeouts = 0;
+    // Life-or-death decisions read THIS SEND'S OWN token, never the global
+    // minimum: the global can be dragged to zero by another flow's leaked or
+    // frozen-tab token (which then failed every fresh send instantly), and
+    // after a leak is pruned the global can read Infinity for a flow whose
+    // own time is genuinely gone. Fetch/pause ceilings still use the global
+    // minimum — tightest-live-token is correct for only-tighten limits.
+    const left = () => budgetTok ? this._tokenLeft(budgetTok) : this._budgetLeft();
     let strictRegen = false; // a filler/parrot reply forced a silent redo
     // _strictNext discipline: between arming (below) and consumption (the
     // request rebuild in _phi) there is no await, so a concurrent send can
@@ -2579,7 +2611,7 @@ const ClaudeAPI = {
     // send built next. The finally clears it on every exit.
     try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      if (this._budgetLeft() <= 0) break;
+      if (left() <= 0) break;
       try {
         const res = await this._sendEntry(entry, friend, history, settings, lastMessageTs);
         // A reply made entirely of pleasantries is not a reply. Regenerate it
@@ -2596,13 +2628,27 @@ const ClaudeAPI = {
         // parrot/rerun detectors are calibrated for companion chat, and a
         // prompt revision legitimately reuses most of the prior reply.
         if (res && res.bubbles && attempt < 2 && !windingDown && !this._underPressure()
-            && !this._isUtility(friend)
-            && (this._isFillerReply(res.bubbles) || this._isParrotReply(res.bubbles, history) || this._isRerunReply(res.bubbles, history))) {
-          this._strictNext = true;
-          strictRegen = true;
-          continue;
+            && !this._isUtility(friend)) {
+          // Ordered: the emptiness guards first (their strict text covers
+          // that failure), then the two ignored-advisory guards with their
+          // own tailored notes — each is one silent redo, never a loop.
+          let strictNote;
+          if (this._isFillerReply(res.bubbles) || this._isParrotReply(res.bubbles, history) || this._isRerunReply(res.bubbles, history)) {
+            strictNote = '';   // _phi's default empty-agreement text
+          } else if (this._isShapeRutReply(res.bubbles, history)) {
+            strictNote = this._SHAPE_STRICT;
+          } else if (this._isDodgeRerun(res.bubbles, history)) {
+            strictNote = this._DODGE_STRICT;
+          }
+          if (strictNote !== undefined) {
+            this._strictNext = true;
+            this._strictNoteNext = strictNote || null;
+            strictRegen = true;
+            continue;
+          }
         }
         this._strictNext = false;
+        this._strictNoteNext = null;
         // attempts and the invisible quality-regenerate are part of the
         // send's story — stamp them on the meta for the analysis archive
         if (res && res.meta) { res.meta.attempts = attempt; res.meta.strictRegen = strictRegen; }
@@ -2615,17 +2661,18 @@ const ClaudeAPI = {
         // to the next provider, which is where the actual chance of a reply
         // now lives. Ordinary transport blips keep their four attempts.
         timeouts += err && err.timeout ? 1 : 0;
-        const spent = attempt >= MAX_ATTEMPTS || timeouts >= 2 || this._budgetLeft() <= 0;
+        const spent = attempt >= MAX_ATTEMPTS || timeouts >= 2 || left() <= 0;
         if (!err.retryable || spent) break;
         if (onRetry) onRetry(attempt, err);
         await this._pause(this._retryDelay(err, attempt));
-        if (this._budgetLeft() <= 0) break;
+        if (left() <= 0) break;
       }
     }
     if (lastErr && (lastErr.quota || lastErr.transport)) lastErr.failover = true;
     throw lastErr;
     } finally {
       this._strictNext = false;
+      this._strictNoteNext = null;
     }
   },
 
@@ -4069,9 +4116,16 @@ const ClaudeAPI = {
     // thread means she never asks him ANYTHING — all serve, no return —
     // and this line used to call that "healthy" (the July archive: 0
     // questions in 108 messages, labeled green).
-    const qLabel = qRate > 0.35 ? ' — ELEVATED, interviewing instead of talking'
+    // Verdicts need a real sample on BOTH tails. The zero-tail always had
+    // its >=20 floor; the elevated tail had none, so a 10-message scenario
+    // thread (greeting included) shouted "interviewing" over what was two
+    // teasing questions in five generated replies (the August archive's
+    // Anna flag). Under 10 replies the rate is reported without a verdict.
+    const qJudged = assistant.length >= 10;
+    const qHigh = qRate > 0.35 && qJudged;
+    const qLabel = qHigh ? ' — ELEVATED, interviewing instead of talking'
       : (qShaped === 0 && assistant.length >= 20 ? ' — ZERO across the whole thread: she never asks him anything, which is its own bot tell'
-        : ' — healthy');
+        : (!qJudged ? ` — thin sample (${assistant.length} replies), not judged` : ' — healthy'));
     out.push(`- **Questions from her**: ${Math.round(qRate * 100)}% question-shaped (raw "?"-endings ${Math.round(100 * (assistant.length ? qMark / assistant.length : 0))}%)${qLabel}`);
 
     // agreement-opener shape (archive counterpart of _shapeRut): rate over
@@ -4158,7 +4212,7 @@ const ClaudeAPI = {
       ...(ruts.size ? [`${ruts.size} worn phrase${ruts.size > 1 ? 's' : ''}`] : []),
       ...(echoAvg >= 0.35 ? ['mirroring elevated'] : []),
       ...(selfEcho.spikes.length ? [`${selfEcho.spikes.length} self-echo rerun${selfEcho.spikes.length > 1 ? 's' : ''}`] : []),
-      ...(qRate > 0.35 ? ['interview tell'] : []),
+      ...(qHigh ? ['interview tell'] : []),
       ...(shape.n >= 5 && shape.worst >= 3 ? ['agreement-opener shape rut'] : []),
       ...(pressRefs.length ? [`${pressRefs.length} pressed loop${pressRefs.length > 1 ? 's' : ''}`] : []),
       ...(flatCadence ? ['flat cadence'] : []),
@@ -4478,7 +4532,25 @@ const ClaudeAPI = {
      up to the stagger between them. That is a bounded early give-up, the
      safe direction; the unbounded hang is gone. */
   _budgets: [],
+  /* A token more than this far past its own deadline can only belong to a
+     flow that leaked (a frozen tab mid-send, a hung await, a future bug):
+     every well-behaved flow re-checks its budget within seconds of expiry
+     and closes in a finally, and the legitimate overruns are all smaller
+     (the SW handoff grace is 4s; pause forgiveness EXTENDS the deadline,
+     never overruns it). Pruning it means one stuck flow can never again
+     pin the global minimum at zero and instantly fail every send the user
+     makes for the rest of the session — which is exactly what the August
+     archive's "No answer after 0s" pair was. The pruned flow is not
+     resurrected: its own life checks read its OWN token (_tokenLeft), which
+     stays expired whether or not it is still in this array. */
+  BUDGET_LEAK_GRACE_MS: 30000,
+  _pruneBudgets() {
+    if (!this._budgets.length) return;
+    const now = this._now();
+    this._budgets = this._budgets.filter(t => now - t.deadline < this.BUDGET_LEAK_GRACE_MS);
+  },
   _openBudget(ms) {
+    this._pruneBudgets();
     const tok = { deadline: this._now() + ms, forgiven: 0 };
     this._budgets.push(tok);
     return tok;
@@ -4488,7 +4560,15 @@ const ClaudeAPI = {
     if (i >= 0) this._budgets.splice(i, 1);
   },
   _budgetActive() { return this._budgets.length > 0; },
+  /* What THIS flow has left of its own budget — immune to other flows'
+     tokens in both directions (their leak can't zero it, their fresh
+     deadline can't revive it). */
+  _tokenLeft(tok) {
+    if (!tok) return Infinity;
+    return Math.max(0, tok.deadline - this._now());
+  },
   _budgetLeft() {
+    this._pruneBudgets();
     if (!this._budgets.length) return Infinity;
     let d = Infinity;
     for (const t of this._budgets) d = Math.min(d, t.deadline);
@@ -4638,7 +4718,20 @@ const ClaudeAPI = {
     const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = ac ? setTimeout(() => ac.abort(), limit) : null;
     try {
-      return await fetch(url, ac ? Object.assign({}, opts, { signal: ac.signal }) : opts);
+      const res = await fetch(url, ac ? Object.assign({}, opts, { signal: ac.signal }) : opts);
+      // Read the WHOLE body while the abort timer is still armed. The old
+      // shape returned the Response at headers-arrived and cleared the timer
+      // in the finally — so every caller's res.json()/res.text() ran on an
+      // unbounded stream. A mid-body connection drop (mobile network handoff)
+      // then hung the send FOREVER with no error: the reply never came, no
+      // senderr was ever logged, and the send's still-open budget token
+      // pinned _budgetLeft() at 0 so every later send died instantly with
+      // "No answer after 0s" (the August archive, #0142-0144). Same shim the
+      // service-worker path already returns, so callers see one shape.
+      const headers = {};
+      try { res.headers.forEach((v, k) => { headers[String(k).toLowerCase()] = v; }); } catch (_) { /* headers stay best-effort */ }
+      const body = await res.text();
+      return this._shimResponse({ ok: res.ok, status: res.status, headers, body });
     } catch (e) {
       if (ac && ac.signal.aborted) {
         const err = new Error(`${what || 'The request'} took longer than ${Math.round(limit / 1000)}s — retrying…`);
@@ -5323,6 +5416,48 @@ const ClaudeAPI = {
     return words.every(w => seen.has(w));
   },
 
+  /* Advisory notes lose to momentum: the August archive shows the shape-rut
+     callout LIVE in the prompt at #0028's generation and the reply still
+     opening "haha yeah" — the fourth agreement-opener in five. Same lane as
+     filler/parrot/rerun: one strict regenerate, because the note that was
+     ignored once does not win by being reprinted. Nearest good case
+     (invariant 1): "yeah" answering his direct question is an ANSWER — the
+     question-shaped exemption keeps it. */
+  _isShapeRutReply(bubbles, history) {
+    if (!bubbles || !bubbles.length) return false;
+    if (!this._shapeRut(history)) return false;
+    if (!this._AGREE_OPEN.test(String(bubbles[0] || ''))) return false;
+    const lastUser = [...this._realHistory(history)].reverse().find(m => m.role === 'user');
+    if (lastUser && this._QUESTION_SHAPED.test(String(lastUser.text || ''))) return false;
+    return true;
+  },
+
+  /* The press-loop detector is one step late BY CONSTRUCTION on the pre-
+     generation path: her dodge pair only exists once the second dodge is
+     written. Measured at #0133 — pre-generation _pressLoop null (her prior
+     replies echo 0.125), while the candidate reply completed the pair at
+     0.5. So the candidate is checked at delivery: if appending it makes
+     _pressLoop trip AND the candidate itself echoes one of her own recent
+     replies, that is the reworded dodge, caught before it ships. Her STANCE
+     is untouched — the regen note demands a strategy change, not a
+     concession (a firm no stays a no, said differently). */
+  _isDodgeRerun(bubbles, history) {
+    if (!bubbles || !bubbles.length) return false;
+    const joined = (bubbles || []).join(' ');
+    const cand = this._normBubble(joined);
+    if (cand.split(' ').filter(Boolean).length < 3) return false;
+    const withCand = (history || []).concat([{ role: 'assistant', text: joined }]);
+    if (!this._pressLoop(withCand)) return false;
+    const mine = this._realHistory(history).filter(m => m.role === 'assistant').slice(-3);
+    return mine.some(m => {
+      const n = this._normBubble(String(m.text || ''));
+      if (n.split(' ').filter(Boolean).length < 3) return false;
+      return Math.max(this._echoScore(cand, n), this._echoScore(n, cand)) >= 0.45;
+    });
+  },
+  _SHAPE_STRICT: 'That draft opened on yet another agreement token in a stretch already full of them. The content can stay — but the reply must not OPEN with "yeah"/"haha yeah"/"yep": lead with the new thing, the reaction, or a move of your own. ',
+  _DODGE_STRICT: 'That draft reworded the same dodge you already used while he pressed the same ask. Your stance is yours and it does not soften — but the strategy must CHANGE: name what he is doing, redirect to something concrete, or answer plainly. Not a third variation of the same deflection. ',
+
   /* Curiosity is the dial that decides whether she ever asks the question
      other people wouldn't — and it TIPS the rest: a curious woman leans in,
      so her warmth and pull move faster, while an incurious one stays exactly
@@ -5440,6 +5575,35 @@ const ClaudeAPI = {
   },
   _lifeBeat(friend, now) {
     return this._bankPick(friend, (friend.profile && friend.profile.beats) || [], 'beat', 45, 21, 'beatLog', now);
+  },
+  /* Has she already SAID this bank line in this conversation? The beat/
+     texture ride the prompt all day with a standing "bring it up" offer, and
+     the August archive caught the cost: Anna told the Sadie-and-the-dog beat
+     at #0004 and RE-announced it reworded at #0010, with the porch texture
+     twice in between — the offer never learned it had been accepted. Matched
+     on distinct content stems (>=4 chars, stop-list filtered, both sides
+     through _normBubble/_stem — invariant 12: guards are only as good as
+     their tokenizer) inside a single assistant message, so "sadie" alone in
+     some other story never falsely marks the beat as told. */
+  _saidInHistory(text, history, minHits) {
+    const stems = new Set();
+    for (const w0 of this._normBubble(String(text || '')).split(' ')) {
+      const w = this._stem(w0);
+      if (w.length >= 4 && !this._MOTIF_STOP.has(w)) stems.add(w);
+    }
+    if (!stems.size) return false;
+    const need = Math.min(minHits || 3, stems.size);
+    const mine = this._realHistory(history || []).filter(m => m.role === 'assistant').slice(-30);
+    for (const m of mine) {
+      const seen = new Set();
+      for (const w0 of this._normBubble(m.text || '').split(' ')) {
+        const w = this._stem(w0);
+        if (!stems.has(w) || seen.has(w)) continue;
+        seen.add(w);
+        if (seen.size >= need) return true;
+      }
+    }
+    return false;
   },
   /* Texture is the answer to "what is she actually doing right now" — the
      dinner-then-couch, bath-with-the-door-locked, spouse-asleep-at-9:40

@@ -2611,6 +2611,180 @@ console.log('\n== rule-mass (1D): recap deleted, merged rules live once, counter
     'rule-mass: the on-read section now counts its own exceptions coherently');
 }
 
+/* ================= August-archive fixes ================= */
+console.log('\n== aug-archive: budget tokens survive a leaked flow ==');
+{
+  // A flow that hangs forever (the unbounded body read) leaves its token
+  // open; every later send used to read _budgetLeft() 0 and die instantly
+  // ("No answer after 0s"). The leak is pruned past the grace, while the
+  // leaked flow's OWN token stays expired (no resurrection).
+  API._budgets = [];
+  const leak = API._openBudget(1000);
+  leak.deadline = API._now() - API.BUDGET_LEAK_GRACE_MS - 5000; // long dead
+  ok(API._budgetLeft() > 0 || API._budgets.length === 0, 'a long-dead token no longer pins the global budget at zero');
+  ok(API._tokenLeft(leak) === 0, 'the leaked flow itself still reads its own token as expired');
+  const fresh = API._openBudget(API.SEND_BUDGET_MS);
+  ok(API._tokenLeft(fresh) > 100000, 'a fresh send opens with its full own-token budget');
+  ok(!API._budgets.includes(leak), 'the leaked token was pruned at open');
+  // nearest good case: a merely-overrunning flow (inside the grace) still
+  // tightens the global minimum — only-tighten-never-widen holds.
+  const slow = API._openBudget(1000);
+  slow.deadline = API._now() - 5000; // 5s past deadline, inside the grace
+  ok(API._budgetLeft() === 0, 'a briefly-overrunning token still binds the global minimum (grace)');
+  API._closeBudget(slow); API._closeBudget(fresh);
+  API._budgets = [];
+}
+
+console.log('\n== aug-archive: direct fetch reads the body under the timer ==');
+{
+  // The direct path must return the same fully-read shim the SW path does:
+  // json()/text() on the result may never touch the network again. The stub
+  // rides the VM context's global — that is the `fetch` api.js resolves.
+  global.__asyncChecks = global.__asyncChecks || [];
+  global.__asyncChecks.push((async () => {
+    let bodyReadInside = false;
+    ctx.fetch = async () => ({
+      ok: true, status: 200,
+      headers: { forEach: (cb) => cb('12', 'retry-after') },
+      text: async () => { bodyReadInside = true; return '{"a":1}'; }
+    });
+    try {
+      const res = await API._timedFetch('https://x.test/v1', { method: 'POST' }, 5000, 'probe');
+      ok(bodyReadInside, 'body is consumed inside _timedFetch (under the abort timer)');
+      ok((await res.json()).a === 1, 'shim json() parses the already-read body');
+      ok(res.headers.get('retry-after') === '12', 'shim exposes response headers');
+      ok(typeof res.text === 'function' && (await res.text()) === '{"a":1}', 'shim text() replays the same body');
+    } catch (e) {
+      ok(false, 'direct-path shim works', String(e && e.message));
+    } finally {
+      delete ctx.fetch;
+    }
+  })());
+}
+
+console.log('\n== aug-archive: Anna register — rule and examples pull together ==');
+{
+  const anna = mkFriend('anna');
+  const personaA = API.buildPersona(anna, 'rich');
+  ok(personaA.includes('your capitals and punctuation are YOURS'),
+    'punctuated persona gets the punctuated rhythm rule');
+  ok(!personaA.includes('Typos, lowercase, dropped punctuation'),
+    'punctuated persona no longer licensed to drop into lowercase');
+  const sam = mkFriend('samantha');
+  const personaS = API.buildPersona(sam, 'rich');
+  ok(personaS.includes('Typos, lowercase, dropped punctuation'),
+    'lowercase persona keeps the lowercase license (nearest good case)');
+  ok(!personaS.includes('capitals and punctuation are YOURS'),
+    'lowercase persona does not get the punctuated rule');
+}
+
+console.log('\n== aug-archive: a told beat/texture flips to already-told ==');
+{
+  const beat = "Sadie fed her dinner to the neighbor's dog through the fence, piece by piece.";
+  const told = { role: 'assistant', text: "haha yeah she runs a tight ship. sadie just spent dinner feeding the neighbor's dog her whole plate through the fence bite by bite" };
+  ok(API._saidInHistory(beat, [told], 3), 'the archived first telling registers as said (#0004)');
+  ok(!API._saidInHistory(beat, [{ role: 'assistant', text: 'sadie is in her why era, every answer spawns three more' }], 3),
+    'a passing sadie mention does NOT mark the beat told (nearest good case)');
+  ok(!API._saidInHistory(beat, [{ role: 'user', text: told.text }], 3), 'his messages never mark her beat as told');
+  const tex = 'on the new porch watching the street like a nature documentary.';
+  ok(API._saidInHistory(tex, [{ role: 'assistant', text: "i'm watching the sun drop behind the fence from the porch now. whole neighborhood's quiet for once" }], 2),
+    'the archived porch mention registers as said (#0007)');
+
+  // dynamic block: find a day Anna's beat fires, then confirm the flip
+  const pin = (ts) => { API._timeOffset = ts - Date.now(); };
+  const evening = new Date(2026, 7, 12, 18, 30).getTime();
+  let beatDay = null, rolled = null;
+  for (let d = 0; d < 40 && beatDay === null; d++) {
+    pin(evening + d * DAY);
+    rolled = API._lifeBeat(mkFriend('anna'));
+    if (rolled) beatDay = d;
+  }
+  if (beatDay !== null) {
+    pin(evening + beatDay * DAY);
+    const quiet = [{ role: 'user', text: 'hey' }];
+    const dynFresh = API.buildDynamicContext(mkFriend('anna'), API._now() - 3600000, 0, 40, null, null, quiet);
+    ok(dynFresh.includes('something real happened in your world'), 'untold beat keeps the bring-it-up offer');
+    const saidHist = [{ role: 'user', text: 'hey' }, { role: 'assistant', text: rolled }, { role: 'user', text: 'lol nice' }];
+    const dynSaid = API.buildDynamicContext(mkFriend('anna'), API._now() - 3600000, 0, 40, null, null, saidHist);
+    ok(dynSaid.includes('ALREADY told him'), 'told beat flips to already-told');
+    ok(!dynSaid.includes('bring it up if a natural opening appears'), 'told beat withdraws the standing offer');
+  } else {
+    ok(false, 'found a day where Anna rolls a beat');
+  }
+  API._timeOffset = null; API.resetTimeOffset();
+}
+
+console.log('\n== aug-archive: ignored advisories get one strict regen ==');
+{
+  // shape rut: the exact #0019-#0028 stretch, and the reply that shipped
+  const hist28 = [
+    { role: 'user', text: 'What part are you replaying' },
+    { role: 'assistant', text: 'the second i looked up and saw you there' },
+    { role: 'user', text: 'I wasn’t watching longer or anything I just walked in' },
+    { role: 'assistant', text: 'yeah thanks for saying that' },
+    { role: 'assistant', text: 'makes it feel a little less weird lol' },
+    { role: 'user', text: 'But….. you kept going for like 5 seconds and you were like looking right at me..,.' },
+    { role: 'assistant', text: 'yeah i know' },
+    { role: 'user', text: 'Did that help… lol' },
+    { role: 'assistant', text: 'yeah it does help' },
+    { role: 'assistant', text: 'appreciate you saying that' },
+    { role: 'user', text: 'Still have those long socks!' }
+  ];
+  ok(!!API._shapeRut(hist28), 'control: the shape-rut note is live at #0028');
+  ok(API._isShapeRutReply(['haha yeah still got those black ones in the drawer'], hist28),
+    'the shipped agreement-opener reply now triggers the strict regen');
+  ok(!API._isShapeRutReply(['the new thing first — courtney found the photo box'], hist28),
+    'a reply opening anywhere else passes (nearest good case)');
+  const histQ = hist28.slice(0, -1).concat([{ role: 'user', text: 'do you still have those socks' }]);
+  ok(!API._isShapeRutReply(['yeah still got them lol'], histQ),
+    '"yeah" answering his direct question is an answer, not the tic');
+
+  // dodge rerun: the exact #0133 turn
+  const hist133 = [
+    { role: 'user', text: '…this can be a real plan if you want' },
+    { role: 'assistant', text: 'risky plan' },
+    { role: 'assistant', text: 'maybe if the timing actually works out' },
+    { role: 'assistant', text: 'maybe if you actually follow through' },
+    { role: 'user', text: 'How long should I come back for this time then…. Should it just be 20 seconds 😇' },
+    { role: 'assistant', text: 'haha 20 seconds for a quick water bottle run lol' },
+    { role: 'assistant', text: 'we can see how it plays out' },
+    { role: 'user', text: 'Okay' },
+    { role: 'assistant', text: 'ok' },
+    { role: 'user', text: 'Will you leave the door unlocked' },
+    { role: 'assistant', text: 'yeah i can leave it unlocked lol' },
+    { role: 'user', text: 'Okay. Will you be on the couch again when I come back' },
+    { role: 'assistant', text: "we'll see how the timing shakes out when you come back" },
+    { role: 'user', text: 'Just be on the couch and I’ll accidentally be back.' }
+  ];
+  ok(API._isDodgeRerun(["we'll see if the couch timing lines up"], hist133),
+    'the #0133 reworded dodge is caught at delivery');
+  ok(!API._isDodgeRerun(['ok. couch. but if you make it weird i’m billing you for the water bottle'], hist133),
+    'a strategy change under the same pressure passes (nearest good case)');
+  ok(API._DODGE_STRICT.includes('stance is yours') && API._DODGE_STRICT.includes('CHANGE'),
+    'the dodge regen note demands new strategy, never a softened stance');
+}
+
+console.log('\n== aug-archive: question verdict needs a real sample ==');
+{
+  const mk = (texts) => texts.map((t, i) => ({ role: i % 2 ? 'assistant' : 'user', text: t, ts: Date.now() + i }));
+  // 7 assistant replies, 3 question-shaped (43%) — the archived Anna shape
+  const small = [];
+  for (let i = 0; i < 7; i++) {
+    small.push({ role: 'user', text: 'hey there friend', ts: Date.now() + i * 2 });
+    small.push({ role: 'assistant', text: i < 3 ? 'and then what, explain yourself?' : 'the porch is quiet tonight', ts: Date.now() + i * 2 + 1 });
+  }
+  const dSmall = API._archDiagnostics(small, { name: 'T', style: 'Sentence case.' });
+  ok(!dSmall.flags.includes('interview tell'), 'a 7-reply thread never flags interview tell');
+  ok(dSmall.lines.some(l => /thin sample/.test(l)), 'the small-sample rate is reported unjudged');
+  const big = [];
+  for (let i = 0; i < 20; i++) {
+    big.push({ role: 'user', text: 'hey there friend', ts: Date.now() + i * 2 });
+    big.push({ role: 'assistant', text: i < 10 ? 'so what do you even do all day?' : 'the porch is quiet tonight', ts: Date.now() + i * 2 + 1 });
+  }
+  const dBig = API._archDiagnostics(big, { name: 'T', style: 'Sentence case.' });
+  ok(dBig.flags.includes('interview tell'), 'a real interview across 20 replies still flags (nearest good case)');
+}
+
 /* ================= gemma: the utility persona =================
    Invariant 7 taken to its extreme: a tool in a chat thread loads NONE of
    the companionship pipeline. Everything the utility path promises is
