@@ -3323,9 +3323,15 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
   // "nothing replaces a reference silently" contract, relocated).
   ok(/pendingReference/.test(appSrc3), 'upload: a pick is staged, not written');
   ok(appSrc3.indexOf('frenz-ref-ack') > 0, 'upload: the one-time acknowledgement gate exists');
-  const ackIdx = appSrc3.indexOf('frenz-ref-ack');
-  const writeIdx = appSrc3.search(/\.referenceImage\s*=/);
-  ok(ackIdx < writeIdx, 'upload: the acknowledgement gate precedes the write site');
+  /* Two UIs can pick a photo (the friend editor and the Reference photos
+     screen). Source ORDER stopped meaning anything once the write moved into
+     a shared helper, so assert the real invariant instead: every path that
+     opens a file dialog checks the acknowledgement first. */
+  const pickers = (appSrc3.match(/localStorage\.getItem\(REF_ACK_KEY\)/g) || []).length;
+  const dialogs = (appSrc3.match(/\$\('#(f-ref-file|photos-file)'\)\.click\(\)/g) || []).length;
+  ok(dialogs > 0 && pickers === dialogs,
+    'upload: every file dialog is gated on the acknowledgement', `${pickers} gates / ${dialogs} dialogs`);
+  ok(/function applyReferenceTo/.test(appSrc3), 'upload: both UIs write through one shared helper');
   const htmlSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   // Attribute-order-independent: read the whole tag, then check it.
   const refTag = (htmlSrc.match(/<input[^>]*id="f-ref-file"[^>]*>/) || [''])[0];
@@ -3346,6 +3352,20 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
     'upload: the face warning shows only while her face is kept out of frame');
   ok(/#f-photoface'\)\.addEventListener\('change'/.test(appSrc3),
     'upload: the warning tracks the face select live, not just on open');
+
+  /* The dedicated screen: reachable, and destructive moves confirm.
+     Replacing or clearing a locked reference are the only two ways to LOSE
+     one, so they are the two that ask. */
+  ok(/id="view-photos"/.test(htmlSrc) && /id="btn-photos"/.test(htmlSrc),
+    'photos: the screen exists and has an entry point on the friends list');
+  ok(/renderPhotosList/.test(appSrc3) && /showView\('view-photos'\)/.test(appSrc3),
+    'photos: the entry point renders and shows the screen');
+  ok(/confirm\(`Replace \$\{p\.name\}/.test(appSrc3), 'photos: replacing a locked reference confirms');
+  ok(/confirm\(`Remove \$\{p\.name\}/.test(appSrc3), 'photos: clearing a locked reference confirms');
+  ok(/DB\.getFriend\(f\.id\)/.test(appSrc3),
+    'photos: rows re-read the friend before writing (no stale-record clobber)');
+  const photosFn = appSrc3.slice(appSrc3.indexOf('async function renderPhotosList'), appSrc3.indexOf('async function renderPhotosList') + 900);
+  ok(/profile\.utility/.test(photosFn), 'photos: utility personas are excluded — they never send photos');
 
   /* END TO END, the configuration the owner is actually turning on:
      photoFace 'shown' AND an uploaded reference. Every piece is asserted

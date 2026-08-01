@@ -174,6 +174,19 @@ details.tune label { margin-top: 12px; }
 .chat-title { cursor: pointer; }
 
 .img-preview { max-width: 160px; border-radius: 12px; margin-top: 8px; }
+
+/* Reference photos screen: one card per friend, thumbnail beside the
+   controls so the whole set reads at a glance. */
+.photos-list { display: flex; flex-direction: column; gap: 14px; }
+.photo-row { display: flex; gap: 12px; background: var(--bg3); border: 1px solid #2b3247; border-radius: 14px; padding: 12px; }
+.photo-row .thumb { width: 76px; height: 100px; flex: none; border-radius: 10px; object-fit: cover; background: #232838; }
+.photo-row .thumb-empty { width: 76px; height: 100px; flex: none; border-radius: 10px; background: #232838; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 1.6rem; }
+.photo-row .pr-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.photo-row .pr-name { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.photo-row .pr-state { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+.photo-row .pr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.photo-row .pr-actions button { flex: none; padding: 8px 12px; font-size: 0.85rem; }
+.photo-row select { padding: 8px 10px; font-size: 0.85rem; background: var(--bg2); border: 1px solid #2b3247; color: var(--text); border-radius: 10px; }
 .panic-cover { position: fixed; inset: 0; z-index: 100; background: #1e1e1e; color: #d4d4d4; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; display: flex; flex-direction: column; user-select: none; cursor: default; }
 .pc-tabs { display: flex; background: #252526; border-bottom: 1px solid #171717; flex: none; padding-top: env(safe-area-inset-top); }
 .pc-tab { padding: 9px 16px; font-size: 12px; color: #969696; background: #2d2d2d; border-right: 1px solid #171717; }

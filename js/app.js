@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.33';
+const APP_JS_VERSION = '10.34';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -611,6 +611,115 @@ function builderRestart() {
   renderBuilderStep();
 }
 
+/* ---------------- reference photos screen ----------------
+   The whole set on one page. Writes land immediately here rather than
+   behind a save button: on this screen picking a file IS the deliberate
+   act, and the two ways to LOSE something — replacing a locked reference,
+   or clearing one — are the ones that confirm. */
+let photosTargetId = null;
+
+async function renderPhotosList() {
+  const friends = (await DB.listFriends()).filter(f => !(f.profile && f.profile.utility));
+  friends.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  const list = $('#photos-list');
+  list.innerHTML = '';
+  $('#photos-empty').classList.toggle('hidden', friends.length > 0);
+
+  for (const f of friends) {
+    const p = f.profile;
+    const hasRef = !!p.referenceImage;
+    const shown = p.photoFace === 'shown';
+    const row = document.createElement('div');
+    row.className = 'photo-row';
+
+    const thumb = document.createElement(hasRef ? 'img' : 'div');
+    if (hasRef) { thumb.className = 'thumb'; thumb.src = p.referenceImage; thumb.alt = p.name; }
+    else { thumb.className = 'thumb-empty'; thumb.textContent = '🖼️'; }
+    row.appendChild(thumb);
+
+    const body = document.createElement('div');
+    body.className = 'pr-body';
+
+    const name = document.createElement('div');
+    name.className = 'pr-name';
+    name.innerHTML = `<span class="avatar" style="background:${p.color};width:22px;height:22px;font-size:.7rem">${initials(p.name)}</span>${escapeHtml(p.name)}`;
+    body.appendChild(name);
+
+    const state = document.createElement('div');
+    state.className = 'pr-state';
+    state.textContent = hasRef
+      ? (shown
+        ? 'Locked, face can be shown. Her written appearance is ignored while a photo is set.'
+        : 'Locked, face kept out of frame — so this photo should not show her face either.')
+      : (shown
+        ? 'No photo yet, so her face stays out of frame until one is set.'
+        : 'No photo — her look is re-imagined from her written description each time.');
+    body.appendChild(state);
+
+    const actions = document.createElement('div');
+    actions.className = 'pr-actions';
+
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'btn-secondary';
+    pick.textContent = hasRef ? 'Replace' : 'Choose photo';
+    pick.addEventListener('click', () => {
+      if (hasRef && !confirm(`Replace ${p.name}'s reference photo? Her pictures will hold the new one instead.`)) return;
+      if (!localStorage.getItem(REF_ACK_KEY)) {
+        if (!confirm(REF_ACK_TEXT)) return;
+        localStorage.setItem(REF_ACK_KEY, '1');
+      }
+      photosTargetId = f.id;
+      $('#photos-file').click();
+    });
+    actions.appendChild(pick);
+
+    if (hasRef) {
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'btn-secondary';
+      clear.textContent = 'Clear';
+      clear.addEventListener('click', async () => {
+        if (!confirm(`Remove ${p.name}'s reference photo? Her look goes back to her written description.`)) return;
+        const fresh = await DB.getFriend(f.id);
+        applyReferenceTo(fresh.profile, null);
+        await savePhotoRow(fresh, 'Reference removed.');
+      });
+      actions.appendChild(clear);
+    }
+
+    const face = document.createElement('select');
+    face.innerHTML = '<option value="hidden">Face out of frame</option><option value="shown">Face can be shown</option>';
+    face.value = shown ? 'shown' : 'hidden';
+    face.addEventListener('change', async () => {
+      const fresh = await DB.getFriend(f.id);
+      fresh.profile.photoFace = face.value === 'shown' ? 'shown' : 'hidden';
+      await savePhotoRow(fresh, fresh.profile.photoFace === 'shown'
+        ? (fresh.profile.referenceImage ? 'Her face can appear in her photos now.' : 'Set — her face turns on once a photo is locked.')
+        : 'Her face will stay out of frame.');
+    });
+    actions.appendChild(face);
+
+    body.appendChild(actions);
+    row.appendChild(body);
+    list.appendChild(row);
+  }
+}
+
+async function savePhotoRow(friend, message) {
+  try {
+    await DB.saveFriend(friend);
+  } catch (err) {
+    toast(/quota/i.test(String(err && err.name) + String(err && err.message))
+      ? 'Not enough storage left for that photo — try a smaller image.'
+      : 'Save failed — ' + ((err && err.message) || 'storage error'), 7000);
+    return;
+  }
+  if (currentFriend && currentFriend.id === friend.id) currentFriend = friend;
+  toast(message);
+  await renderPhotosList();
+}
+
 /* ---------------- friend editor ---------------- */
 
 function renderColorPicker(selected) {
@@ -682,6 +791,15 @@ async function downscaleImageFile(file) {
   canvas.getContext('2d').drawImage(src, 0, 0, fit.w, fit.h);
   if (src.close) src.close();
   return canvas.toDataURL(ClaudeAPI.REFERENCE_MIME, ClaudeAPI.REFERENCE_QUALITY);
+}
+
+/* THE single writer of referenceImage. Two UIs reach it — the friend editor
+   (staged, committed by the form's save) and the Reference photos screen
+   (immediate) — and both mutate through here so there is exactly one place
+   the field is ever set or cleared. Mutates only; the caller persists. */
+function applyReferenceTo(profile, dataUrl) {
+  if (dataUrl) profile.referenceImage = dataUrl;
+  else delete profile.referenceImage;
 }
 
 const REF_ACK_KEY = 'frenz-ref-ack';
@@ -800,10 +918,7 @@ async function saveFriendFromForm(e) {
      merged, so a large data URL round-tripping through it is how the field
      would get clobbered by an unrelated edit. Applied after both branches so
      it covers create and edit alike. */
-  if (pendingReference.dirty) {
-    if (pendingReference.dataUrl) friend.profile.referenceImage = pendingReference.dataUrl;
-    else delete friend.profile.referenceImage;
-  }
+  if (pendingReference.dirty) applyReferenceTo(friend.profile, pendingReference.dataUrl);
   try {
     await DB.saveFriend(friend);
   } catch (err) {
@@ -2683,6 +2798,31 @@ function init() {
     toast('Back to real time. Recently sent messages may show future timestamps until the clock catches up.');
   });
   $('#btn-settings-back').addEventListener('click', () => showView('view-friends'));
+
+  /* Reference photos screen — same hidden-input + proxy-button pattern as
+     every other picker, one input shared by all rows (photosTargetId says
+     which friend it is for). */
+  $('#btn-photos').addEventListener('click', async () => {
+    await renderPhotosList();
+    showView('view-photos');
+  });
+  $('#btn-photos-back').addEventListener('click', () => { renderFriendsList(); showView('view-friends'); });
+  $('#photos-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    const id = photosTargetId;
+    photosTargetId = null;
+    if (file && id) {
+      try {
+        const dataUrl = await downscaleImageFile(file);
+        const fresh = await DB.getFriend(id);
+        applyReferenceTo(fresh.profile, dataUrl);
+        await savePhotoRow(fresh, 'Reference locked — her pictures hold this look now.');
+      } catch (err) {
+        toast(err.message, 6000);
+      }
+    }
+    e.target.value = '';
+  });
   $('#btn-save-settings').addEventListener('click', saveSettings);
 
   // provider pool editor

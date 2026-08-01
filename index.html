@@ -21,7 +21,8 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">10.33</span></h1>
+        <h1 class="logo">frenz <span class="app-version">10.34</span></h1>
+        <button class="icon-btn" id="btn-photos" title="Reference photos">🖼️</button>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
       <div id="friends-list" class="friends-list"></div>
@@ -31,6 +32,25 @@
         <p>Create your first companion. They'll text like a real person, remember your conversations, and grow closer (or not) depending on how things go between you.</p>
       </div>
       <button id="btn-new-friend" class="fab" title="New friend">+</button>
+    </section>
+
+    <!-- ============ REFERENCE PHOTOS ============
+         One row per friend: the photo that locks her look, and whether her
+         face is allowed in frame. Lives on its own screen because setting
+         these is a job you do across everyone at once, not something you
+         hunt for at the bottom of one persona's edit form. -->
+    <section id="view-photos" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-photos-back">←</button>
+        <h1>Reference photos</h1>
+        <span></span>
+      </header>
+      <div class="form scroll-area">
+        <p class="muted small">A reference photo locks a friend's look, so she is the same person in every picture she sends. Without one her appearance is re-imagined from her written description each time and drifts. Whatever is in the photo carries over — outfit, room, lighting — so pick something ordinary and let the conversation set the mood.</p>
+        <div id="photos-list" class="photos-list"></div>
+        <div id="photos-empty" class="muted small hidden">No friends yet.</div>
+      </div>
+      <input type="file" id="photos-file" accept="image/*" class="hidden">
     </section>
 
     <!-- ============ NEW MESSAGE: TEMPLATE GALLERY ============ -->
