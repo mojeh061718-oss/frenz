@@ -3029,8 +3029,15 @@ console.log('\n== photo quality gate: defects re-roll once, ugly-amateur passes 
   global.__asyncChecks = global.__asyncChecks || [];
   global.__asyncChecks.push((async () => {
     /* Behavioral, over the real generateScreenedImage with stubbed roll +
-       screen — counts generations, checks what actually ships. */
+       screen — counts generations, checks what actually ships.
+       try/finally is load-bearing: a crash here without the finally leaves
+       the engine stubbed for every later async block, and the crashed
+       block's remaining assertions silently never run — the count then
+       reads "0 failed" while lying by omission (the v10.31 fail-open
+       assertions did exactly this). The catch REGISTERS the crash. */
     const realGen = API._generateImage, realScreen = API._screenPhoto, realHook = API._onImageScreen;
+    const realPC0 = API._plainCompletion;
+    try {
     const calls = { gen: 0, ledger: [] };
     API._generateImage = async () => 'data:image/png;base64,ROLL' + (++calls.gen);
     API._screenPhoto = async () => ({ flagged: true, reason: 'six fingers on the wine hand' });
@@ -3077,6 +3084,12 @@ console.log('\n== photo quality gate: defects re-roll once, ugly-amateur passes 
     ok((await API._screenPhoto({ pool: [] }, 'data:image/png;base64,AA', true)) === null,
       'gate: an unparseable screening reply is null, not a guess');
     API._plainCompletion = realPC;
+    } catch (e) {
+      ok(false, 'gate: async block crashed mid-run', e && e.message);
+    } finally {
+      API._generateImage = realGen; API._screenPhoto = realScreen;
+      API._onImageScreen = realHook; API._plainCompletion = realPC0;
+    }
   })());
 
   /* The wire: the chat photo path routes through the gate and ledgers
@@ -3090,6 +3103,183 @@ console.log('\n== photo quality gate: defects re-roll once, ugly-amateur passes 
   const tlIdx = appSrc.indexOf('runTestLook');
   ok(tlIdx > 0 && !/generateScreenedImage/.test(appSrc.slice(tlIdx, tlIdx + 4000)),
     'wire: testlook stays on the raw generateImage path (the lens is unscreened by design)');
+}
+
+console.log('\n== reference-locked photos: per-persona faces, owner-approved refs ==');
+{
+  /* v10.32 (edits-spike outcome A, owner's calls: per-persona faces +
+     testlook-approved references). The one rule everything hangs off:
+     a face is live ONLY when photoFace === 'shown' AND a reference is
+     locked — a shown persona with no reference behaves hidden, because
+     pre-reference faces are random women, the exact failure this fixes. */
+  const sam = mkFriend('samantha');
+  const SHEET = sam.profile.appearance;
+  const poolOn = { pool: [{ enabled: true, imageModel: 'grok-imagine-image', imageKey: 'k' }] };
+
+  ok(typeof API._faceShown === 'function', 'ref: _faceShown helper exists');
+  ok(API._faceShown({ profile: { photoFace: 'shown', referenceImage: 'data:image/png;base64,AA' } }) === true,
+    'ref: shown + locked reference -> face live');
+  ok(API._faceShown({ profile: { photoFace: 'shown' } }) === false,
+    'ref: shown WITHOUT a reference stays faceless (no random faces before the lock)');
+  ok(API._faceShown({ profile: { photoFace: 'hidden', referenceImage: 'data:image/png;base64,AA' } }) === false,
+    'ref: hidden + reference stays faceless');
+  ok(API._faceShown({ profile: {} }) === false, 'ref: legacy friend (no photoFace field) reads hidden');
+
+  /* The avoid clause: the old constant IS the hidden branch, byte-for-byte;
+     the shown branch drops only the face sentence (counter-rule: everything
+     else — amateur register, no watermarks, no 3d render — survives). */
+  ok(API._imageAvoid(true) === API._IMAGE_AVOID, 'ref: _imageAvoid(true) is byte-equal to the old constant');
+  const shownAvoid = API._imageAvoid(false);
+  ok(!/Her face stays out/.test(shownAvoid), 'ref: shown avoid clause drops the face sentence');
+  ok(/amateur self-taken phone photo/.test(shownAvoid) && /no text, watermarks, or logos/.test(shownAvoid)
+    && /3d render/.test(shownAvoid), 'ref: shown avoid clause keeps every non-face exclusion');
+
+  /* Prompt arity + invariant 2: single authority per fact. */
+  const plain4 = API._imagePrompt('curled up on the couch, tv on', 'pov', SHEET, 1);
+  ok(plain4 === API._imagePrompt('curled up on the couch, tv on', 'pov', SHEET, 1, {}),
+    'ref: no-reference call is byte-identical through the new arity');
+  ok(plain4.includes('Redhead of thirty'), 'ref: no-reference prompt still carries the sheet');
+  ok(!/reference photo/i.test(plain4), 'ref: no-reference prompt never mentions a reference');
+  const refP = API._imagePrompt('curled up on the couch, tv on', 'pov', SHEET, 1, { reference: true });
+  ok(/same woman as in the reference photo/i.test(refP), 'ref: edit-path prompt binds identity to the reference');
+  ok(!refP.includes('Redhead of thirty'), 'ref: edit-path prompt carries no sheet text (invariant 2)');
+  const grams = (s) => { const t = String(s).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean); const set = new Set(); for (let i = 0; i + 3 < t.length; i++) set.add(t.slice(i, i + 4).join(' ')); return set; };
+  const sheetG = grams(SHEET), refG = grams(refP);
+  const sharedG = [...sheetG].filter(x => refG.has(x));
+  ok(sharedG.length === 0, 'ref: zero shared 4-grams between sheet and edit-path prompt', sharedG.slice(0, 3).join(' | '));
+
+  /* Face rules per mode: only mirror (and the new selfie) change when the
+     face is live; pov and scene are correct as they stand. Hidden output
+     stays byte-stable against the flag being merely present. */
+  const mHidden = API._imagePrompt('new dress, fit check', 'mirror', SHEET, 0);
+  ok(mHidden === API._imagePrompt('new dress, fit check', 'mirror', SHEET, 0, { faceShown: false }),
+    'ref: hidden mirror byte-stable through the new options');
+  ok(/covers her face|no face is in the picture/.test(mHidden), 'ref: hidden mirror still hides the face');
+  const mShown = API._imagePrompt('new dress, fit check', 'mirror', SHEET, 0, { faceShown: true });
+  ok(!/covers her face completely/.test(mShown) && /face .*(visible|in the reflection)/i.test(mShown),
+    'ref: face-live mirror shows the face in the reflection');
+  const povShown = API._imagePrompt('my legs on the couch', 'pov', SHEET, 0, { faceShown: true });
+  ok(/head is outside the picture|outside the picture entirely/.test(povShown),
+    'ref: pov stays head-out even with the face live — a look-down shot has no face');
+
+  /* Selfie: a fourth mode, reachable ONLY with the face live + explicit
+     see-HER words; ordinary scenes never route there; the pool keeps the
+     phone-is-a-viewpoint doctrine. */
+  ok(Array.isArray(API._FRAMING.selfie) && API._FRAMING.selfie.length >= 2, 'ref: selfie pool exists');
+  // The doctrine bans a second PHOTOGRAPHER, not the word "behind" — "the
+  // room behind her" is scenery and stays legal (nearest-good-case).
+  ok(API._FRAMING.selfie.every(f => !/photographed from|someone else (holding|taking)|taken by/i.test(f)),
+    'ref: selfie pool keeps the no-third-person-camera doctrine');
+  ok(API._modeFor('a quick selfie from the couch', true) === 'selfie', 'ref: selfie words + face live -> selfie mode');
+  ok(API._modeFor('a quick selfie from the couch') !== 'selfie', 'ref: selfie mode unreachable while the face is hidden');
+  ok(API._modeFor('the bowl of ramen on the counter', true) === 'scene', 'ref: selfie regex never captures ordinary scenes');
+  const selfieP = API._imagePrompt('a quick selfie from the couch', 'selfie', SHEET, 0, { faceShown: true, reference: true });
+  ok(!/She is not posing/.test(selfieP), 'ref: the unposed clause never rides a selfie (a selfie is camera-aware — invariant 5)');
+
+  /* photoNote: the face sentence swaps ONLY when the face is live; the
+     guarded persona's caution and the RARE clause survive the swap. */
+  const noteHidden = API.photoNote(poolOn, sam);
+  ok(/Your face is never in these/.test(noteHidden[1]), 'ref: hidden persona keeps the never-a-face sentence');
+  const shownSam = mkFriend('samantha');
+  shownSam.profile.photoFace = 'shown';
+  shownSam.profile.referenceImage = 'data:image/png;base64,AA';
+  const noteShown = API.photoNote(poolOn, shownSam);
+  ok(!/Your face is never in these/.test(noteShown[1]) && /selfie/i.test(noteShown[1]),
+    'ref: face-live persona may selfie');
+  ok(/survive being seen by the wrong person/.test(noteShown[1]) && /Photos are RARE/.test(noteShown[1]),
+    'ref: guarded caution + RARE clause survive the face swap (counter-rule)');
+  const shownNoRef = mkFriend('samantha');
+  shownNoRef.profile.photoFace = 'shown';
+  ok(/Your face is never in these/.test(API.photoNote(poolOn, shownNoRef)[1]),
+    'ref: shown-but-unlocked persona still reads the hidden note');
+
+  /* Candidate prompts: hidden reuses the proven testlook mirror check;
+     shown gets the pose-neutral face-visible stand (mirror-bleed caveat). */
+  const cand = API.referenceCandidatePrompt(shownSam);
+  ok(cand.includes('Redhead of thirty'), 'ref: candidate prompt is sheet-driven');
+  ok(/face/i.test(cand) && /visible/i.test(cand) && !/mirror/i.test(cand),
+    'ref: shown candidate shows the face and avoids the mirror pose');
+  ok(API.referenceCandidatePrompt(sam) === API.testLookPrompt(sam),
+    'ref: hidden candidate IS the proven testlook mirror check');
+
+  global.__asyncChecks = global.__asyncChecks || [];
+  const priorChecks = global.__asyncChecks.slice();
+  global.__asyncChecks.push((async () => {
+    /* Async blocks run interleaved and earlier ones monkeypatch the same
+       engine object (the quality-gate block stubs _generateImage) — wait
+       for every prior block to finish and restore its patches before this
+       one patches anything. */
+    await Promise.allSettled(priorChecks);
+    /* Routing: a locked reference takes the edit path; no reference takes
+       the plain path with zero edit calls; a non-declined edit failure
+       falls back to plain; an exhausted decline surfaces verbatim.
+       Same try/finally contract as the gate block above. */
+    const realEditRec = API._xaiImageEditWithRecovery, realPlainRec = API._xaiImageWithRecovery;
+    const realFetch0 = API._timedFetch, realGen0 = API._generateImage, realScreen0 = API._screenPhoto;
+    try {
+    let edits = 0, plains = 0;
+    API._xaiImageEditWithRecovery = async () => { edits++; return 'data:image/png;base64,EDIT'; };
+    API._xaiImageWithRecovery = async () => { plains++; return 'data:image/png;base64,PLAIN'; };
+    const entry = { imageModel: 'grok-imagine-image' };
+    const out1 = await API._generateImage(entry, 'my legs on the couch', { appearance: SHEET, reference: 'data:image/png;base64,REF' });
+    ok(out1 === 'data:image/png;base64,EDIT' && edits === 1 && plains === 0, 'ref: a locked reference routes to the edit path');
+    const out2 = await API._generateImage(entry, 'my legs on the couch', { appearance: SHEET });
+    ok(out2 === 'data:image/png;base64,PLAIN' && edits === 1 && plains === 1, 'ref: no reference -> plain path, zero edit calls');
+    API._xaiImageEditWithRecovery = async () => { throw new Error('no such route'); };
+    const out3 = await API._generateImage(entry, 'my legs on the couch', { reference: 'data:image/png;base64,REF' });
+    ok(out3 === 'data:image/png;base64,PLAIN', 'ref: a non-declined edit failure falls back to the plain path');
+    API._xaiImageEditWithRecovery = async () => { const e = new Error('declined'); e.declined = true; e.exhausted = true; throw e; };
+    let threw = null;
+    try { await API._generateImage(entry, 'x', { reference: 'data:image/png;base64,REF' }); } catch (e) { threw = e; }
+    ok(!!(threw && threw.declined), 'ref: an exhausted decline surfaces verbatim — we do not argue with the provider');
+    API._xaiImageEditWithRecovery = realEditRec; API._xaiImageWithRecovery = realPlainRec;
+
+    /* Wire shape of the edit request itself. */
+    const realFetch = API._timedFetch;
+    let wire = null;
+    API._timedFetch = async (url, init) => {
+      wire = { url, body: JSON.parse(init.body), auth: init.headers.authorization };
+      return { ok: true, json: async () => ({ data: [{ b64_json: 'AA', mime_type: 'image/png' }] }) };
+    };
+    const img = await API._xaiImageEdit({ imageKey: 'k' }, 'grok-imagine-image-quality', 'prompt text', 768, 1280, 'data:image/png;base64,REFBYTES');
+    ok(/\/images\/edits$/.test(wire.url), 'ref: edit endpoint is /images/edits');
+    ok(!!(wire.body.image && wire.body.image.type === 'image_url' && wire.body.image.url === 'data:image/png;base64,REFBYTES'),
+      'ref: reference rides as an image_url data URI');
+    ok(wire.body.model === 'grok-imagine-image-quality' && wire.body.response_format === 'b64_json',
+      'ref: edit body mirrors the generations body');
+    ok(wire.auth === 'Bearer k', 'ref: edit route keys through _imageKeyFor like every image call');
+    ok(img === 'data:image/png;base64,AA', 'ref: edit response parsed like generations');
+    API._timedFetch = realFetch;
+
+    /* Gate passthrough: the face check follows the framing. */
+    const realGen = API._generateImage, realScreen = API._screenPhoto;
+    let sawForbidden = null;
+    API._generateImage = async () => 'data:image/png;base64,X';
+    API._screenPhoto = async (s, d, ff) => { sawForbidden = ff; return { flagged: false, reason: '' }; };
+    await API.generateScreenedImage(entry, { pool: [] }, 'desc', { faceForbidden: false });
+    ok(sawForbidden === false, 'ref: gate face check follows the framing (face-live persona)');
+    await API.generateScreenedImage(entry, { pool: [] }, 'desc', {});
+    ok(sawForbidden === true, 'ref: gate face check defaults to forbidden');
+    API._generateImage = realGen; API._screenPhoto = realScreen;
+    } catch (e) {
+      ok(false, 'ref: async block crashed mid-run', e && e.message);
+    } finally {
+      API._xaiImageEditWithRecovery = realEditRec; API._xaiImageWithRecovery = realPlainRec;
+      API._timedFetch = realFetch0; API._generateImage = realGen0; API._screenPhoto = realScreen0;
+    }
+  })());
+
+  /* The app wire: deliverBubble passes the reference and the face flag off
+     the ONE shared rule; testlook ref keep is the only writer of
+     referenceImage; the editor carries the photoFace choice. */
+  const appSrc2 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  ok(/reference:\s*friend\.profile\.referenceImage/.test(appSrc2), 'wire: deliverBubble passes the locked reference');
+  ok(/_faceShown\(/.test(appSrc2) && /faceForbidden/.test(appSrc2),
+    'wire: deliverBubble computes the face flag off the shared rule');
+  const refWrites = (appSrc2.match(/\.referenceImage\s*=/g) || []).length;
+  ok(refWrites === 1, 'wire: exactly ONE site writes referenceImage (testlook ref keep)', 'found ' + refWrites);
+  ok(/runTestLookRef/.test(appSrc2), 'wire: the testlook ref command family exists');
+  ok(/photoFace/.test(appSrc2), 'wire: the editor carries the photoFace choice');
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {

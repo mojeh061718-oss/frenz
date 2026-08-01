@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">10.31</span></h1>
+        <h1 class="logo">frenz <span class="app-version">10.32</span></h1>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
       <div id="friends-list" class="friends-list"></div>
@@ -158,7 +158,14 @@
         </label>
         <label>Appearance — used only for her photos
           <textarea id="f-appearance" rows="2" placeholder="curvy redhead, fair freckled skin, tattoos down both legs..."></textarea>
-          <small>How she looks in the pictures she sends. Her face is never shown either way; this keeps her the same person from photo to photo.</small>
+          <small>How she looks in the pictures she sends — describe her neck-down (build, hair, body markers). To lock her exact look across photos, render and approve a reference with <code>testlook ref</code> in her chat.</small>
+        </label>
+        <label>Her face in photos
+          <select id="f-photoface">
+            <option value="hidden">Kept out of frame (default)</option>
+            <option value="shown">Can be shown — needs a locked reference</option>
+          </select>
+          <small id="f-refstatus"></small>
         </label>
         <label>How you met / backstory
           <textarea id="f-backstory" rows="2" placeholder="Met at a mutual friend's party last month, hit it off talking about music..."></textarea>

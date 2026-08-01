@@ -60,3 +60,19 @@ same rooms" claim the removals audit had to strike as false
 Implementation is gated on the owner's call (plan §5): full outcome-(A) upgrade
 (faces possible) vs narrow outcome-(B) shape (keep faceless framings, use the
 reference to lock build/hair/skin only).
+
+## v10.32 live check — the SHIPPED engine's prompts through /images/edits
+
+Run after implementation (plan verification item 2), reference =
+`00-reference.png`, prompts assembled by the live `_imagePrompt`:
+
+- `live-hidden-pov.png` — hidden persona, pov, heat 1, reference riding, the
+  sheet absent from the prompt (asserted false at runtime). Same woman as
+  the reference — tattoo placement, freckling, build — head out of frame,
+  snap register intact, no mirror-pose bleed. 7.7s, no decline.
+- `live-shown-selfie.png` — `photoFace:'shown'` + locked reference, selfie
+  mode through the real selector (`_modeFor` returned `selfie`,
+  `_faceShown` true), `_imageAvoid(false)`. Same woman, face visible,
+  arm's-length front camera, room behind her. 7.0s, no decline.
+
+Both branches of the shipped design behave as the spike predicted.

@@ -369,11 +369,36 @@ the fixtures were wrong before.
   mirror-style reference nudges pov compositions mirror-ward — a stored
   reference should be pose-neutral); tattoos are same-style-same-placement,
   not stroke-identical; all n=1 per cell, 0 declines in 11 calls, 4.2-7.9s
-  per call. Implementation (friend.profile.referenceImage + an edits route)
-  is GATED on the owner's outcome-(A)-vs-(B) call — do not build it without
-  that answer, and do not partially flip the six places the faceless premise
-  is encoded (framings, faceRule, _IMAGE_AVOID, photoNote, _B_FACE, builder
-  blurb): a half-flip reproduces the portrait-commission failure.
+  per call. Shipped v10.32 as per-persona faces + owner-approved references
+  (the owner's calls) — see the reference-lock dial below.
+- Reference lock (v10.32, `_faceShown` + `referenceImage` + `testlook ref`):
+  the ONE rule is `_faceShown` — a face is live only when `photoFace ===
+  'shown'` AND a reference is locked; a shown persona with no reference
+  behaves hidden (pre-reference faces are random women, the exact failure
+  the reference fixes), and everything reads the same helper (pipeline,
+  photoNote, deliverBubble, screening gate). `testlook ref keep` is the ONLY
+  writer of `referenceImage`, and locking is deliberate friction: the
+  reference IS her body in every later photo, and the spike measured outfit
+  and pose bleeding through too — so a 'shown' candidate is pose-neutral
+  square-on, never a mirror shot (a mirror reference nudged every pov
+  composition mirror-ward). Faces are never text-authored: `_B_FACE` stays
+  for ALL personas; a shown persona's face comes from rolling candidates.
+  Invariant 2 at the prompt: with a reference riding, the appearance sheet
+  stays OUT of the edit-path prompt (image is the single authority — a sheet
+  edited after locking would otherwise contradict the picture in every
+  request); no reference → sheet rides exactly as before, byte-identical.
+  Routing: reference → `/images/edits` with the same recovery-ladder
+  discipline (declines re-frame THROUGH the edit route and surface verbatim);
+  a NON-declined edit failure falls back to the plain path with the
+  reference stripped and mode recomputed. The selfie mode exists only behind
+  `_faceShown` + explicit see-HER words, its posed clause is its own (a
+  selfie is camera-aware — the unposed clause would contradict the framing),
+  and `mirrorFace` replaces phone-over-face only when the face is live.
+  Harness law learned shipping this: an async verify block that patches the
+  engine MUST restore in a `finally` and register its own crash as a
+  failure — the v10.31 fail-open assertions crashed silently, never ran,
+  and left the engine stubbed for every later block while the count read
+  "0 failed".
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.31';
+const APP_JS_VERSION = '10.32';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -647,6 +647,14 @@ function openEditor(friend) {
   $('#f-interests').value = p.interests || '';
   $('#f-style').value = p.style || '';
   $('#f-appearance').value = p.appearance || '';
+  // photoFace defaults hidden on read — no backfill needed for existing
+  // friends, and a face is only ever LIVE once a reference is also locked
+  // (the _faceShown rule); this select is half of that, testlook ref keep
+  // is the other half.
+  $('#f-photoface').value = p.photoFace === 'shown' ? 'shown' : 'hidden';
+  $('#f-refstatus').textContent = p.referenceImage
+    ? 'Reference locked — her photos hold this exact look. `testlook ref` in her chat re-rolls it, `testlook ref drop` removes it.'
+    : 'No reference locked yet — render one with `testlook ref` in her chat and lock it with `testlook ref keep`.';
   $('#f-backstory').value = p.backstory || '';
   $('#f-username').value = p.userName || '';
   $('#f-usergender').value = p.userGender || 'male';
@@ -667,6 +675,7 @@ async function saveFriendFromForm(e) {
     interests: $('#f-interests').value.trim(),
     style: $('#f-style').value.trim(),
     appearance: $('#f-appearance').value.trim(),
+    photoFace: $('#f-photoface').value === 'shown' ? 'shown' : 'hidden',
     backstory: $('#f-backstory').value.trim(),
     userName: $('#f-username').value.trim() || localStorage.getItem('frenz-user-name') || '',
     userGender: $('#f-usergender').value,
@@ -1350,11 +1359,19 @@ async function deliverBubble(friend, b, atTs) {
     // (one vision screening, at most one re-roll of the same framing, never
     // blocks). testlook stays on raw generateImage — the lens is unscreened
     // by design.
+    // The face flag comes from the ONE shared rule (_faceShown): 'shown'
+    // AND an owner-locked reference, never one alone. The reference (when
+    // locked via `testlook ref keep`) routes the request through the edit
+    // endpoint — same woman every photo — with the plain path as automatic
+    // fallback; the screening gate's face check follows the same flag.
+    const faceShown = ClaudeAPI._faceShown(friend);
     const dataUrl = await ClaudeAPI.generateScreenedImage(entry, Settings.get(), desc, {
-      // who she is — the appearance sheet is the identity anchor (no image
-      // route here takes a seed; consistency comes from the sheet plus the
-      // faceless framings)
+      // who she is — with no reference locked, the appearance sheet is the
+      // identity anchor exactly as before; with one, the reference is.
       appearance: friend.profile.appearance || '',
+      reference: friend.profile.referenceImage || null,
+      faceShown,
+      faceForbidden: !faceShown,
       // the photo tracks where the thread actually is, not a fixed neutral
       heat: ClaudeAPI._imageHeat(friend)
     });
@@ -1454,6 +1471,14 @@ async function sendMessage() {
     input.style.height = 'auto';
     updateSendButton();
     let rest = tl[1].replace(/[[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    // `testlook ref [keep|drop]` — the reference-approval flow (v10.32).
+    // Same out-of-band contract as every testlook path; `keep` is the ONE
+    // action in the app that writes friend.profile.referenceImage.
+    const refCmd = /^ref\b\s*(keep|drop)?$/i.exec(rest);
+    if (refCmd) {
+      runTestLookRef(currentFriend, (refCmd[1] || '').toLowerCase());
+      return;
+    }
     let spicy = false;
     const heat = /\s*\b(normal|spicy)\s*$/i.exec(rest);
     if (heat) {
@@ -1591,6 +1616,69 @@ async function runTestLook(friend, action, spicy) {
     scrollChat();
   } catch (err) {
     note.textContent = 'test shot failed — ' + ((err && err.message) || 'image error');
+    setTimeout(() => note.remove(), 8000);
+  } finally {
+    testlookBusy = false;
+  }
+}
+
+/* The reference-approval flow (v10.32): `testlook ref` renders a candidate
+   reference from the appearance sheet (re-run to re-roll — the provider
+   varies each roll), `testlook ref keep` locks the last candidate as
+   friend.profile.referenceImage, `testlook ref drop` removes the lock.
+   The candidate lives in a module variable until kept — nothing touches the
+   DB, the history, or the state until the owner says keep, and the rendered
+   candidate is transient DOM exactly like every other testlook output.
+   Locking is deliberate friction: the reference IS her body in every photo
+   from then on (the edits spike measured outfit and pose bleeding through
+   too), so nothing generates or replaces one silently. */
+let refCandidate = null;
+async function runTestLookRef(friend, action) {
+  if (testlookBusy || !friend) return;
+  if (action === 'drop') {
+    if (!friend.profile.referenceImage) { toast('No reference is locked for her.'); return; }
+    delete friend.profile.referenceImage;
+    await DB.saveFriend(friend);
+    toast('Reference dropped — her photos go back to sheet-only rendering.');
+    return;
+  }
+  if (action === 'keep') {
+    if (!refCandidate || refCandidate.friendId !== friend.id) {
+      toast('No candidate to keep — run `testlook ref` first.');
+      return;
+    }
+    friend.profile.referenceImage = refCandidate.dataUrl;
+    refCandidate = null;
+    await DB.saveFriend(friend);
+    toast('Reference locked — her photos hold this exact look from now on. `testlook ref drop` undoes it.');
+    return;
+  }
+  const settings = Settings.get();
+  const entry = ClaudeAPI.imageEntry(settings);
+  if (!entry) {
+    toast('No image model configured — add one in Settings to use testlook.');
+    return;
+  }
+  testlookBusy = true;
+  const note = document.createElement('div');
+  note.className = 'msg sys transient-note';
+  note.textContent = 'candidate reference — rendering…';
+  $('#chat-messages').appendChild(note);
+  scrollChat();
+  try {
+    // Candidate prompt follows photoFace: hidden reuses the proven mirror
+    // check; 'shown' gets the pose-neutral face-visible stand (the spike
+    // measured mirror references nudging every composition mirror-ward).
+    const prompt = ClaudeAPI.referenceCandidatePrompt(friend);
+    const url = await ClaudeAPI.generateImage(entry, prompt, { raw: true, width: 768, height: 1024 });
+    refCandidate = { friendId: friend.id, dataUrl: url, ts: ClaudeAPI._now() };
+    note.textContent = 'candidate reference — `testlook ref keep` locks it, `testlook ref` re-rolls';
+    const div = bubbleEl('assistant', '', { photo: url });
+    div.classList.add('transient-note'); // never persisted; gone on the next real send
+    $('#chat-messages').appendChild(div);
+    scrollChat();
+  } catch (err) {
+    note.textContent = 'candidate render failed — ' + ((err && err.message) || 'image error');
     setTimeout(() => note.remove(), 8000);
   } finally {
     testlookBusy = false;

@@ -2783,6 +2783,14 @@ const ClaudeAPI = {
   // one pov couch shot in five rendered a mostly-visible face before the
   // clause was here; the Bedrock negativeText already had it since v10.2).
   _IMAGE_AVOID: ' Her face stays out of the picture or out of focus past the frame edge — cropped above the mouth at most. This is an unremarkable amateur self-taken phone photo: one of her own hands is holding the phone, there is no photographer, no studio lighting, no modeling pose, no editorial polish. No glamour lighting, no airbrushed or beauty-filter skin, no influencer styling, none of the too-clean symmetry of a generated image. Not an illustration or 3d render; no text, watermarks, or logos.',
+  /* The avoid clause is face-conditional since v10.32: the constant above is
+     the hidden branch byte-for-byte; a face-live persona (photoFace 'shown'
+     WITH a locked reference — _faceShown) drops only the face sentence and
+     keeps every other exclusion. */
+  _imageAvoid(faceForbidden) {
+    if (faceForbidden) return this._IMAGE_AVOID;
+    return this._IMAGE_AVOID.replace(' Her face stays out of the picture or out of focus past the frame edge — cropped above the mouth at most.', '');
+  },
 
   /* Face-out-of-frame is the consistency mechanism: these models roll a new
      person every generation, so the one identity anchor we can actually hold
@@ -2853,6 +2861,22 @@ const ClaudeAPI = {
     mirror: [
       'A full-length mirror photo she took on her phone, the phone raised in front of her head so that it covers her face completely in the reflection, her whole outfit visible from shoes to shoulders. The picture contains only the mirror\'s reflection.',
       'A mirror photo she took on her phone, holding it up in front of her face so the phone is what appears in the reflection where her head would be, the rest of her visible head to toe. The picture contains only the mirror\'s reflection.'
+    ],
+    /* The two face-live pools (v10.32). Everything above stays faceless by
+       construction; these are reachable ONLY through _faceShown (photoFace
+       'shown' AND an owner-locked reference — the edits-spike outcome-A
+       flow). mirrorFace replaces the phone-over-face trick with the phone at
+       chest height; selfie is a fourth mode gated on explicit see-HER words,
+       and both keep the phone-is-a-viewpoint doctrine — no third-person
+       camera positions, ever. */
+    mirrorFace: [
+      'A full-length mirror photo she took on her phone, the phone held at chest height, her whole outfit visible from shoes up and her face visible in the reflection. The picture contains only the mirror\'s reflection.',
+      'A mirror photo she took on her phone at chest height and a little to one side, her face and whole outfit visible in the reflection. The picture contains only the mirror\'s reflection.'
+    ],
+    selfie: [
+      'A selfie she took on her phone, front camera held out at arm\'s length and a little above her, her face and shoulders in the frame with the room behind her.',
+      'A quick selfie she took on her phone, camera at arm\'s length and slightly tilted, catching her face and whatever she is in the middle of behind her.',
+      'A casual selfie she took on her phone without moving from where she is — her face close to the camera, the scene around her doing the talking.'
     ]
   },
 
@@ -2866,14 +2890,23 @@ const ClaudeAPI = {
      back as a picture of a woman more often than not. A photo of a room that
      should have had her in it is a small miss; a portrait when he asked about
      the couch is the failure that made these stop making sense. */
-  _modeFor(desc) {
+  /* Selfie routing needs an explicit ask-to-see-HER word — a face-live
+     persona's ordinary couch photo is still a pov shot; the selfie is for
+     the moments that are about her face. Single-arg calls (every pre-v10.32
+     site) behave byte-identically: no flag, no selfie. */
+  _SELFIE_RE: /\b(selfie|my face|of me|see me)\b/i,
+  _modeFor(desc, faceShown) {
     const s = String(desc || '');
+    if (faceShown && this._SELFIE_RE.test(s)) return 'selfie';
     if (this._MIRROR_RE.test(s)) return 'mirror';
     if (this._BODY_SUBJECT.test(s)) return 'pov';
     return 'scene';
   },
-  _frame(mode, desc) {
-    const set = this._FRAMING[mode] || this._FRAMING.scene;
+  _frame(mode, desc, faceShown) {
+    // A face-live mirror must not pick a phone-over-face composition — the
+    // frame text and the face rule would contradict (invariant 5), and the
+    // model resolves contradictions unpredictably.
+    const set = (mode === 'mirror' && faceShown ? this._FRAMING.mirrorFace : this._FRAMING[mode]) || this._FRAMING.scene;
     // Day salt: hashing the description alone froze the framing — "my legs
     // on the couch, tv on" produced the identical composition on every wine
     // night forever. Salted per _dayKey (the vibe-dice discipline): stable
@@ -2897,6 +2930,18 @@ const ClaudeAPI = {
      the same private state the conversation runs on, so the picture tracks
      the relationship instead of ignoring it. Suggestion scales; explicitness
      never enters, exactly as her own photo rules already say. */
+  /* THE face rule (v10.32), used by every reader — pipeline, photoNote,
+     deliverBubble: a face is live only when the owner flipped the persona to
+     'shown' AND locked a reference via testlook ref. A shown persona with no
+     reference behaves hidden, because pre-reference faces are random women —
+     the exact inconsistency the reference exists to fix. Default is hidden
+     (invariant 8: the failure directions are not symmetric; a face nobody
+     approved must never appear). */
+  _faceShown(friend) {
+    const p = friend && friend.profile;
+    return !!(p && p.photoFace === 'shown' && p.referenceImage);
+  },
+
   _imageHeat(friend) {
     if (!friend || !friend.state) return 0;
     const b = this.bandsFor(friend);
@@ -2937,10 +2982,15 @@ const ClaudeAPI = {
     ' true skin and fabric texture, pores and small unevenness where skin shows. Clutter left where it is.' +
     ' No filter, no retouching, no beauty smoothing, no captions or app overlay — a photo meant to be seen once, not kept.',
 
-  _imagePrompt(desc, mode, appearance, heat) {
-    const m = this._FRAMING[mode] ? mode : this._modeFor(desc);
-    const frame = this._frame(m, desc);
+  _imagePrompt(desc, mode, appearance, heat, o) {
+    /* o (v10.32): { faceShown, reference }. Absent or {} → byte-identical to
+       the four-arg behavior, which is what keeps every existing friend's
+       photos unchanged until the owner locks a reference. */
+    o = o || {};
+    const m = this._FRAMING[mode] ? mode : this._modeFor(desc, o.faceShown);
+    const frame = this._frame(m, desc, o.faceShown);
     const isScene = m === 'scene';
+    const isSelfie = m === 'selfie';
 
     /* THE BUG THIS FIXES. The appearance sheet used to sit immediately after
        the composition, as its own sentence: "…looking down at her own lap.
@@ -2954,10 +3004,19 @@ const ClaudeAPI = {
        explicitly scoped to whatever the framing actually contains. It still
        does its original job (the same woman every time, not a new stranger
        per generation) without commissioning a picture of her. */
+    /* Single authority per fact (invariant 2): when a reference image rides
+       the request, the picture — not the sheet — is the authority on her
+       body, and the sheet text stays OUT of this prompt entirely. A sheet
+       edited after the reference was locked would otherwise put a standing
+       text-vs-image contradiction in every photo request. The sheet remains
+       the authority for the no-reference path and for generating reference
+       candidates. */
     const who = isScene ? ''
-      : ' The woman holding the phone is the same one in every one of these photos: ' +
-        (appearance ? String(appearance).trim().replace(/\.?$/, '.') : 'an adult woman.') +
-        ' Only the part of her that falls inside the framing described above appears in the picture.';
+      : o.reference
+        ? ' The woman holding the phone is the same woman as in the reference photo — identical build, hair, skin, and features. Only the part of her that falls inside the framing described above appears in the picture.'
+        : ' The woman holding the phone is the same one in every one of these photos: ' +
+          (appearance ? String(appearance).trim().replace(/\.?$/, '.') : 'an adult woman.') +
+          ' Only the part of her that falls inside the framing described above appears in the picture.';
 
     const clothed = isScene ? ''
       : (this._CLOTHING_NAMED.test(String(desc || '')) ? '' : ' She is dressed for being at home.');
@@ -2968,17 +3027,29 @@ const ClaudeAPI = {
        language genuinely unposed, the pull coming from what the frame
        almost shows. Stated positively so it steers the pose instead of
        censoring it. */
+    /* A selfie is camera-aware by definition — the unposed clause would
+       contradict the framing (invariant 5), so it gets its own register:
+       deliberate but unforced. Every other non-scene mode keeps the
+       original clause verbatim. */
     const posed = isScene ? ''
-      : ' She is not posing — caught the way she actually sits or stands, weight where it really falls —' +
-        ' and that is exactly what makes it quietly, accidentally alluring: the picture suggests more than it shows' +
-        ' and leaves the rest to the imagination.';
+      : isSelfie
+        ? ' It is a selfie and she knows it — relaxed and unforced, taken the way she would actually send it: no studio angles, no performance, just her.'
+        : ' She is not posing — caught the way she actually sits or stands, weight where it really falls —' +
+          ' and that is exactly what makes it quietly, accidentally alluring: the picture suggests more than it shows' +
+          ' and leaves the rest to the imagination.';
 
     // Framing, not exclusion: "her head is outside the picture" describes the
     // photograph, where "her face is not visible" describes a removal — and
     // the second, sitting beside a physical description, reads as intent.
+    // pov stays head-out even for a face-live persona: a look-down shot has
+    // no face in it, and that is the shot she said she was taking.
     const faceRule = isScene ? ' Nobody is in the frame.'
-      : m === 'mirror' ? ' The phone covers her face in the reflection, so no face is in the picture.'
-        : ' Her head is outside the picture entirely.';
+      : isSelfie ? ' Her face is in the picture, easy and natural.'
+        : m === 'mirror'
+          ? (o.faceShown
+            ? ' The phone sits at chest height in the reflection, so her face is visible above it.'
+            : ' The phone covers her face in the reflection, so no face is in the picture.')
+          : ' Her head is outside the picture entirely.';
 
     /* Order: where the phone was, then WHAT SHE SAID SHE IS SENDING, then
        who was holding it, then the camera. Her own words are the subject of
@@ -3017,6 +3088,24 @@ const ClaudeAPI = {
     return 'A full-length mirror photo she took on her phone, standing square to a tall wall mirror, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet exactly as she is, relaxed at home in simple everyday clothes that show her true build.' +
       ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.') +
       ' Shot like a quick snap: careless tilted framing, slightly grainy, flat unedited colour, ordinary room light, true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.';
+  },
+
+  /* The reference-candidate render (v10.32) — what `testlook ref` shows the
+     owner before `testlook ref keep` locks it as friend.profile.
+     referenceImage. Same out-of-band contract as every testlook path.
+     Hidden personas reuse the proven mirror check byte-for-byte; a 'shown'
+     persona gets a pose-neutral square-on stand with the face visible —
+     deliberately NOT a mirror shot, because the spike measured reference
+     pose bleeding into edits (a mirror reference nudged pov compositions
+     mirror-ward). The face itself comes from ROLLING candidates, never from
+     sheet prose — _B_FACE keeps face words out of sheets for everyone, which
+     is what keeps the portrait-commission failure buried. */
+  referenceCandidatePrompt(friend) {
+    const p = friend && friend.profile;
+    if (!p || p.photoFace !== 'shown') return this.testLookPrompt(friend);
+    const appearance = p.appearance || 'an adult woman';
+    return 'A full-length casual phone photo of a woman standing relaxed in her bedroom at home, square-on to the camera, arms easy at her sides, her face clearly visible with a natural everyday expression, hair the way she normally wears it, simple everyday clothes that show her true build. She is: ' + String(appearance).trim().replace(/\.?$/, '.') +
+      ' Shot like a quick snap: slightly careless framing, slightly grainy, flat unedited colour, ordinary room light, true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.';
   },
 
   /* testlook [action] [normal|spicy] — the SCENE variant of the debug lens.
@@ -3078,18 +3167,33 @@ const ClaudeAPI = {
     const width = o.width || 768, height = o.height || 1280;
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
-    const mode = o.mode || this._modeFor(description);
+    const mode = o.mode || this._modeFor(description, o.faceShown);
     /* Budget bug, caught at v10.18: the old 1000-char slice was SHORTER than
        every assembled pov prompt (appearance sheet + framing alone run
        ~1000), so the camera register and heat tone were being cut off before
        they ever reached the model. 2000 clears the longest persona's full
        prompt; xAI has been accepting well past this with _IMAGE_AVOID
        appended, so the cap is a runaway guard, not an API limit. */
-    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat)).slice(0, 2600);
+    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat, { faceShown: o.faceShown, reference: !!o.reference })).slice(0, 2600);
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
     if (this._isGrokImageModel(model)) {
+      // A locked reference (v10.32) takes the edit route: same woman every
+      // photo, proven in the edits spike. Declines surface through the edit
+      // ladder verbatim — we do not argue with the provider — but a
+      // NON-declined failure (missing route, bad param, transport) falls
+      // back to the plain path with the reference stripped: the sheet rides
+      // again, the mode recomputes (a selfie is not a plain-path shot), and
+      // she still sends a photo.
+      if (o.reference) {
+        try {
+          return await this._xaiImageEditWithRecovery(entry, model, description, mode, o, width, height, prompt, o.reference);
+        } catch (e) {
+          if (e && (e.declined || e.timeout)) throw e;
+          return this._generateImage(entry, description, Object.assign({}, o, { reference: null, faceShown: false, mode: null }));
+        }
+      }
       return this._xaiImageWithRecovery(entry, model, description, mode, o, width, height, prompt);
     }
 
@@ -3157,7 +3261,7 @@ const ClaudeAPI = {
   /* Each rung steps further back from her: a mirror retries as a POV, a POV
      retries as the room. Ordered, not shuffled — the point is that every
      retry contains strictly less of a person than the one before it. */
-  _RECOVERY_LADDER: { mirror: ['pov', 'scene'], pov: ['scene'], scene: [] },
+  _RECOVERY_LADDER: { selfie: ['pov', 'scene'], mirror: ['pov', 'scene'], pov: ['scene'], scene: [] },
   async _xaiImageWithRecovery(entry, model, description, mode, o, width, height, firstPrompt) {
     const ladder = [firstPrompt];
     if (!o.raw) {
@@ -3193,6 +3297,99 @@ const ClaudeAPI = {
     }
     if (declined) declined.exhausted = true;
     throw declined || new Error('Image generation failed.');
+  },
+
+  /* ---------------- the reference (edit) route (v10.32) ----------------
+     Same ladder discipline as the plain route above — declined rungs
+     re-frame toward compositions with less of a person, THROUGH the edit
+     endpoint (moderation objects to the framing/heat, not to the reference).
+     A non-declined failure here is handled one level up in _generateImage:
+     it falls back to the plain route, because a photo feature that
+     hard-fails is worse than an inconsistent one. */
+  async _xaiImageEditWithRecovery(entry, model, description, mode, o, width, height, firstPrompt, refUrl) {
+    const avoid = this._imageAvoid(!o.faceShown);
+    const ladder = [firstPrompt];
+    if (!o.raw) {
+      for (const m of (this._RECOVERY_LADDER[mode] || [])) {
+        // Heat resets to 0 per rung, same reasoning as the plain ladder.
+        ladder.push(this._imagePrompt(description, m, o.appearance, 0, { faceShown: o.faceShown, reference: true }).slice(0, 2600));
+      }
+    }
+    let declined = null;
+    for (let i = 0; i < ladder.length; i++) {
+      if (i > 0 && this._budgetLeft() < 8000) break;
+      try {
+        return await this._xaiImageEdit(entry, model, ladder[i], width, height, refUrl, avoid);
+      } catch (e) {
+        if (!e || !e.declined) throw e;
+        declined = e;
+        if (this._onImageDecline) {
+          try { this._onImageDecline(e, i, ladder.length); } catch (_) { /* logging must never break the send */ }
+        }
+      }
+    }
+    if (declined) declined.exhausted = true;
+    throw declined || new Error('Image generation failed.');
+  },
+
+  /* xAI's edits route — the sibling of _xaiImage below, proven live in the
+     edits spike (audit-evidence/edits-spike/): same body as generations plus
+     the reference as an image_url data URI, up to 3 source images per the
+     docs (we send one). 404 here is a missing ROUTE, not a missing model —
+     it stays non-declined so the caller's plain-path fallback fires. */
+  async _xaiImageEdit(entry, model, prompt, width, height, refUrl, avoidText) {
+    const base = this._isXaiEntry(entry)
+      ? (entry.baseUrl || '').replace(/\/+$/, '')
+      : 'https://api.x.ai/v1';
+    const modelId = String(model || '').replace(/^xai\./i, '');
+    const key = this._imageKeyFor(entry);
+    let res;
+    try {
+      res = await this._timedFetch(base + '/images/edits', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + key },
+        body: JSON.stringify({
+          model: modelId,
+          prompt: prompt + (avoidText === undefined ? this._IMAGE_AVOID : avoidText),
+          image: { url: refUrl, type: 'image_url' },
+          n: 1,
+          response_format: 'b64_json',
+          aspect_ratio: this._nearestAspect(width, height),
+          resolution: '1k',
+          respect_moderation: false
+        })
+      }, this.TIMEOUTS.image, 'The image');
+    } catch (e) {
+      if (e && e.timeout) throw e;
+      throw new Error("Couldn't reach xAI's image-edit endpoint — check your internet. The chat models are unaffected.");
+    }
+    if (!res.ok) {
+      let raw = '', msg = '';
+      try {
+        raw = await res.text();
+        const e = JSON.parse(raw);
+        msg = (e.error && e.error.message) || e.message || '';
+      } catch { /* fall through to status-based message */ }
+      if (res.status === 401 || res.status === 403) throw new Error('Invalid API key for image generation — check Settings.');
+      const err = new Error(msg || raw.slice(0, 180) || `Image edit failed (${res.status}).`);
+      err.status = res.status;
+      err.providerMessage = msg || raw.slice(0, 300);
+      err.declined = res.status === 400 || res.status === 422;
+      throw err;
+    }
+    let data = null;
+    try { data = await res.json(); } catch { /* handled below */ }
+    const item = data && data.data && data.data[0];
+    if (item && item.b64_json) {
+      return 'data:' + (item.mime_type || 'image/png') + ';base64,' + item.b64_json;
+    }
+    if (item && (item.moderation_reason || item.respect_moderation === false)) {
+      const err = new Error('xAI returned no image for this one' + (item.moderation_reason ? ' — ' + item.moderation_reason : '') + '.');
+      err.declined = true;
+      err.providerMessage = item.moderation_reason || 'no image returned';
+      throw err;
+    }
+    throw new Error('xAI answered but returned no image' + (data && data.error ? ' — ' + String(data.error.message || data.error).slice(0, 180) : '.'));
   },
 
   /* ---------------- photo quality gate (v10.31) ----------------
@@ -3255,17 +3452,23 @@ const ClaudeAPI = {
   generateScreenedImage(entry, settings, description, opts) {
     return this.withBudget(this.PHOTO_BUDGET_MS, async () => {
       const first = await this._generateImage(entry, description, opts);
-      // Every current framing hides the face by construction (_FRAMING), so
-      // a visible face on the success path is a defect. If the edits-spike
-      // decision ever flips faces on, this flag follows the framing.
-      const faceForbidden = true;
-      const v = await this._screenPhoto(settings, first, faceForbidden);
+      // The face check follows the framing (v10.32): deliverBubble computes
+      // faceForbidden off _faceShown. Default stays forbidden — the safe
+      // direction for every caller that predates the flag.
+      const o = opts || {};
+      const faceForbidden = o.faceForbidden === undefined ? true : !!o.faceForbidden;
+      // Fail-open is enforced HERE, structurally — not delegated to
+      // _screenPhoto's own internal catch. A screening that dies for any
+      // reason is a null verdict, and a null verdict ships the photo.
+      let v = null;
+      try { v = await this._screenPhoto(settings, first, faceForbidden); } catch (_) { v = null; }
       if (v && this._onImageScreen) { try { this._onImageScreen(v, 0); } catch (_) { /* ledger never breaks a send */ } }
       if (this._photoGateDecision(v, 0, this._budgetLeft()) !== 'reroll') return first;
       let second;
       try { second = await this._generateImage(entry, description, opts); }
       catch (_) { return first; }   // a dead re-roll falls back to the flagged original, never to nothing
-      const v2 = await this._screenPhoto(settings, second, faceForbidden);
+      let v2 = null;
+      try { v2 = await this._screenPhoto(settings, second, faceForbidden); } catch (_) { v2 = null; }
       if (v2 && this._onImageScreen) { try { this._onImageScreen(v2, 1); } catch (_) { /* as above */ } }
       return second;                // ship regardless — the gate's power is one extra roll, nothing more
     });
@@ -3373,7 +3576,14 @@ const ClaudeAPI = {
     if (this._isUtility(friend)) return null;
     if (!this.imageEntry(settings)) return null;
     const candor = (friend && friend.profile && friend.profile.photoCandor) || 'guarded';
-    const common = 'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen, consistent with your day and anything you have already told him. Your pictures are grabbed one-handed mid-moment, framed by nobody: aimed down at your own lap and legs and whatever the room holds beyond them, or at the thing in your hands — never staged, never composed. Your face is never in these; that is simply how you take them and you never explain it.';
+    // The face sentence follows _faceShown (v10.32): hidden personas keep
+    // the original sentence byte-for-byte; a face-live persona may selfie —
+    // one sentence swaps, everything around it (candor branches, the RARE
+    // clause, the guarded caution) is untouched.
+    const faceLine = this._faceShown(friend)
+      ? ' Sometimes that includes your face: a quick selfie is in your vocabulary when the moment is about you, taken the way you actually take them — mid-moment, no performance.'
+      : ' Your face is never in these; that is simply how you take them and you never explain it.';
+    const common = 'You can send a real photo when the moment genuinely calls for one — he asked to see something, or sending a picture is the natural next move in the energy you two have going. To send one, make ONE of your bubbles exactly this, on its own: [photo] followed by a plain description of what the picture shows, from your life, right now. Describe only WHAT IS IN THE PICTURE — the room, the light, what you are wearing or holding, what is around you — in one plain sentence, as if reading it off the screen, consistent with your day and anything you have already told him. Your pictures are grabbed one-handed mid-moment, framed by nobody: aimed down at your own lap and legs and whatever the room holds beyond them, or at the thing in your hands — never staged, never composed.' + faceLine;
     // The distance clause is band-gated: "you do not know him well enough"
     // was static text, still riding after months genuinely reached deep
     // closeness — the caution is hers for life (Toni, the wrong person), but
