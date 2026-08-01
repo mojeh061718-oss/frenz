@@ -135,3 +135,40 @@ strong: the source bathroom appeared in the mirror render.
    (build below the shoulders, and in this persona's case leg tattoos and a soft
    stomach named in her sheet) to be invented fresh each generation, which is the
    consistency the feature exists to remove.
+
+## v10.33 — does the heat ladder survive a reference? (fully synthetic)
+
+The design-critical question nobody had checked. A reference dominates
+composition — outfit, pose and background all bleed — so if it also flattened
+`_HEAT_TONE`, then locking a reference would kill the per-message escalation
+arc (`_imageHeat` off live attraction/comfort/tension) and every photo would
+come out at one temperature. Reference generated from Bre's own appearance
+sheet; no real person in this test. `heat-ladder.js`; only heat varies.
+
+**Result: the ladder holds.** `bre-heat0.png` is wide and domestic — the room,
+the TV, the far end of the couch, loungewear. `bre-heat2.png` is a visibly
+closer crop, warmer light, more skin, the frame tightened onto her. Same
+scene, same framing, same reference. Escalation survives the edit route
+intact, so an owner locking a reference does not lose the arc.
+
+**And the sharper finding, now general: a reference that SHOWS A FACE leaks a
+face into pov renders regardless of the framing rule.** Both renders above ran
+`photoFace: hidden`, whose `faceRule` says "Her head is outside the picture
+entirely" — and both put her face in frame. This is the same failure the
+owner's real photo produced, so it is **not about real-vs-synthetic
+provenance; it is about whether the reference shows a face.**
+
+Note how the reference itself got there: it was asked for "cropped just below
+the chin so her face is out of the picture" and came back face-visible anyway.
+That is the behaviour already documented at `testLookPrompt` — *"the model
+fights any headless whole-figure ask, because mirror selfies in its training
+data have heads"* — and it is exactly why the shipped mirror check puts the
+phone in front of the face rather than cropping: the face region is
+**occupied**, so there is nothing to invent and nothing to leak.
+
+**Rule for the upload path:** a `hidden` persona's reference must itself hide
+the face by construction (phone over it, turned away, out of frame by
+composition) — not merely be asked to. A face-visible reference costs the
+v10.31 quality gate its single re-roll on most pov shots. Outfit bleed
+re-confirmed in passing: the reference's grey t-shirt carried into the heat-2
+render.

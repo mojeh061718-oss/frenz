@@ -644,6 +644,9 @@ function renderColorPicker(selected) {
    a JPEG data URI, and 1024px q85 holds identity as well as a full PNG at
    ~1/9th the payload (audit-evidence/edits-spike/spike.md). */
 let pendingReference = { dataUrl: null, dirty: false };
+// Whether the friend open in the editor already had one, so the row can be
+// re-rendered on a photoFace change without re-reading the record.
+let editorHasReference = false;
 
 /* Canvas is new ground here — nothing else in the app decodes an image.
    createImageBitmap with imageOrientation honours EXIF, which is what keeps
@@ -685,6 +688,11 @@ const REF_ACK_KEY = 'frenz-ref-ack';
 const REF_ACK_TEXT = 'This photo becomes her face and body in every picture this app generates for her, including suggestive ones. Only use a photo of yourself, or of an adult who knows and has agreed to it.';
 
 function renderReferenceRow(hasRef) {
+  // Measured twice (a real photo, then a generated one): a reference showing
+  // a FACE leaks a face into pov renders whatever the framing rule says —
+  // it is not about the photo's provenance, only about whether a face is in
+  // it. So the warning is tied to the face policy, not to the file.
+  $('#f-ref-facewarn').classList.toggle('hidden', $('#f-photoface').value === 'shown');
   const img = $('#f-ref-preview');
   if (pendingReference.dataUrl) {
     img.src = pendingReference.dataUrl;
@@ -728,7 +736,8 @@ function openEditor(friend) {
   $('#f-photoface').value = p.photoFace === 'shown' ? 'shown' : 'hidden';
   // A pick from a previous visit to this screen never carries over.
   pendingReference = { dataUrl: null, dirty: false };
-  renderReferenceRow(!!p.referenceImage);
+  editorHasReference = !!p.referenceImage;
+  renderReferenceRow(editorHasReference);
   $('#f-backstory').value = p.backstory || '';
   $('#f-username').value = p.userName || '';
   $('#f-usergender').value = p.userGender || 'male';
@@ -2590,6 +2599,11 @@ function init() {
   $('#btn-ref-clear').addEventListener('click', () => {
     pendingReference = { dataUrl: null, dirty: true };
     renderReferenceRow(false);
+  });
+  // The face warning tracks the select live — flipping to 'shown' while the
+  // editor is open should retire it immediately, not on the next open.
+  $('#f-photoface').addEventListener('change', () => {
+    renderReferenceRow(!!(pendingReference.dirty ? pendingReference.dataUrl : editorHasReference));
   });
   $('#f-ref-file').addEventListener('change', async (e) => {
     const file = e.target.files[0];

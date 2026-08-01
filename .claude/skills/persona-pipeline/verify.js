@@ -3337,6 +3337,15 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
   // chest-up reference defeats the faceless framings. The picker must say
   // what shape of photo actually works.
   ok(/full[- ]length|waist[- ]up|head to toe/i.test(htmlSrc), 'upload: copy tells the owner to use a body-showing photo');
+  // Measured twice — a real photo AND a generated one: a reference showing a
+  // face leaks a face into pov renders whatever faceRule says. Provenance is
+  // irrelevant; only whether a face is in the reference. The warning is
+  // therefore tied to the face POLICY and must retire when it doesn't apply.
+  ok(/id="f-ref-facewarn"/.test(htmlSrc), 'upload: a face-in-reference warning exists');
+  ok(/f-ref-facewarn[\s\S]{0,400}?classList\.toggle\('hidden',\s*\$\('#f-photoface'\)\.value === 'shown'\)/.test(appSrc3),
+    'upload: the face warning shows only while her face is kept out of frame');
+  ok(/#f-photoface'\)\.addEventListener\('change'/.test(appSrc3),
+    'upload: the warning tracks the face select live, not just on open');
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {
