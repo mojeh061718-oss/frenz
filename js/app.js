@@ -3,12 +3,15 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.34';
+const APP_JS_VERSION = '10.35';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
 const $ = (sel) => document.querySelector(sel);
-const views = ['view-friends', 'view-gallery', 'view-builder', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
+// Every view section in index.html MUST be listed here: showView only
+// toggles ids it knows about, so an unregistered view hides every other
+// screen and stays hidden itself — a blank app. Asserted in verify.js.
+const views = ['view-friends', 'view-photos', 'view-gallery', 'view-builder', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
 
 let currentFriend = null;       // friend object while chatting/editing
 let editingId = null;           // friend id being edited, null = creating

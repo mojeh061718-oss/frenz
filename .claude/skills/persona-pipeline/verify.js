@@ -3360,6 +3360,16 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
     'photos: the screen exists and has an entry point on the friends list');
   ok(/renderPhotosList/.test(appSrc3) && /showView\('view-photos'\)/.test(appSrc3),
     'photos: the entry point renders and shows the screen');
+  /* showView only touches ids listed in `views`; a section missing from that
+     array gets every OTHER view hidden and itself left hidden — a blank
+     screen. Shipped exactly that in v10.34. Assert the general rule, not
+     just this one view: every view section in the shell must be registered. */
+  const declared = [...htmlSrc.matchAll(/<section[^>]*id="(view-[a-z-]+)"/g)].map(m => m[1]);
+  const registered = (appSrc3.match(/^const views = \[([^\]]+)\]/m) || [, ''])[1];
+  const unregistered = declared.filter(v => !registered.includes(`'${v}'`));
+  ok(declared.length > 0 && unregistered.length === 0,
+    'views: every view section is registered in the views array (else showView blanks the app)',
+    unregistered.join(', '));
   ok(/confirm\(`Replace \$\{p\.name\}/.test(appSrc3), 'photos: replacing a locked reference confirms');
   ok(/confirm\(`Remove \$\{p\.name\}/.test(appSrc3), 'photos: clearing a locked reference confirms');
   ok(/DB\.getFriend\(f\.id\)/.test(appSrc3),
