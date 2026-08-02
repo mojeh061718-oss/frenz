@@ -172,3 +172,44 @@ composition) — not merely be asked to. A face-visible reference costs the
 v10.31 quality gate its single re-roll on most pov shots. Outfit bleed
 re-confirmed in passing: the reference's grey t-shirt carried into the heat-2
 render.
+
+## v10.38 — can text tune the BODY while a reference rides? (negative)
+
+The owner asked for body dials — height / build / bust / hips — to nudge a
+render when a persona comes out too small or not curvy enough, with the
+reference still supplying identity. Tested before building any UI, because
+the whole feature rests on whether text can move a body the reference has
+already fixed. Fully synthetic: a deliberately understated slim reference
+(`00-ref-slim.png`) so there was room to push, then the same scene and
+framing with only the identity clause varying.
+
+| Variant | Wording | Result |
+|---|---|---|
+| Control | reference only | slim, as the reference (`01-no-adjust.png`) |
+| A — comparative | "Compared with that, she is noticeably shorter, and distinctly fuller and curvier all over — a markedly fuller chest and noticeably wider, fuller hips" | **No build change.** Composition destabilised (the render came back rotated); the body stayed slim (`02-adjusted-fuller.png`) |
+| B — absolute, identity-scoped | reference scoped to "same face, same hair, same skin and colouring", then "Her build: short, full and curvy, with a large full chest and wide full hips and thighs" | **No build change**, twice (`03-absolute-build.png`, n=2) |
+
+**Conclusion: with a reference riding, the reference owns the body and text
+cannot override it.** Neither comparative nor absolute phrasing moved it.
+Variant A also fits a lesson already in this codebase — image models are weak
+at exclusion, and comparison behaves the same way; "fuller than that" is as
+hard for the model as "no face". Variant B rules out the obvious rescue
+(state it directly instead of relatively), so the failure is not a phrasing
+problem.
+
+**What this means for the feature:**
+
+1. **Body dials that adjust a locked reference should not be built.** The
+   mechanism is not there, and shipping dials that silently do nothing is
+   worse than not shipping them.
+2. **The lever for build, while a reference is locked, is the reference
+   photo.** Rendering too small is fixed by locking a reference with the
+   build wanted — not by any text field.
+3. **Dials WOULD work with no reference locked**, where the appearance sheet
+   is the only description of her and text is the sole authority. That is a
+   real feature for reference-free personas; it is simply not the one asked
+   for.
+
+This also sharpens the earlier bleed findings into one rule: **a reference
+governs BODY and IDENTITY absolutely; prompt text governs only what the
+reference does not depict — scene, framing, clothing when named, and light.**

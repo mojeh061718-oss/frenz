@@ -443,6 +443,21 @@ the fixtures were wrong before.
   `imgerr {screened:true, attempt}`; clean ones stay out of the ledger.
   testlook stays on raw `generateImage` — the lens exists to show unscreened
   pipeline output.
+- **A reference governs BODY and IDENTITY absolutely; prompt text governs
+  only what the reference does not depict** — scene, framing, clothing when
+  named, light. Measured when the owner asked for tunable body dials
+  (height/build/bust/hips) to nudge a render that came out too small: against
+  a deliberately slim reference, neither a COMPARATIVE clause ("distinctly
+  fuller and curvier than that") nor an ABSOLUTE one with the reference
+  scoped to face/hair/colouring ("her build: short, full and curvy, large
+  full chest, wide hips") moved the body — four renders, two phrasings, zero
+  effect. The comparative attempt also destabilised composition, which fits
+  the older lesson: models are weak at exclusion, and comparison fails the
+  same way. So **do not build body dials that adjust a locked reference** —
+  they would silently do nothing, which is worse than absent. The lever for
+  build while a reference is locked is THE REFERENCE PHOTO. Dials would work
+  on the no-reference path, where the sheet is the only description; that is
+  a different feature. Evidence: `audit-evidence/edits-spike/spike.md`.
 - **Both head-cropping pools have a face-live sibling** (v10.38, reversing a
   v10.32 call on owner report). The old rule was "pov stays head-out even for
   a face-live persona: a look-down shot has no face" — true of one shot,
