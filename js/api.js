@@ -3054,19 +3054,37 @@ const ClaudeAPI = {
      actual phone photo looks like in 2026. Keep the cues that say "nobody
      staged this" (unlevel horizon, real clutter, no retouching) and drop the
      ones that only destroy detail. */
-  /* Snapchat register, not photography. The previous cues described a NICE
-     phone photo (crisp focus, natural depth of field) and renders kept
-     drifting polished. What sells "she just sent this" is artlessness:
-     careless framing, slight grain, flat colour, harsh direct flash when
-     it's dark. Degradation stays MILD on purpose — the v8.2-era lesson
-     holds that stacking blur+noise+artifacts produces mush, not candor. */
-  _CAMERA: ' Shot like a quick snap to a friend: grabbed one-handed mid-moment, framing careless and a little ugly —' +
-    ' tilted, awkwardly cropped, too close or too far, composed by nobody, and the camera doing her no favours.' +
-    ' It looks taken on a phone: the slight wide-angle stretch of a phone lens near the frame edges, auto-exposure a beat wrong' +
-    ' so a lamp or window blows out, white balance a little off for the room.' +
-    ' Slightly grainy, flat unedited colour, uneven ordinary room light — and indoors after dark the phone flash fires:' +
-    ' foreground washed bright, colours flattened, hard shadows thrown on the wall behind, the true late-night amateur look —' +
-    ' true skin and fabric texture, pores and small unevenness where skin shows. Clutter left where it is.' +
+  /* ARTLESS, NOT LOW QUALITY — and it took two swings to land there.
+
+     The first register described a NICE phone photo (crisp focus, natural
+     depth of field) and renders drifted POLISHED. The correction was
+     artlessness, but artlessness got built as image DEGRADATION: grain, flat
+     colour, exposure a beat wrong, white balance off, "the camera doing her
+     no favours". That is a different picture from the one people actually
+     send, and it cost real fidelity.
+
+     Settled by a live A/B on one scene and one reference
+     (audit-evidence/live-v1045/CAM-*). The degraded control came back
+     SOFTER and more generic — smoother skin, less texture, flatter light —
+     and it drew the phone as an object in frame, the exact failure the
+     phone-is-a-viewpoint doctrine exists to prevent. The clean registers
+     came back with real pores, real clutter, real room light, and read
+     unmistakably like something someone just sent you.
+
+     So the quality cues and the staged look were never the same axis. What
+     sells "she just sent this" is the FRAMING and the MOMENT — one-handed,
+     tilted, cropped by nobody, the room as messy as it is. The camera
+     itself is a good modern phone, because in 2026 it is. The anti-polish
+     guard now lives entirely in _IMAGE_AVOID (no glamour lighting, no
+     airbrushed skin, none of the too-clean symmetry of a generated image),
+     which is where an exclusion belongs. */
+  _CAMERA: ' It is a real photo off a modern phone, sent straight to a friend the second it was taken:' +
+    ' full sensor detail, sharp focus, clean accurate colour, properly exposed for the room,' +
+    ' fine texture in skin, hair and fabric — a genuinely good picture, technically.' +
+    ' What makes it unmistakably real is everything AROUND that quality: it was grabbed one-handed mid-moment,' +
+    ' the framing tilted and a little careless, cropped by nobody who was thinking about it,' +
+    ' the room as messy as it actually is, and indoors after dark the phone flash fires bright and close the way a real one does.' +
+    ' Real skin with pores and small unevenness where it shows. Clutter left where it is.' +
     ' No filter, no retouching, no beauty smoothing, no captions or app overlay — a photo meant to be seen once, not kept.',
 
   _imagePrompt(desc, mode, appearance, heat, o) {
@@ -3276,10 +3294,10 @@ const ClaudeAPI = {
     const who = (build ? ' ' + build : '')
       + (colouring ? ' Her hair, skin and colouring: ' + colouring.replace(/\.?$/, '.') : '');
     const framing = p.photoFace === 'shown'
-      ? 'A full-length photo of an adult woman standing relaxed against a plain bare wall at home, square-on to the camera, arms easy at her sides, head to feet in frame, her face clearly visible with an ordinary everyday expression, hair the way she normally wears it, in simple plain everyday clothes that show her true build.'
-      : 'A full-length mirror photo an adult woman took on her phone, standing square to a tall mirror on a plain bare wall, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet, in simple plain everyday clothes that show her true build. The picture contains only the mirror\'s reflection.';
+      ? 'A full-length photo of an adult woman standing relaxed against a plain bare wall at home, square-on to the camera, arms easy at her sides, head to feet in frame, her face clearly visible with an ordinary everyday expression, hair the way she normally wears it, in a plain fitted t-shirt and leggings, which show her true build.'
+      : 'A full-length mirror photo an adult woman took on her phone, standing square to a tall mirror on a plain bare wall, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet, in a plain fitted t-shirt and leggings, which show her true build. The picture contains only the mirror\'s reflection.';
     return framing + (who || ' She is an ordinary adult woman.') +
-      ' Shot plainly and evenly: level framing, ordinary even room light, an uncluttered background,' + this._SNAP_UNRETOUCHED;
+      ' Shot plainly and evenly: level framing, sharp and clearly detailed, properly exposed, ordinary even room light, an uncluttered background,' + this._SNAP_UNRETOUCHED;
   },
 
   /* Debug-only portrait (the composer command 'testlook'): the neck-down
@@ -3316,7 +3334,7 @@ const ClaudeAPI = {
       (o.reference
         ? ' The woman in the reflection is the same woman as in the reference photo — identical build, hair, skin, and features.'
         : ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.')) +
-      ' Shot like a quick snap: careless tilted framing, slightly grainy, flat unedited colour, ordinary room light,' + this._SNAP_UNRETOUCHED;
+      ' Shot like a quick snap: careless tilted framing — but a sharp, clear picture off a modern phone, properly exposed, natural colour, ordinary room light,' + this._SNAP_UNRETOUCHED;
   },
 
   /* testlook [action] [normal|spicy] — the SCENE variant of the debug lens.

@@ -526,6 +526,32 @@ the fixtures were wrong before.
     progressively less of a person at heat 0. Reachability checked while
     doing this: heat 2 needs attraction ≥ 60 or tension ≥ 7, so the ceiling
     was never the blocker.
+- **Artless is not the same axis as low quality (v10.46).** The camera
+  register swung twice and overshot both times. Swing one described a NICE
+  phone photo (crisp focus, natural depth of field) and renders drifted
+  POLISHED. Swing two replaced that with artlessness — but built artlessness
+  as image DEGRADATION: grain, flat unedited colour, exposure a beat wrong,
+  white balance off, "the camera doing her no favours".
+  Settled by a live A/B, one scene and one reference
+  (`audit-evidence/live-v1045/CAM-*`): the degraded control came back
+  SOFTER and more generic — smoother skin, less texture, flatter light — and
+  it drew the phone as an OBJECT in frame, the exact failure the
+  phone-is-a-viewpoint doctrine exists to prevent. The clean registers came
+  back with real pores, real clutter and real room light.
+  So the two things were never one axis: **artlessness lives in the FRAMING
+  and the MOMENT** (one-handed, mid-moment, tilted, cropped by nobody, the
+  room as messy as it is) and the camera itself is a good modern phone,
+  because in 2026 it is. The anti-polish guard moved entirely into
+  `_IMAGE_AVOID` — no glamour lighting, no airbrushed skin, none of the
+  too-clean symmetry of a generated image — which is where an exclusion
+  belongs. Verify asserts both halves: every detail-destroyer is gone AND
+  every artlessness cue survives, because raising quality without that
+  counter-rule is exactly how swing one happened.
+  The debug lens and the candidate render moved with it: a reference bleeds
+  its own quality into every photo that follows, so it cannot be the one
+  soft image in the chain. The candidate also names its garment now (a plain
+  fitted t-shirt and leggings) — "everyday clothes that show her true build"
+  was rendering as underwear, and whatever a reference wears bleeds too.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

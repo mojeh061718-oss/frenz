@@ -326,7 +326,11 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   const app = Personas.byId('samantha').appearance;
   const pov = API._imagePrompt('my legs stretched out on the couch, tv on', 'pov', app, 0);
   ok(/head|collarbone|shoulders|torso/.test(pov) && !/her face is visible/i.test(pov), 'pov framing keeps the head out of frame');
-  ok(pov.includes('quick snap') && pov.includes('grainy'), 'snapchat-register cues present');
+  /* The register is no longer carried by grain (v10.46 — artless, not low
+     quality). It is carried by the moment and the framing, which is what
+     the live A/B showed actually sells it. */
+  ok(pov.includes('sent straight to a friend') && pov.includes('grabbed one-handed mid-moment'),
+    'snapchat-register cues present (moment + framing, not degradation)');
   ok(pov.includes('not posing') && pov.includes('alluring') && pov.includes('imagination'),
     'natural-but-hot pose clause: unposed, mind left wandering');
   // v10.18 budget bug: the 1000-char slice was shorter than every assembled
@@ -4193,6 +4197,56 @@ console.log('\n== blockers (v10.45): say which one, and stop over-de-escalating 
     'candor: flipping it actually changes what she is told (the dial is not decorative)');
   ok(/without ceremony/.test(API.photoNote(poolOn45, op)[1]),
     'candor: open is the same open every other persona already had — no new register was invented');
+}
+
+console.log('\n== camera register (v10.46): artless, not low quality ==');
+{
+  /* The register had swung too far. An early version described a NICE phone
+     photo and renders drifted POLISHED, so it was replaced with artlessness
+     — and artlessness got implemented as image DEGRADATION: grain, flat
+     colour, exposure a beat wrong, white balance off, "the camera doing her
+     no favours". Live A/B against the same scene and reference
+     (audit-evidence/live-v1045/CAM-*) settled it: the degraded control came
+     back SOFTER and more generic, with smoother skin and less texture, and
+     it drew the phone as an object in frame — the exact failure the
+     phone-is-a-viewpoint doctrine exists to prevent. The clean registers
+     came back with real pores, real clutter and real room light.
+
+     So: artlessness lives in the FRAMING and the MOMENT; the camera itself
+     is good. That is what an actual phone photo in 2026 is. */
+  const CAM = API._CAMERA;
+  for (const dead of [/grain/i, /flat unedited colour/i, /white balance/i, /auto-exposure a beat wrong/i, /blows out/i, /no favours/i, /colours flattened/i]) {
+    ok(!dead.test(CAM), `camera: the detail-destroyer ${dead} is gone`);
+  }
+  ok(/sharp|crisp|detail/i.test(CAM), 'camera: the picture is actually sharp and detailed');
+  ok(/full sensor detail|fine texture|fine detail/i.test(CAM), 'camera: fine texture is asked for, not sanded off');
+  /* THE counter-rule, and it is the whole risk of this change: raising the
+     technical quality must not bring the staged look back. Everything that
+     says "nobody arranged this" has to survive, and the no-glamour
+     exclusions in the avoid clause are the other half of the guard. */
+  for (const keep of [/one-handed/i, /mid-moment/i, /tilted/i, /careless/i, /clutter|messy/i, /no filter/i, /no retouching/i, /no beauty smoothing/i, /pores/i, /flash/i]) {
+    ok(keep.test(CAM), `camera: the artlessness cue ${keep} survives`);
+  }
+  ok(/seen once, not kept/.test(CAM), 'camera: the Snapchat register line survives');
+  ok(/no glamour lighting/i.test(API._IMAGE_AVOID) && /airbrushed or beauty-filter/i.test(API._IMAGE_AVOID)
+    && /too-clean symmetry of a generated image/.test(API._IMAGE_AVOID),
+    'camera: the anti-polish exclusions still ride — they are what stops "good" becoming "staged"');
+  // The debug lens keeps its own compact register; it must not stay degraded
+  // while every real photo got clean, or the lens stops matching the pipeline.
+  const lens = API.testLookPrompt({ profile: { appearance: 'x' } });
+  ok(!/grainy|flat unedited colour/i.test(lens), 'camera: the sheet lens is not left behind on the old degraded register');
+  ok(/sharp|clear|detail/i.test(lens), 'camera: …and asks for the same clarity');
+  // A reference bleeds its own quality into every later photo, so it cannot
+  // be the one soft image in the chain.
+  const cand = API.referenceCandidatePrompt({ profile: { photoFace: 'hidden' } }, {});
+  ok(/sharp|clear|detail/i.test(cand), 'camera: the candidate reference is sharp — whatever it is, later photos inherit');
+  // Budget: the register rides every non-scene prompt.
+  for (const t of Personas.templates) {
+    const full = API._imagePrompt('curled up on the couch in my thin cami and sleep shorts, tv on, glass of wine in my hand, one leg tucked under me',
+      'pov', t.appearance, 2);
+    ok(full.length <= 2600 && /implication rather than display/.test(full),
+      t.id + ': full pov prompt still fits 2600 with the heat tail intact (' + full.length + ')');
+  }
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {
