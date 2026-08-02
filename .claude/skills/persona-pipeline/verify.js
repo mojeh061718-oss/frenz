@@ -4506,6 +4506,73 @@ console.log('\n== v10.50: the real quality ceiling — 2k render, stored sanely 
     'quality: the photo path routes through it with the photo dials');
 }
 
+console.log('\n== v10.51: heat reaches the DECISION, not just the lighting ==');
+{
+  /* The gap, found by the owner: _imageHeat was called in exactly one place
+     — inside deliverBubble, at delivery — which is AFTER she has already
+     written the [photo] description. So the number named "heat" never
+     reached the chat prompt at all, and the thing it actually governs (what
+     the picture SHOWS) was decided without it. Heat only dressed the
+     lighting afterward.
+
+     The fix keeps the authority model intact: heat tells her where the
+     night IS, she decides what to send, and her sentence remains the single
+     authority on content (invariant 2 — the image-side tone still handles
+     only atmosphere). Nothing here raises the ceiling; heat 2 is still
+     "implication rather than display". */
+  const poolOn51 = { pool: [{ id: 'e1', enabled: true, kind: 'bedrock', apiKey: 'k', model: 'x', imageModel: 'stability-image', region: 'us-east-1' }] };
+  ok(Array.isArray(API._PHOTO_REGISTER) && API._PHOTO_REGISTER.length === 3,
+    'register: exactly three, one per heat band — the same ladder, no fourth tier invented');
+
+  const cold = mkFriend('bre'); cold.state.attraction = 0; cold.state.tension = 0; cold.state.comfort = 0;
+  const hot = mkFriend('bre'); hot.state.attraction = 85; hot.state.tension = 8;
+  ok(API._imageHeat(cold) === 0 && API._imageHeat(hot) === 2, 'register: the fixtures really are at opposite ends');
+  const noteCold = API.photoNote(poolOn51, cold)[1];
+  const noteHot = API.photoNote(poolOn51, hot)[1];
+  ok(noteCold !== noteHot, 'register: the photo instruction actually changes with the night');
+  ok(noteCold.includes(API._PHOTO_REGISTER[0]) && noteHot.includes(API._PHOTO_REGISTER[2]),
+    'register: each band lands its own line');
+  /* The counter-rule this could easily break: heat says how CHARGED the
+     night is, never how OFTEN she sends. A guarded persona's rarity and her
+     caution are hers regardless of the temperature. */
+  /* Counter-rule on a GUARDED persona (Bre ships open, so her note has no
+     rarity clause to preserve): heat says how CHARGED the night is, never
+     how OFTEN she sends or how careful she is. Those are hers at every
+     temperature. */
+  for (const h of [0, 2]) {
+    const g = mkFriend('samantha');
+    if (h) { g.state.attraction = 85; g.state.tension = 8; } else { g.state.attraction = 0; g.state.tension = 0; g.state.comfort = 0; }
+    ok(API._imageHeat(g) === h, `register: guarded fixture really is at heat ${h}`);
+    const n = API.photoNote(poolOn51, g)[1];
+    ok(/Photos are RARE/.test(n), `register: the rarity clause survives at heat ${h} (counter-rule)`);
+    ok(/survive being seen by the wrong person/.test(n), `register: …and so does her caution at heat ${h}`);
+    ok(n.includes(API._PHOTO_REGISTER[h]), `register: …while the heat-${h} line still lands`);
+  }
+  const openHot = mkFriend('bre'); openHot.state.attraction = 85; openHot.state.tension = 8;
+  openHot.profile.photoCandor = 'open';
+  ok(/without ceremony/.test(API.photoNote(poolOn51, openHot)[1]),
+    'register: open candour is untouched by heat — they are different dials');
+  /* The ceiling is not raised. Heat 2 is the top register in this app and
+     the register line must not out-run the image tone it pairs with. */
+  const top = API._PHOTO_REGISTER[2];
+  ok(!/explicit|nude|naked|nsfw/i.test(top), 'register: the top band does not exceed the app ceiling');
+  ok(/deniab|out of frame|stop/i.test(top), 'register: …it stays the house register — implication, and where she would stop');
+  /* Craft, not evasion: the description is the ONLY channel from the
+     conversation to the picture, so how she writes it decides the render.
+     Naming scene, clothing, light and pose is what the whole framing system
+     is built to receive (v10.39: the model follows what is NAMED). */
+  ok(/what you have on|wearing/i.test(API._PHOTO_REGISTER[1] + top),
+    'register: it points her at the things the picture can actually render');
+  ok(API._PHOTO_REGISTER.every(r => !/\[photo\]/.test(r)),
+    'register: it never restates the marker format — that lives in one place (invariant 2)');
+  // Every band must survive the prompt budget alongside the rest of the note.
+  for (const t of Personas.templates.filter(t => !t.utility)) {
+    const f = mkFriend(t.id); f.state.attraction = 85; f.state.tension = 8;
+    const n = API.photoNote(poolOn51, f);
+    ok(n && n[1].length < 3000, t.id + ': photo note stays a note, not an essay (' + (n ? n[1].length : 0) + ')');
+  }
+}
+
 Promise.allSettled(global.__asyncChecks || []).then(() => {
   console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
     + (intendedRed ? ', ' + intendedRed + ' intended-red (expected \u2014 see RED* lines)' : ''));

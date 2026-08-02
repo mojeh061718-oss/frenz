@@ -118,3 +118,25 @@ Storage, measured by re-encoding a real 2k render:
 
 Shipped: render 2k, store full-resolution JPEG q90. Every pixel kept, 3.4x
 the storage of the old 1k JPEG for 4.8x the pixels off a better render.
+
+## 7. v10.51 — heat reaches the decision
+
+`_imageHeat` was read in one place only: `deliverBubble`, at delivery —
+after the `[photo]` sentence was already written. The dial never entered the
+chat prompt, so it governed lighting and not content.
+
+Same thread, same ask ("send me a pic of your evening"), state the only
+variable:
+
+| heat | what she chose | n |
+|---|---|---|
+| 0 | "nah not tonight" | 3/3 |
+| 2 | thin tank + boy shorts, lights low, empty glass | 3/3 |
+
+Her own unedited heat-2 descriptions then rendered through the pipeline with
+**no declines** (16.0s / 18.9s, stored 749KB / 881KB at full 2k).
+
+Note on heat 0: `_imageHeat` returns 1 whenever comfort is deep, so heat 0
+only occurs in a thread that is genuinely cold — which is why she declines
+there. Heat and closeness are correlated by construction; that is the design,
+not a leak.

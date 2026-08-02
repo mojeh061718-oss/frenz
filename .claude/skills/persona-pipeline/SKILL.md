@@ -658,6 +658,36 @@ the fixtures were wrong before.
     vision call on the image, and sending it a 6.5MB PNG is pure waste.
   - `recodeImage` is now one shared canvas path with two callers and two
     dial sets. Two copies would drift.
+- **Heat has to reach the DECISION, not just the lighting (v10.51).** Owner
+  question, and it exposed a real architecture gap: `_imageHeat` was read in
+  exactly ONE place — inside `deliverBubble`, at delivery — which is AFTER
+  she has written the `[photo]` sentence. So the dial named "heat" never
+  entered the chat prompt at all. It dressed the lighting of a picture whose
+  CONTENT had already been chosen without it, and a charged Friday and an
+  ordinary Tuesday produced the same photo lit differently. The owner's
+  mental model ("heat is how suggestive it is") was right about what the
+  dial should mean and the code only did the smaller half.
+  - `_PHOTO_REGISTER[heat]` now rides `photoNote`, so she knows where the
+    night is BEFORE she picks a picture. The authority model is unchanged
+    and that is the point: heat tells her where things stand, SHE decides
+    what to send, her one sentence stays the only authority on content, and
+    the image-side `_HEAT_TONE` still handles atmosphere alone. The two
+    never argue about what the picture shows (invariant 2).
+  - **Heat and candour are different dials and must stay that way.** Heat
+    says how CHARGED, candour says how FREELY and how OFTEN. Asserted on a
+    guarded persona at both ends: the rarity clause and her caution survive
+    at every temperature.
+  - No fourth tier: three bands, same ladder as everywhere else, top one
+    still inside the ceiling (deniable, implication, stops where she would).
+  - Each band points her at what a picture can actually RENDER — what she
+    has on, how she is sitting, the light, what is outside the frame —
+    because her sentence is the ONLY channel between the conversation and
+    the image, and v10.39 measured that the model follows what is NAMED and
+    defaults whatever is left unsaid.
+  - Measured live, same thread and same ask, state the only difference:
+    heat 0 → "nah not tonight" 3/3 (a thread that is not there yet); heat 2
+    → a charged photo 3/3, and her own unedited descriptions rendered clean
+    with no declines.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

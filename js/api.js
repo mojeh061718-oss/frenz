@@ -4106,6 +4106,38 @@ const ClaudeAPI = {
     return bank[this._hash32(String(id) + '|pf|' + String(desc || '')) % bank.length];
   },
 
+  /* Where the night IS, told to her BEFORE she picks a picture (v10.51).
+
+     The gap this closes: `_imageHeat` was read in exactly one place — inside
+     deliverBubble, at delivery — which is after she has already written the
+     [photo] sentence. So the dial named "heat" never reached the decision it
+     is named for. It dressed the lighting of a picture whose content had
+     already been chosen without it, and a charged Friday and an ordinary
+     Tuesday produced the same photo lit differently.
+
+     The authority model is unchanged and that is the point: this tells her
+     where the night is, SHE decides what to send, and her one sentence
+     stays the only authority on what the picture shows. The image-side
+     `_HEAT_TONE` still handles atmosphere alone, so the two never argue
+     about content (invariant 2).
+
+     Three bands, matching the three that exist everywhere else — nothing
+     here invents a fourth tier, and the top one stays inside the house
+     ceiling: implication, deniable, stopping where she would stop.
+
+     Each line points her at the things a picture can actually RENDER —
+     what she has on, how she is sitting, the light, what sits outside the
+     frame. That is craft, not decoration: her sentence is the ONLY channel
+     between the conversation and the image, and v10.39 measured that the
+     model follows what a prompt NAMES and defaults whatever it leaves
+     unsaid. A description that names nothing renders as nothing in
+     particular. */
+  _PHOTO_REGISTER: [
+    ' Where tonight actually is: ordinary. A picture from you right now is a picture of your evening — what you are doing, what is in front of you, the room as it is — not a picture of you being looked at.',
+    ' Where tonight actually is: there is something in the air, and a picture from you can quietly know that. What you have on, how you are sitting, the lamp instead of the overhead — it reads as an ordinary evening to anyone else and you both know better.',
+    ' Where tonight actually is: charged, and you both know it. A picture from you now is allowed to be aware of itself — what you are wearing and how little you are bothered by it, the way you are lying, what sits just outside the frame. Name those things when you describe it, because they are the picture. Still deniable, still yours, and it still stops exactly where you would stop.'
+  ],
+
   photoNote(settings, friend) {
     // Utility personas make prompts ABOUT images; they never send photos.
     if (this._isUtility(friend)) return null;
@@ -4130,7 +4162,13 @@ const ClaudeAPI = {
       : 'and you do not know him well enough for any of this to be casual, which makes it a bigger step, not a smaller one.')
       + ' So the picture teases by ATMOSPHERE and implication: the light, what you are wearing, what sits just out of frame does the work. Suggestion always, never explicit. Photos are RARE: most conversations have none, you never offer one unprompted twice, and you never send one because he pushed.';
     const open = ' You send pictures the way you say things — without ceremony and without a filter. If you are mid-changing, in a bra, in a towel with your hair wrecked, that is simply what the picture is; you do not stage it, do not warn him, and do not apologise for it, because somewhere along the way you stopped being embarrassed in front of him. It stops where it would stop in real life: this is casual and unbothered, not a nude, and you would never send something you would not actually send. Photos are not precious to you, but they are not constant either — they happen when there is a reason.';
-    return ['## Sending photos', common + (candor === 'open' ? open : guarded)];
+    /* The register rides LAST, after the candour branch, because it is the
+       most situational thing in the block and the least permanent — her
+       caution and her rarity are who she is, this is only what tonight is
+       like. It never touches either: heat says how CHARGED, candour says
+       how FREELY and how OFTEN, and they are separate dials on purpose. */
+    const register = this._PHOTO_REGISTER[this._imageHeat(friend)] || this._PHOTO_REGISTER[0];
+    return ['## Sending photos', common + (candor === 'open' ? open : guarded) + register];
   },
 
   /* Every pool entry — xAI direct, or Grok-on-Bedrock rewritten into an
