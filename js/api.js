@@ -2873,6 +2873,19 @@ const ClaudeAPI = {
       'A full-length mirror photo she took on her phone, the phone held at chest height, her whole outfit visible from shoes up and her face visible in the reflection. The picture contains only the mirror\'s reflection.',
       'A mirror photo she took on her phone at chest height and a little to one side, her face and whole outfit visible in the reflection. The picture contains only the mirror\'s reflection.'
     ],
+    /* The face-live counterpart of the pov pool (v10.38). Without it,
+       turning her face on changed almost nothing: pov is what any body word
+       routes to, so the most common framing stayed head-out and the setting
+       looked broken. The original reasoning ("a look-down shot has no face")
+       was true of ONE shot and wrong as a rule — people take this photo
+       constantly, arm out and the camera tilted back far enough to catch
+       their face AND what they are sitting in. Keeps the pov pool's real
+       property: her world stays in the picture with her. */
+    povFace: [
+      'A photo she took on her phone with her arm out and the camera tilted back toward her, her face in the top of the frame and the rest of the picture running down her front into the room beyond.',
+      'A photo she took on her phone held out at arm\'s length and a little above her, angled down so her face, her front, and whatever she is sitting on are all in the picture.',
+      'A photo she took on her phone from just past arm\'s length, the camera dipped so her face sits near the edge of the frame and most of the picture is her and the room around her.'
+    ],
     selfie: [
       'A selfie she took on her phone, front camera held out at arm\'s length and a little above her, her face and shoulders in the frame with the room behind her.',
       'A quick selfie she took on her phone, camera at arm\'s length and slightly tilted, catching her face and whatever she is in the middle of behind her.',
@@ -2903,10 +2916,13 @@ const ClaudeAPI = {
     return 'scene';
   },
   _frame(mode, desc, faceShown) {
-    // A face-live mirror must not pick a phone-over-face composition — the
-    // frame text and the face rule would contradict (invariant 5), and the
-    // model resolves contradictions unpredictably.
-    const set = (mode === 'mirror' && faceShown ? this._FRAMING.mirrorFace : this._FRAMING[mode]) || this._FRAMING.scene;
+    // A face-live framing must not pick a composition that hides the face —
+    // the frame text and the face rule would contradict (invariant 5), and
+    // the model resolves contradictions unpredictably. Both pools that crop
+    // the head by construction have a face-live sibling.
+    const faceSwap = { mirror: 'mirrorFace', pov: 'povFace' };
+    const key = (faceShown && faceSwap[mode]) || mode;
+    const set = this._FRAMING[key] || this._FRAMING.scene;
     // Day salt: hashing the description alone froze the framing — "my legs
     // on the couch, tv on" produced the identical composition on every wine
     // night forever. Salted per _dayKey (the vibe-dice discipline): stable
@@ -3068,15 +3084,18 @@ const ClaudeAPI = {
     // Framing, not exclusion: "her head is outside the picture" describes the
     // photograph, where "her face is not visible" describes a removal — and
     // the second, sitting beside a physical description, reads as intent.
-    // pov stays head-out even for a face-live persona: a look-down shot has
-    // no face in it, and that is the shot she said she was taking.
+    // Both head-cropping framings invert when her face is live, and pov is
+    // the one that matters: it is what any body word routes to, so leaving
+    // it head-out made turning her face on change almost nothing.
     const faceRule = isScene ? ' Nobody is in the frame.'
       : isSelfie ? ' Her face is in the picture, easy and natural.'
         : m === 'mirror'
           ? (o.faceShown
             ? ' The phone sits at chest height in the reflection, so her face is visible above it.'
             : ' The phone covers her face in the reflection, so no face is in the picture.')
-          : ' Her head is outside the picture entirely.';
+          : (o.faceShown
+            ? ' Her face is in the picture, at the near edge of the frame.'
+            : ' Her head is outside the picture entirely.');
 
     /* Order: where the phone was, then WHAT SHE SAID SHE IS SENDING, then
        who was holding it, then the camera. Her own words are the subject of

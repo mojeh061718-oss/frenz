@@ -443,6 +443,21 @@ the fixtures were wrong before.
   `imgerr {screened:true, attempt}`; clean ones stay out of the ledger.
   testlook stays on raw `generateImage` — the lens exists to show unscreened
   pipeline output.
+- **Both head-cropping pools have a face-live sibling** (v10.38, reversing a
+  v10.32 call on owner report). The old rule was "pov stays head-out even for
+  a face-live persona: a look-down shot has no face" — true of one shot,
+  wrong as a rule. `pov` is what ANY body word routes to, so leaving it
+  head-out meant flipping `photoFace` to 'shown' changed almost nothing:
+  only fit-checks (mirror) and explicit selfies ever showed a face, and the
+  owner reported the setting looked broken. Now `_frame` swaps
+  mirror→`mirrorFace` and pov→`povFace` whenever the face is live, and
+  `faceRule` inverts with them. `povFace` keeps the pov pool's actual
+  property — her world stays in the picture with her — while the camera
+  tilts back far enough to catch her face. Invariant 5 is the thing to hold:
+  a face-live render must never draw a head-cropping frame beside a
+  face-showing rule, asserted for both modes. The scene lens inherits this
+  for free because it forces pov, which is what fixed the reported
+  `testlook <action> heat` bug without special-casing the lens.
 - testlook is a LENS and must show what the pipeline sends (v10.36). Until
   then it ignored `referenceImage` entirely and rendered a different woman
   from every real photo — a lens that lies about the thing it exists to

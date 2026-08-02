@@ -3201,9 +3201,42 @@ console.log('\n== reference-locked photos: per-persona faces, owner-approved ref
   const mShown = API._imagePrompt('new dress, fit check', 'mirror', SHEET, 0, { faceShown: true });
   ok(!/covers her face completely/.test(mShown) && /face .*(visible|in the reflection)/i.test(mShown),
     'ref: face-live mirror shows the face in the reflection');
+  /* v10.38 reverses the v10.32 call here, on owner report. The old rule was
+     "pov stays head-out even with the face live — a look-down shot has no
+     face." True of one shot, wrong as a rule: pov is what ANY body word
+     routes to, so leaving it head-out meant turning her face on changed
+     almost nothing and the setting read as broken. Both head-cropping
+     pools now have a face-live sibling. */
+  const povHidden = API._imagePrompt('my legs on the couch', 'pov', SHEET, 0);
+  ok(/head is outside the picture entirely/.test(povHidden),
+    'ref: pov is head-out when her face is hidden (unchanged)');
   const povShown = API._imagePrompt('my legs on the couch', 'pov', SHEET, 0, { faceShown: true });
-  ok(/head is outside the picture|outside the picture entirely/.test(povShown),
-    'ref: pov stays head-out even with the face live — a look-down shot has no face');
+  ok(/Her face is in the picture/.test(povShown) && !/head is outside the picture/.test(povShown),
+    'ref: pov shows her face when the face is live — the common framing, not just fit-checks');
+  ok(API._FRAMING.povFace.every(f => /face/i.test(f)),
+    'ref: every povFace entry actually puts her face in frame');
+  ok(API._FRAMING.povFace.every(f => !/photographed from|someone else (holding|taking)|taken by/i.test(f)),
+    'ref: povFace keeps the phone-is-a-viewpoint doctrine');
+  ok(API._FRAMING.povFace.every(f => /room|around her|sitting on|beyond/i.test(f)),
+    'ref: povFace keeps her world in the picture with her (the pov pool\'s point)');
+  // The frame text and the face rule must never disagree (invariant 5): a
+  // face-live render may not draw from a pool that crops the head.
+  for (const mode of ['pov', 'mirror']) {
+    const p = API._imagePrompt('my legs on the couch', mode, SHEET, 0, { faceShown: true });
+    ok(!/head is outside|covers her face|so no face is in the picture/.test(p),
+      `ref: face-live ${mode} never pairs a head-cropping frame with a face rule`);
+  }
+  /* The lens inherits the fix rather than special-casing it: testlook scenes
+     force pov, so a face-live persona's `testlook <action> heat` now shows
+     her face. This is the exact thing the owner reported broken. */
+  const lensShown = API.testLookScenePrompt(
+    { profile: { appearance: SHEET } }, 'bed', 2, 1, { reference: true, faceShown: true });
+  ok(/Her face is in the picture/.test(lensShown),
+    'lens: testlook <action> heat shows her face when the persona has it enabled');
+  const lensHidden = API.testLookScenePrompt(
+    { profile: { appearance: SHEET } }, 'bed', 2, 1, { reference: true, faceShown: false });
+  ok(/head is outside the picture entirely/.test(lensHidden),
+    'lens: testlook <action> stays faceless for a hidden persona (nearest good case)');
 
   /* Selfie: a fourth mode, reachable ONLY with the face live + explicit
      see-HER words; ordinary scenes never route there; the pool keeps the
