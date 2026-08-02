@@ -1,0 +1,65 @@
+[
+  {
+    "name": "A-candidate-hidden",
+    "note": "v10.44 dials -> reference, face out of frame",
+    "ms": 8305,
+    "ok": true,
+    "file": "A-candidate-hidden.jpg",
+    "bytes": 263859,
+    "rungs": []
+  },
+  {
+    "name": "B-candidate-shown",
+    "note": "v10.44 dials -> reference, face in frame (the invented-face path)",
+    "ms": 6105,
+    "ok": true,
+    "file": "B-candidate-shown.jpg",
+    "bytes": 274763,
+    "rungs": []
+  },
+  {
+    "name": "C-chat-heat0",
+    "note": "chat photo, body words, face live, heat 0",
+    "ms": 10761,
+    "ok": true,
+    "file": "C-chat-heat0.jpg",
+    "bytes": 364751,
+    "rungs": []
+  },
+  {
+    "name": "D-chat-heat1",
+    "note": "chat photo, same scene, heat 1 (middle register)",
+    "ms": 11331,
+    "ok": true,
+    "file": "D-chat-heat1.jpg",
+    "bytes": 375351,
+    "rungs": []
+  },
+  {
+    "name": "E-chat-heat2",
+    "note": "chat photo, same scene, heat 2 — THE REPORTED BLOCKER",
+    "ms": 10135,
+    "ok": true,
+    "file": "E-chat-heat2.jpg",
+    "bytes": 420043,
+    "rungs": []
+  },
+  {
+    "name": "F-garnish-spicy",
+    "note": "the reworded heat-2 garnish, face live (declined before the rewrite)",
+    "ms": 11270,
+    "ok": true,
+    "file": "F-garnish-spicy.jpg",
+    "bytes": 339155,
+    "rungs": []
+  },
+  {
+    "name": "G-scene-noref",
+    "note": "a photo of a THING with a reference locked (must route /generations)",
+    "ms": 6501,
+    "ok": true,
+    "file": "G-scene-noref.jpg",
+    "bytes": 245299,
+    "rungs": []
+  }
+]
