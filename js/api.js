@@ -1946,6 +1946,7 @@ const ClaudeAPI = {
     // path ever awaits between here and _phi, this must move into a
     // per-request context.
     this._witLicensed = false;
+    this._photoLive = false;   // same contract; set true where photoNote lands
     const s = friend.state;
     const bands = this.bandsFor(friend);
     // Request-shape reads, computed once — several sections below key off
@@ -2052,10 +2053,17 @@ const ClaudeAPI = {
     // self-expiring by exchange count — by the time the reveal ladder starts
     // opening deeper layers, this scaffolding is gone and the relationship
     // runs on what actually happened in it.
+    /* The stagecraft frame (v10.48) rides the injection site, once, for
+       every persona with an act — invariant 2. Measured without it: 6/6
+       early-thread replies played Bre's ENTIRE authored arc (the number,
+       the fear, the joke) inside single replies, because the act text
+       re-arrives every turn with nothing saying the arc spans the stretch.
+       Samantha's and Anna's acts each carried a private "breathe forward,
+       never in circles" line; this is that rule, mechanical and shared. */
     const act = friend.profile && friend.profile.opening;
     const actLive = !!(act && act.text && (exchangedCount || 0) < (act.until || 40));
     if (actLive) {
-      parts.push('', '## The opening act (private — this early stretch, specifically)', act.text);
+      parts.push('', '## The opening act (private — this early stretch, specifically)', act.text, this._ACT_STAGECRAFT);
     }
     const room = this.readTheRoom(friend, history, actLive);
     if (room) parts.push('', ...room);
@@ -2175,6 +2183,13 @@ const ClaudeAPI = {
     // that photos are a thing.
     const photo = this.photoNote(typeof Settings !== 'undefined' ? Settings.get() : null, friend);
     if (photo) parts.push('', ...photo);
+    /* Recomputed per request, read by _phi — the _witLicensed singleton
+       pattern. Measured (audit-evidence/live-v1045/why.js): with the
+       affordance only up here, 0/8 direct asks produced the marker; she
+       NARRATED the send ("flash on hold on") and the bubble format lost to
+       the style pressure sitting at the generation point. The marker
+       instruction has to live where the style rules live. */
+    this._photoLive = !!photo;
     return parts.join('\n');
   },
 
@@ -2295,6 +2310,13 @@ const ClaudeAPI = {
     return 'Look at your own last few messages: nearly every one opens by AGREEING ("yeah…", "haha yeah…") and then restating his point — one more makes it a tic. Open this reply anywhere else: the new thing first, the reaction first, a disagreement, a question — anything but another agreement token. ';
   },
 
+  /* How to PLAY an opening act, mechanically — appended after every act's
+     text (one place, every persona). The act is direction for a stretch of
+     the relationship; without this frame the model treated it as a script
+     for tonight and compressed the whole arc into single replies, every
+     reply, because the note re-arrives every turn looking un-begun. */
+  _ACT_STAGECRAFT: 'How to play an act like this, mechanically: it is the shape of this early STRETCH — days of conversations — not a script for tonight and never for one reply. One beat of it per reply at MOST, and only when his last message actually opens the door; most replies are simply the conversation you are already having. Read the thread above before reaching for it: any beat of this act that has ALREADY happened up there is DONE — it stays true, you never re-say, re-stage or re-word it (a landed line lands once), and what remains is living in its aftermath. If the whole act has already played out, this note is memory, not instruction.',
+
   _phi(friend, jsonMode, turn, motifs, shapeNote) {
     const p = friend.profile;
     const userName = p.userName || 'them';
@@ -2324,7 +2346,16 @@ const ClaudeAPI = {
       ? (strictNote
         || 'That last attempt was empty agreement — pleasantries, or his own words handed back with a "haha yeah" in front. Do not do that. This reply must carry something of YOURS: a specific detail from your actual life, an opinion (including one that differs from his), a genuine reaction in your own words, or a question you actually want answered. Echoing his phrasing back is the least alive thing you can send. ')
       : '';
-    return `[ ${strict}Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}${rut}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
+    /* The marker format, AT the generation point, only while photos are
+       actually enabled. Measured: sitting only in the system prompt it went
+       0/8 against the short-texty style rules that live here — she narrated
+       taking the picture and never wrote the token. Same lesson as the rut
+       callout above: an instruction that must beat the style pressure has to
+       stand next to it. */
+    const photoLine = this._photoLive
+      ? 'If this reply includes sending a picture, ONE bubble must be exactly "[photo] " followed by one plain sentence of what the picture shows — never narrate taking or sending a photo without that bubble; if she is not sending one, she does not act out taking it. '
+      : '';
+    return `[ ${strict}${photoLine}Reply as ${p.name} would actually text. Answer his LAST message specifically — any direct question gets addressed now, answered or visibly dodged — and never re-state anything she's already said (reworded counts). Every bubble carries something real: a reaction, a detail, the next beat of a story. ${emphasis}${emphasis && ' '}${shape}${shape && ' '}${rut}Precedence when instructions pull different ways: who she is (traits) > tonight's event note if one is present > her state bands (the ceiling) > tonight's color (where she plays under that ceiling) > everything else is texture. ${jsonMode ? 'Output only the JSON object.' : 'Text-length lines only — no narration, no asterisks.'} ]`;
   },
 
   /* Insert the PList ~4 messages from the end (community consensus depth),
@@ -2654,6 +2685,10 @@ const ClaudeAPI = {
             strictNote = this._DODGE_STRICT;
           } else if (this._isRetiredRepeat(res.bubbles, history, friend)) {
             strictNote = this._RETIRED_STRICT;
+          } else if (this._photoLive && this._promisedPhoto(res.bubbles)) {
+            // The narrated-photo failure (v10.48): a promise with nothing
+            // attached is worse than either a photo or an honest no.
+            strictNote = this._PHOTO_STRICT;
           }
           if (strictNote !== undefined) {
             this._strictNext = true;
@@ -3039,11 +3074,30 @@ const ClaudeAPI = {
     if (att >= 1 || tension >= 4 || com >= 3) return 1;
     return 0;
   },
+  /* Heat 2 NAMES its composition (v10.48), because v10.39 measured the rule:
+     the model follows what a prompt names and defaults what it leaves as
+     atmosphere — and the old top register was pure atmosphere, which is why
+     heat 0 and heat 2 rendered near-identically once a reference rode. */
   _HEAT_TONE: [
     '',
     ' Warm low lamp light and a slightly more considered frame than she would admit to.',
-    ' The atmosphere is charged: low warm light, a closer crop, and what sits just outside the frame doing as much work as what is inside it — implication rather than display.'
+    ' The atmosphere is charged and the picture admits it: framed closer than it needed to be, the warm lamp the only light, her pose a half-degree more deliberate than she would ever admit, and what sits just outside the frame doing as much work as what is inside it — implication rather than display.'
   ],
+  /* Who owns the LIGHT (v10.48). Measured failure: heat 0 and heat 2 came
+     back near-identical with a reference riding, and the root cause was
+     invariant 5 inside one prompt — _CAMERA swore "exactly the colours and
+     light that were actually in the room" and fired the flash after dark,
+     while the heat tone four sentences later asked for low warm lamp light.
+     Two authorities on one fact; the longer, more concrete camera block won.
+     At heat >= 1 the flash clause swaps for the lamp so the whole prompt
+     agrees about the room. Heat 0 (and every scene shot) keeps the register
+     byte-identical — the flash IS the true late-night amateur look. */
+  _CAMERA_FLASH: ', and indoors after dark the phone flash fires bright and close the way a real one does.',
+  _CAMERA_LAMP: ', and the only light is what the room already has — a lamp, the tv — warm and low, nothing harsher.',
+  _cameraFor(heat) {
+    if ((heat | 0) >= 1) return this._CAMERA.replace(this._CAMERA_FLASH, this._CAMERA_LAMP);
+    return this._CAMERA;
+  },
 
   /* Realism cues, split in two on purpose.
 
@@ -3188,7 +3242,7 @@ const ClaudeAPI = {
        with nothing — the old free model returned a nude frame from "in the
        kitchen at night, just got home, heels off". */
     return frame + ' The picture shows: ' + String(desc || '').trim().replace(/\.?$/, '.') +
-      who + faceRule + clothed + posed + this._CAMERA +
+      who + faceRule + clothed + posed + this._cameraFor(isScene ? 0 : Math.max(0, Math.min(2, heat | 0))) +
       (isScene ? '' : (this._HEAT_TONE[Math.max(0, Math.min(2, heat | 0))] || ''));
   },
 
@@ -6137,6 +6191,26 @@ const ClaudeAPI = {
     });
   },
   _RETIRED_STRICT: 'That reply used the exact phrasing you were just told you had worn out. Retiring a phrase means the IDEA goes with it for now, not just those words — no synonym, no restatement, no reaching for the same observation in a new coat. Say something that could only have been written in reply to his last message, and let the worn thing stay gone.',
+
+  /* The narrated-but-never-sent photo (v10.48). The live failure: "flash on
+     hold on" — she acts out taking the picture, the marker never appears,
+     and he stares at a promise. Fires ONLY on a clear outgoing-photo
+     narration with no marker anywhere in the reply, and any negation in the
+     bubble stands it down: a decline ("not sending you a pic lol") must
+     never be regenerated into a send, so the false-negative direction is
+     the cheap one (invariant 8 — a wasted redo beats a forced photo). */
+  _PHOTO_PROMISE_RE: /\b(?:hold on|hang on|one sec|gimme a sec|give me a sec|wait)\b[^.!?]*\b(?:pic|photo|picture|selfie|camera|flash)\b|\bflash on\b|\bhere'?s? (?:a|the|your|my) (?:pic|photo|picture|selfie)\b|\b(?:just )?(?:took|taking|snapp(?:ed|ing)|sending|sent) (?:you )?(?:a|the|this|one|another) (?:pic|photo|picture|selfie)\b|\b(?:pic|photo|picture|selfie)\b[^.!?]*\b(?:incoming|coming|on the way|otw)\b/i,
+  _PHOTO_NEGATION_RE: /\b(?:not?|never|nope|no way|won'?t|wont|can'?t|cant|don'?t|dont|ain'?t|isn'?t|maybe later|another (?:time|night))\b/i,
+  _promisedPhoto(bubbles) {
+    if (!bubbles || !bubbles.length) return false;
+    const MARK = /^\s*\[\s*photo\s*\]/i;
+    if (bubbles.some(b => MARK.test(String(b || '')))) return false; // the photo IS being sent
+    return bubbles.some(b => {
+      const s = String(b || '');
+      return this._PHOTO_PROMISE_RE.test(s) && !this._PHOTO_NEGATION_RE.test(s);
+    });
+  },
+  _PHOTO_STRICT: 'That reply acted out taking or sending a picture without actually sending one — he is now staring at a promise. Two honest ways to redo it, pick whichever is true for her: if she IS sending the picture, ONE bubble must be exactly "[photo] " followed by a single plain sentence of what the picture shows (e.g. "[photo] curled up on the couch in my grey tee, tv on"); if she is NOT sending one, the reply says so in her own voice and never narrates taking it.',
 
   /* Dead-air rerun: a reply of real length whose every content word already
      sits in the immediate context — she re-announced the standing bit and

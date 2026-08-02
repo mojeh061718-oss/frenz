@@ -75,3 +75,17 @@ setting the owner can change, not candour, not heat, not the provider.
   non-xAI host with `grok-imagine` set, or a Bedrock entry without its own
   xAI key, yields `imageEntry() === null` → `photoNote` returns null → she
   is never told photos exist. Correct by design, invisible in the UI.
+
+## 5. v10.48 — all three fixed, verified live
+
+| gap | before | after |
+|---|---|---|
+| `[photo]` marker on a direct ask | 0/8 | **5/5**, zero backstop regens |
+| practice-joke replay, early thread | 6/6 | **0/5** |
+| heat 0 vs heat 2 renders | near-identical | flash-lit direct vs warm-lamp closer-framed (`HEAT48-0/2.jpg`) |
+
+Probe honesty: the 0/8 run (`why.js`) had not defined the page-global
+`Settings`, so its prompts carried no photo section at all. `after48.js`
+defines it. The app itself always had the section; position at the
+generation point — not absence — was the failure, which the 5/5 with zero
+regens confirms.

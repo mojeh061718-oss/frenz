@@ -563,6 +563,46 @@ the fixtures were wrong before.
   soft image in the chain. The candidate also names its garment now (a plain
   fitted t-shirt and leggings) — "everyday clothes that show her true build"
   was rendering as underwear, and whatever a reference wears bleeds too.
+- **The three live-measured fidelity gaps, fixed together (v10.48).** All
+  three verified live before and after (`audit-evidence/live-v1045/`).
+  - **The `[photo]` marker was never emitted** — 0/8 on a direct "send me a
+    pic. right now"; she NARRATED the shot ("flash on hold on") and the
+    token never appeared. The affordance lived only in the system prompt and
+    lost to the short-texty style rules at the generation point — the same
+    failure class that moved the rut callout into `_phi`. Same fix: a
+    compact marker line rides `_phi` behind `_photoLive` (the `_witLicensed`
+    singleton pattern — set where photoNote lands, reset per build), plus a
+    one-redo backstop (`_promisedPhoto` → `_PHOTO_STRICT`) in the quality
+    chain for the narrated-but-never-sent reply. The detector stands down on
+    ANY negation in the bubble: a decline must never be regenerated into a
+    send, so false negatives are the cheap direction. After: **5/5 markers,
+    zero backstop regens** — position was the whole problem.
+    Probe honesty note: the 0/8 probe had not defined the page-global
+    `Settings`, so its prompts carried no photo section at all; the after
+    probe defines it. The app itself always had the section — and the owner
+    report plus the 5/5-with-no-regens result confirm position, not
+    absence, was the failure.
+  - **Heat did not survive the edit route** — heat 0 and heat 2 rendered
+    near-identically with a reference riding. Invariant 5 inside one prompt:
+    `_CAMERA` swore "exactly the colours and light actually in the room" and
+    fired the flash after dark while `_HEAT_TONE[2]` asked for low warm
+    light — two authorities on the light, and the longer camera block won.
+    `_cameraFor(heat)`: at heat ≥ 1 the flash clause swaps for the lamp; heat
+    0 and every scene shot keep the register byte-identical. And the top
+    tone now NAMES its composition (framed closer, lamp the only light, pose
+    a half-degree deliberate) because v10.39 measured that the model follows
+    what a prompt names and defaults what stays atmospheric. The ceiling
+    phrase ("implication rather than display") is byte-stable — heat 2 is
+    still the top and nothing here raised it.
+  - **The opening act replayed the whole arc every turn** — 6/6 early
+    replies played Bre's entire authored arc (the number, the fear, the
+    practice-on-you joke) in single replies, because the act text re-arrives
+    every turn looking un-begun. `_ACT_STAGECRAFT` now rides the injection
+    site once for every persona with an act (invariant 2): the act is the
+    shape of a STRETCH, one beat per reply at most, landed beats are DONE
+    and live in their aftermath, and a fully-played act is memory, not
+    instruction. After: 0/5 replayed the joke. No template change — the
+    frame is runtime, so existing friends get it on the next send.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

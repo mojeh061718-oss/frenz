@@ -4261,6 +4261,114 @@ console.log('\n== camera register (v10.46): artless, not low quality ==');
   }
 }
 
+console.log('\n== v10.48 fix 1: the [photo] marker actually gets emitted ==');
+{
+  /* Measured live (audit-evidence/live-v1045/why.js): 0/8 photos offered on
+     a direct "send me a pic. right now" at heat 2, candour open — and she
+     was NOT declining. She narrated the shot ("flash on hold on", "tank top
+     boy shorts nothing else, you asked") and never wrote the marker. The
+     affordance lived only in the system prompt, mid-context, and lost to
+     the style pressure that makes her bubbles short and texty — the same
+     failure class as the rut warning, which moved to the generation point
+     for exactly this reason. Same fix: a compact marker line in _phi, plus
+     the house one-redo backstop for the narrated-but-never-sent case. */
+  const bre48 = mkFriend('bre');
+  API._photoLive = true;
+  const phiP = API._phi(bre48, false, 5, [], '');
+  ok(/\[photo\]/.test(phiP), 'marker: the format reaches the generation point when photos are live');
+  ok(/narrat/i.test(phiP), 'marker: narrating a send without the marker is named as the failure');
+  API._photoLive = false;
+  ok(!/\[photo\]/.test(API._phi(bre48, false, 5, [], '')),
+    'marker: no image entry -> not one word about photos at the generation point (rules ride only where they apply)');
+
+  /* The detector, and its bias: it fires only on a clear outgoing-photo
+     narration with no marker anywhere in the reply. Any negation in the
+     bubble stands it down — a decline ("not sending you a pic lol") must
+     never be regenerated into a send, so false negatives are the cheap
+     direction (invariant 8). */
+  const P = (b) => API._promisedPhoto(b);
+  ok(P(['fine', 'but its the drunk tank top version so you asked for it', 'flash on hold on']) === true,
+    'marker: the live failure case ("flash on hold on") is caught');
+  ok(P(['ok hold on let me take a pic']) === true, 'marker: "hold on let me take a pic" is caught');
+  ok(P(['heres a pic', 'dont judge the mess']) === true, 'marker: "heres a pic" with nothing attached is caught');
+  ok(P(['[photo] curled on the couch in my grey tee, tv on']) === false,
+    'marker: a reply that actually carries the marker is left alone');
+  ok(P(['took a pic of the sunset earlier', '[photo] the sky over the lot going purple']) === false,
+    'marker: narration beside a real marker is fine — the photo IS being sent');
+  ok(P(['im not sending you a pic lol']) === false, 'marker: a decline is never regenerated into a send');
+  ok(P(['no pics tonight, im a mess']) === false, 'marker: another decline shape stands down');
+  ok(P(['the picture of us from the lake is still on my fridge']) === false,
+    'marker: talking ABOUT a photo is not promising one');
+  ok(P(['what do you think im wearing']) === false && P([]) === false && P(null) === false,
+    'marker: ordinary replies and empty input never trip it');
+  ok(typeof API._PHOTO_STRICT === 'string' && /\[photo\]/.test(API._PHOTO_STRICT) && /NOT sending/.test(API._PHOTO_STRICT),
+    'marker: the strict note shows the exact format and allows the honest no-photo exit');
+  const apiSrc48 = fs.readFileSync(path.join(ROOT, 'js/api.js'), 'utf8');
+  ok(/_promisedPhoto\(res\.bubbles\)/.test(apiSrc48) && /_PHOTO_STRICT/.test(apiSrc48),
+    'marker: the backstop is wired into the one-redo chain like every other obedience guard');
+  ok(/this\._photoLive\s*=/.test(apiSrc48.slice(0, apiSrc48.indexOf('_phi(friend'))),
+    'marker: _photoLive is set during context assembly (the _witLicensed singleton pattern)');
+}
+
+console.log('\n== v10.48 fix 2: heat owns the light, and the picture admits it ==');
+{
+  /* Measured live: heat 0 and heat 2 rendered near-identically once a
+     reference rode. Root cause is invariant 5 inside one prompt: _CAMERA
+     says "exactly the colours and light that were actually in the room" and
+     fires the flash after dark, while _HEAT_TONE[2] asks for "low warm
+     light". Two authorities on the light; the longer, more concrete camera
+     block won. And v10.39 measured that the model follows what a prompt
+     NAMES and defaults what it leaves atmospheric — the old heat tone was
+     atmosphere. So: heat >= 1 hands the light to the heat register (the
+     flash clause swaps for the lamp), and heat 2 names its composition. */
+  ok(API._cameraFor(0) === API._CAMERA, 'heat: heat 0 keeps the camera register byte-identical (flash and all)');
+  ok(/flash/i.test(API._cameraFor(0)), 'heat: the flash exists at heat 0 — it is the true late-night amateur look');
+  for (const h of [1, 2]) {
+    const cam = API._cameraFor(h);
+    ok(!/flash/i.test(cam), `heat: at heat ${h} the flash is gone — heat owns the light now`);
+    ok(/lamp|tv/i.test(cam) && /warm/i.test(cam), `heat: at heat ${h} the light is the lamp the heat tone asked for`);
+    ok(/ProRAW/.test(cam) && /one-handed mid-moment/.test(cam) && /pores/i.test(cam),
+      `heat: at heat ${h} the fidelity and artlessness cues all survive (counter-rule)`);
+  }
+  const hot = API._imagePrompt('curled on the couch, tv on', 'pov', Personas.byId('bre').appearance, 2, { faceShown: true, reference: true });
+  const cold = API._imagePrompt('curled on the couch, tv on', 'pov', Personas.byId('bre').appearance, 0, { faceShown: true, reference: true });
+  ok(!/flash/i.test(hot) && /flash/i.test(cold), 'heat: the assembled prompts diverge on the light');
+  ok(/framed closer|closer than it needed/i.test(hot), 'heat: heat 2 names its framing distance (named things follow — v10.39)');
+  ok(/implication rather than display/.test(hot), 'heat: the ceiling phrase is untouched — heat 2 is still the top');
+  ok(!/implication rather than display/.test(cold), 'heat: heat 0 stays uncharged');
+  // Scenes have nobody in them; a scene shot keeps the plain camera whatever
+  // the thread's heat says.
+  const sc = API._imagePrompt('the bowl of ramen on the counter', 'scene', null, 2, {});
+  ok(/flash/i.test(sc), 'heat: a scene photo keeps the heat-0 camera — there is no charge in a picture of a bowl');
+  // Budget re-proof with the longer tone.
+  for (const t of Personas.templates) {
+    const full = API._imagePrompt('curled up on the couch in my thin cami and sleep shorts, tv on, glass of wine in my hand, one leg tucked under me', 'pov', t.appearance, 2);
+    ok(full.length <= 2600 && /implication rather than display/.test(full),
+      t.id + ': heat-2 prompt still fits 2600 with the tail intact (' + full.length + ')');
+  }
+}
+
+console.log('\n== v10.48 fix 3: an opening act is a shape, not a script for one reply ==');
+{
+  /* Measured live: 6/6 early-thread replies played Bre's whole authored arc
+     — five years, the fear, the practice-on-you joke — in single replies,
+     because the act text is re-injected every turn with nothing telling the
+     model that the arc spans the STRETCH and that landed beats are done.
+     Samantha's and Anna's acts carry their own "breathe forward, never in
+     circles" lines; the mechanical frame now rides the injection site, once,
+     for every persona with an act (invariant 2: one place). */
+  const apiSrc48b = fs.readFileSync(path.join(ROOT, 'js/api.js'), 'utf8');
+  ok(typeof API._ACT_STAGECRAFT === 'string', 'act: the stagecraft frame exists');
+  ok(/not a script/i.test(API._ACT_STAGECRAFT) && /one beat of it per reply/i.test(API._ACT_STAGECRAFT),
+    'act: it names the failure — the arc spans the stretch, one beat per reply at most');
+  ok(/DONE|already happened/i.test(API._ACT_STAGECRAFT) && /aftermath/i.test(API._ACT_STAGECRAFT),
+    'act: a landed beat is done — the thread lives in its aftermath, never re-staged');
+  ok(/most replies|ordinary/i.test(API._ACT_STAGECRAFT),
+    'act: most replies are just the conversation — the act is not a quota');
+  const actSite = apiSrc48b.slice(apiSrc48b.indexOf("'## The opening act"), apiSrc48b.indexOf("'## The opening act") + 300);
+  ok(/_ACT_STAGECRAFT/.test(actSite), 'act: the frame rides the injection site, so every persona with an act gets it');
+}
+
 Promise.allSettled(global.__asyncChecks || []).then(() => {
   console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
     + (intendedRed ? ', ' + intendedRed + ' intended-red (expected \u2014 see RED* lines)' : ''));
