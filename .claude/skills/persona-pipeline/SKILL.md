@@ -547,6 +547,17 @@ the fixtures were wrong before.
   belongs. Verify asserts both halves: every detail-destroyer is gone AND
   every artlessness cue survives, because raising quality without that
   counter-rule is exactly how swing one happened.
+  **Then name the capture (v10.47).** "A good modern phone" is a vague
+  adjective; a NAMED device and format is a much stronger token and renders
+  visibly truer — the shipped clause is a ProRAW capture off an iPhone 17
+  Pro Max, true to life, full detail. The trap, measured in the same A/B:
+  the more the clause reads like a SPEC SHEET, the more likely the model
+  draws the phone itself. The rejected variant led with "iPhone 17 Pro Max
+  in Apple ProRAW, 48-megapixel" and put a phone in her hand
+  (`CAM-4-proraw48.jpg`); the shipped one leads with the CAPTURE ("A ProRAW
+  capture off an …") and did not. Identical vocabulary, different phrasing —
+  the same doctrine as the framing pools, where naming the camera as an
+  OBJECT summons one. Asserted on the opening words, not just the keywords.
   The debug lens and the candidate render moved with it: a reference bleeds
   its own quality into every photo that follows, so it cannot be the one
   soft image in the chain. The candidate also names its garment now (a plain

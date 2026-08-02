@@ -3078,9 +3078,17 @@ const ClaudeAPI = {
      guard now lives entirely in _IMAGE_AVOID (no glamour lighting, no
      airbrushed skin, none of the too-clean symmetry of a generated image),
      which is where an exclusion belongs. */
-  _CAMERA: ' It is a real photo off a modern phone, sent straight to a friend the second it was taken:' +
-    ' full sensor detail, sharp focus, clean accurate colour, properly exposed for the room,' +
-    ' fine texture in skin, hair and fabric — a genuinely good picture, technically.' +
+  /* v10.46b: "a good modern phone" was a vague adjective; a NAMED device and
+     capture format is a far stronger token and renders visibly truer. The
+     trap, measured: the more the clause reads like a SPEC SHEET, the more
+     likely the model draws the phone itself. The rejected variant led with
+     "iPhone 17 Pro Max in Apple ProRAW, 48-megapixel" and put a phone in her
+     hand (audit-evidence/live-v1045/CAM-4-proraw48.jpg); this one leads with
+     the CAPTURE and did not. Same doctrine as the framing pools — naming the
+     camera as an object summons one. Phrasing, not vocabulary. */
+  _CAMERA: ' A ProRAW capture off an iPhone 17 Pro Max, straight out of the camera and sent to a friend before anything was done to it:' +
+    ' photographic, true to life, exactly the colours and light that were actually in the room —' +
+    ' full 48-megapixel detail, real skin rendered as skin (pores, fine hairs, texture, the odd blemish), fabric you could name by touch.' +
     ' What makes it unmistakably real is everything AROUND that quality: it was grabbed one-handed mid-moment,' +
     ' the framing tilted and a little careless, cropped by nobody who was thinking about it,' +
     ' the room as messy as it actually is, and indoors after dark the phone flash fires bright and close the way a real one does.' +
@@ -3297,7 +3305,7 @@ const ClaudeAPI = {
       ? 'A full-length photo of an adult woman standing relaxed against a plain bare wall at home, square-on to the camera, arms easy at her sides, head to feet in frame, her face clearly visible with an ordinary everyday expression, hair the way she normally wears it, in a plain fitted t-shirt and leggings, which show her true build.'
       : 'A full-length mirror photo an adult woman took on her phone, standing square to a tall mirror on a plain bare wall, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet, in a plain fitted t-shirt and leggings, which show her true build. The picture contains only the mirror\'s reflection.';
     return framing + (who || ' She is an ordinary adult woman.') +
-      ' Shot plainly and evenly: level framing, sharp and clearly detailed, properly exposed, ordinary even room light, an uncluttered background,' + this._SNAP_UNRETOUCHED;
+      ' Shot plainly and evenly, and a ProRAW capture off an iPhone 17 Pro Max: true to life, full detail, level framing, ordinary even room light, an uncluttered background,' + this._SNAP_UNRETOUCHED;
   },
 
   /* Debug-only portrait (the composer command 'testlook'): the neck-down
@@ -3334,7 +3342,7 @@ const ClaudeAPI = {
       (o.reference
         ? ' The woman in the reflection is the same woman as in the reference photo — identical build, hair, skin, and features.'
         : ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.')) +
-      ' Shot like a quick snap: careless tilted framing — but a sharp, clear picture off a modern phone, properly exposed, natural colour, ordinary room light,' + this._SNAP_UNRETOUCHED;
+      ' Careless tilted framing, but a ProRAW capture off an iPhone 17 Pro Max: true to life, full detail, the colours and light actually in the room,' + this._SNAP_UNRETOUCHED;
   },
 
   /* testlook [action] [normal|spicy] — the SCENE variant of the debug lens.

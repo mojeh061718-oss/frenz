@@ -329,7 +329,7 @@ console.log('\n== 13. photos: faceless amateur POV ==');
   /* The register is no longer carried by grain (v10.46 — artless, not low
      quality). It is carried by the moment and the framing, which is what
      the live A/B showed actually sells it. */
-  ok(pov.includes('sent straight to a friend') && pov.includes('grabbed one-handed mid-moment'),
+  ok(pov.includes('sent to a friend before anything was done to it') && pov.includes('grabbed one-handed mid-moment'),
     'snapchat-register cues present (moment + framing, not degradation)');
   ok(pov.includes('not posing') && pov.includes('alluring') && pov.includes('imagination'),
     'natural-but-hot pose clause: unposed, mind left wandering');
@@ -4218,8 +4218,20 @@ console.log('\n== camera register (v10.46): artless, not low quality ==');
   for (const dead of [/grain/i, /flat unedited colour/i, /white balance/i, /auto-exposure a beat wrong/i, /blows out/i, /no favours/i, /colours flattened/i]) {
     ok(!dead.test(CAM), `camera: the detail-destroyer ${dead} is gone`);
   }
-  ok(/sharp|crisp|detail/i.test(CAM), 'camera: the picture is actually sharp and detailed');
-  ok(/full sensor detail|fine texture|fine detail/i.test(CAM), 'camera: fine texture is asked for, not sanded off');
+  ok(/ProRAW/i.test(CAM) && /iPhone/i.test(CAM),
+    'camera: the capture is named — a device and a format beat any adjective for fidelity');
+  ok(/true to life|true-to-life/i.test(CAM), 'camera: true to life is the goal, stated');
+  ok(/detail/i.test(CAM), 'camera: fine detail is asked for, not sanded off');
+  /* The measured trap in naming hardware: the more the clause reads like a
+     SPEC SHEET, the more likely the model draws the phone itself. The
+     rejected variant led with "iPhone 17 Pro Max in Apple ProRAW,
+     48-megapixel" and put a phone in her hand
+     (audit-evidence/live-v1045/CAM-4-proraw48.jpg); the shipped one leads
+     with the capture ("A ProRAW capture off an ...") and did not. Phrasing,
+     not vocabulary — the same doctrine as the framing pools, where naming
+     the camera as an OBJECT summons one. */
+  ok(/^ A ProRAW capture off an/.test(CAM),
+    'camera: the clause leads with the CAPTURE, not with a device spec list (a spec list draws the phone)');
   /* THE counter-rule, and it is the whole risk of this change: raising the
      technical quality must not bring the staged look back. Everything that
      says "nobody arranged this" has to survive, and the no-glamour
