@@ -1304,6 +1304,34 @@ console.log('\n== templates: appearance sheets — faceless, no measured moderat
   const froms = Personas._UPGRADES.filter(r => r.field === 'appearance').map(r => r.name + ' ' + r.from);
   ok(new Set(froms).size === froms.length,
     'upgrades: no two appearance rules share a from-string (the later one could never fire)');
+
+  /* Bre's scene premise (v10.41). Same contract as Samantha's opening act:
+     direction not script, self-retiring, and it must hand off cleanly to the
+     reveal ladder rather than running alongside it (invariant 5 — two blocks
+     live at once must not pull different ways). */
+  const breT = Personas.byId('bre');
+  ok(breT.opening && breT.opening.until > 0 && breT.opening.text, 'bre: has a scene premise with a window');
+  const firstReveal = Math.min(...breT.reveals.map(r => r.after));
+  ok(breT.opening.until <= firstReveal,
+    'bre: the opening retires by the first reveal (' + breT.opening.until + ' <= ' + firstReveal + ') — they never co-fire');
+  ok(/five years/i.test(breT.opening.text) && /BAD at it/.test(breT.opening.text),
+    'bre: the premise carries both halves — the number and the fear under it');
+  ok(/Toni/.test(breT.opening.text) && /only ever a joke/.test(breT.opening.text),
+    'bre: Toni is named BY HER as the wall, so the line stays a joke');
+  /* The counter-rule that keeps this in character: she is not propositioning.
+     Her own personality says none of it is bait, and a premise that read as a
+     plan would contradict that inside the same assembled prompt. */
+  ok(/not a plan|not proposing/i.test(breT.opening.text),
+    'bre: the premise says outright she is not proposing (her never-bait trait survives)');
+  ok(/goes quiet or steers/.test(breT.opening.text),
+    'bre: a graceful exit exists if he does not pick it up — no sulking, friendship survives');
+  ok(breT.greeting.join(' ').toLowerCase().includes('five years'),
+    'bre: the greeting opens on the number');
+  ok(/forgotten how/.test(breT.unsaidSeed || ''), 'bre: the unsaid seed is the fear, not the joke');
+  /* Suggestion register: her photo rules and pace material assume it, so a
+     premise that broke it would contradict them in one prompt. */
+  ok(!/\b(fuck|cock|pussy|naked|nude)\b/i.test(breT.opening.text),
+    'bre: the premise stays in the suggestion register her other rules assume');
 }
 
 console.log('\n== templates: depth-4 fact dedupe — no 4-gram shared across plist/interests/style (invariant 2) ==');
