@@ -213,3 +213,39 @@ problem.
 This also sharpens the earlier bleed findings into one rule: **a reference
 governs BODY and IDENTITY absolutely; prompt text governs only what the
 reference does not depict — scene, framing, clothing when named, and light.**
+
+## v10.39 — a reference locks IDENTITY only; pose, expression and clothing follow the scene
+
+Owner report: heat1/heat2 renders reuse the reference's exact pose and
+clothing. Tested with a deliberately distinctive reference — arms folded
+tight, red plaid buttoned to the neck, flat blank stare
+(`00-ref-distinctive.png`).
+
+| Scene | Result |
+|---|---|
+| Names pose, expression AND outfit ("curled sideways laughing at the tv, one hand over her mouth, oversized cream jumper and grey sleep shorts") | **All three follow the scene, identity holds.** `01-named-no-scope.png`: sideways, mid-laugh, hand over mouth, cream jumper. None of the reference's folded arms, red plaid or flat stare survived. |
+| Bare action ("on the couch"), nothing named | Identity holds; pose and clothing free of the reference but **generic** — the model fills what the scene omits with its own default (`03-bare-action.png`). |
+| Explicit identity-only scoping clause added | No better than naming things directly. The clause is unnecessary. |
+
+**So the reference was never forcing the pose — the prompt was not asking for
+one.** This completes the rule from the body-dial spike: a reference governs
+identity and body absolutely, and everything else follows the scene *if the
+scene says so*. What the scene leaves unsaid, the model defaults, which is
+why short actions rendered samey.
+
+Fixed where the samey-ness came from: every `_TL_GARNISH` entry now names a
+pose, an expression and an outfit. Four re-rolls of `testlook couch heat2`
+(same reference, only the salt differing) produced genuinely different
+shots — cheek on her hand with a warm smile (`garnish-2.png`) versus arm
+behind her head, eyes half-shut and amused (`garnish-4.png`) — same woman
+throughout.
+
+**New measured moderation trigger:** "lying back in a thin cami … looking
+straight up at the camera" declined at heat 2 with the face live
+(`imagine:content-moderated`). It is the reclining-plus-camera-overhead
+read, not any single word — no term on the `_B_MODERATION` list appears in
+it. Reworded to "settled back into the cushions … chin tipped down, eyes up
+at the camera". **That rewording is UNVERIFIED — the account ran out of xAI
+credit before it could be re-rendered.** Re-run `garnish.js` when credit is
+restored; if it still declines, the recovery ladder handles it (re-frames
+with heat reset), so the cost is a wasted rung rather than a failure.

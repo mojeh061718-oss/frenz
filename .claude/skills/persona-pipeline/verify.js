@@ -3472,6 +3472,24 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
   // the top tier only, so heat 1 does not quietly borrow it.
   const gsp = API._TL_GARNISH.spicy.some(g => h1.includes(g));
   ok(!gsp, 'lens: heat 1 uses the plain garnish bank, not the suggestive one');
+  /* Every garnish names a POSE, an EXPRESSION and an OUTFIT. Measured: a
+     reference locks identity and nothing else, so whatever the scene leaves
+     unsaid the model fills with its own default — which is why short actions
+     rendered samey. Variety is authored here, not constrained by the
+     reference. */
+  // Category regexes, deliberately generous — they describe the KIND of
+  // detail required, not the exact words I happened to write, so a future
+  // rewrite of the banks is judged on whether it still names these things.
+  const POSE = /lying|curled|leaning|stretched|settled|caught|halfway|arm|elbow|chin|head|back/i;
+  const FACE_EXPR = /smil|mouth|eyebrow|eyes|amused|cheek|relaxed|looking|chin|gaze/i;
+  const OUTFIT = /t-shirt|shirt|hoodie|tank|jumper|cami|leggings|pyjama|strap|hem|dressed|shorts/i;
+  for (const bank of ['normal', 'spicy']) {
+    for (const g of API._TL_GARNISH[bank]) {
+      ok(POSE.test(g), `lens: ${bank} garnish names a pose — "${g.slice(0, 34)}…"`);
+      ok(FACE_EXPR.test(g), `lens: ${bank} garnish names an expression — "${g.slice(0, 34)}…"`);
+      ok(OUTFIT.test(g), `lens: ${bank} garnish names or implies an outfit — "${g.slice(0, 34)}…"`);
+    }
+  }
 
   // testlook face: forces the selfie framing with the face live, whatever
   // the persona is set to — a preview of photoFace 'shown', not a change.

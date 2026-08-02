@@ -3151,18 +3151,32 @@ const ClaudeAPI = {
      shown, everything implied, the mind does the work — and in the calm
      vocabulary the moderation lessons proved out (a slipped strap and a
      high hem pass; anatomical insistence does not). */
+  /* Each entry names a POSE, an EXPRESSION and an OUTFIT, because measured:
+     a reference locks identity and nothing else — whatever the scene leaves
+     unsaid, the model fills with its own defaults, which is why a short
+     action like "couch" came back looking like the same shot every time.
+     Given a named pose/expression/outfit the render follows them completely
+     and identity still holds (a folded-arms, red-plaid, flat-stare
+     reference produced a sideways-curled, laughing, cream-jumper render).
+     So the variety has to be authored HERE; the reference is not the thing
+     constraining it. Outfits differ per entry on purpose — a named outfit
+     overrides the reference's, an unnamed one inherits it. */
   _TL_GARNISH: {
     normal: [
-      'caught mid-moment, one hand busy with it, exactly as ordinary as it sounds',
-      'settled into it for the evening, comfortable and unbothered',
-      'halfway through it like nobody is texting her — the ordinary, unperformed version',
-      'the domestic version, casual and lived-in, nothing arranged for the camera'
+      'caught mid-moment with one hand busy, half-smiling at nothing, in an old soft t-shirt and shorts',
+      'settled back into it for the evening, comfortable and unbothered, face relaxed, wearing a baggy hoodie and leggings',
+      'halfway through it like nobody is texting her, mouth open mid-sentence at the room, in a worn tank and pyjama bottoms',
+      'the domestic version, leaning on one elbow, eyebrows up like she has just been interrupted, in an oversized jumper'
     ],
     spicy: [
-      'done the way she does it when nobody is expected: technically innocent, and the angle knows better',
-      'dressed for it the way she actually is at home by that hour, the frame stopping exactly where it gets interesting',
-      'caught at the instant the ordinary scene turns suggestive — a slipped strap, a hem higher than she noticed — still just an evening at home on its face',
-      'relaxed and a little careless with herself, what sits just past the frame edge doing all the talking'
+      // "lying back in a thin cami … looking straight up at the camera"
+      // measured as a live moderation decline at heat 2 with the face on —
+      // the reclining-plus-camera-overhead read, not any single word. Same
+      // pose intent in calmer geometry renders fine (the v10.15 lesson).
+      'done the way she does it when nobody is expected — settled back into the cushions in a soft old cami, chin tipped down, eyes up at the camera: technically innocent, and the angle knows better',
+      'dressed for it the way she actually is at home by that hour, curled sideways with her cheek on her hand, the frame stopping exactly where it gets interesting',
+      'caught at the instant the ordinary scene turns suggestive — a slipped strap, a hem higher than she noticed, her mouth caught between saying something and not — still just an evening at home on its face',
+      'stretched out in an old sleep shirt and a little careless with herself, one arm behind her head, eyes half-shut and amused, what sits just past the frame edge doing all the talking'
     ]
   },
   /* HEAT is the shipped 0-2 ladder, nothing more. `_HEAT_TONE` has exactly

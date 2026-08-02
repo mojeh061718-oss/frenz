@@ -444,8 +444,17 @@ the fixtures were wrong before.
   testlook stays on raw `generateImage` — the lens exists to show unscreened
   pipeline output.
 - **A reference governs BODY and IDENTITY absolutely; prompt text governs
-  only what the reference does not depict** — scene, framing, clothing when
-  named, light. Measured when the owner asked for tunable body dials
+  everything else — but only what it actually NAMES.** Measured against a
+  deliberately distinctive reference (arms folded, red plaid, flat stare):
+  a scene naming pose, expression and outfit got all three, with identity
+  intact and not one of the reference's three surviving. A bare action got
+  identity plus generic defaults — the model fills whatever the scene omits,
+  which is the whole reason short actions rendered samey and looked like
+  pose bleed. It is not bleed; it is silence. An explicit "take only
+  identity from the reference" scoping clause tested no better than simply
+  naming the things, so it was not added. Consequence for any prompt bank:
+  **name the pose, the expression and the outfit, or the model picks them**
+  — every `_TL_GARNISH` entry does now, asserted by category. Measured when the owner asked for tunable body dials
   (height/build/bust/hips) to nudge a render that came out too small: against
   a deliberately slim reference, neither a COMPARATIVE clause ("distinctly
   fuller and curvier than that") nor an ABSOLUTE one with the reference
