@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.44';
+const APP_JS_VERSION = '10.45';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -1155,6 +1155,14 @@ function openEditor(friend) {
   // (the _faceShown rule); this select is half of that, the uploaded
   // reference photo below is the other half.
   $('#f-photoface').value = p.photoFace === 'shown' ? 'shown' : 'hidden';
+  /* photoCandor has existed since v10.26 and had no UI, which made frenz's
+     OWN throttle the one thing the owner could not reach: a 'guarded'
+     persona is told "Photos are RARE: most conversations have none, you
+     never offer one unprompted twice", and three of the shipped templates
+     are guarded. A character who should be sending photos and never does is
+     usually this field, not the provider. Default stays guarded — that is
+     the direction that surprises nobody. */
+  $('#f-candor').value = p.photoCandor === 'open' ? 'open' : 'guarded';
   // A pick from a previous visit to this screen never carries over.
   pendingReference = { dataUrl: null, dirty: false };
   editorHasReference = !!p.referenceImage;
@@ -1180,6 +1188,7 @@ async function saveFriendFromForm(e) {
     style: $('#f-style').value.trim(),
     appearance: $('#f-appearance').value.trim(),
     photoFace: $('#f-photoface').value === 'shown' ? 'shown' : 'hidden',
+    photoCandor: $('#f-candor').value === 'open' ? 'open' : 'guarded',
     backstory: $('#f-backstory').value.trim(),
     userName: $('#f-username').value.trim() || localStorage.getItem('frenz-user-name') || '',
     userGender: $('#f-usergender').value,
@@ -1923,9 +1932,16 @@ async function deliverBubble(friend, b, atTs) {
         desc: String(desc || '').slice(0, 160)
       }).catch(() => {});
     }
+    /* Keep the provider's OWN words. "Declined every framing" is the same
+       sentence whether the image service made a content decision, choked on
+       the reference, or rejected a parameter — and the fix for those is
+       opposite. The words were being captured for the ledger and then thrown
+       away here, which is why a blocked photo was undiagnosable from inside
+       the app. */
     toast(e.exhausted
-      ? 'Her photo didn\'t send — the provider declined every framing of it.'
-      : 'Her photo didn\'t send — ' + e.message, 6000);
+      ? 'Her photo didn\'t send — the image provider declined every framing.'
+        + (e.providerMessage ? ' It said: "' + String(e.providerMessage).slice(0, 140) + '"' : '')
+      : 'Her photo didn\'t send — ' + e.message, 9000);
     return null;
   } finally {
     ClaudeAPI._onImageDecline = null;
@@ -2250,11 +2266,19 @@ async function runReply(friend, history, settings, lastTs, fallbackPreview, atte
       // But COUNT it (invariant 18): refusals are the provider's decisions,
       // and an archive that can't see them can't tell a refusing model from
       // a silent one.
-      DB.addEvent({ friendId: friend.id, ts: ClaudeAPI._now(), kind: 'refusal', path: 'reply' }).catch(() => {});
+      DB.addEvent({ friendId: friend.id, ts: ClaudeAPI._now(), kind: 'refusal', path: 'reply', provider: result.provider || '' }).catch(() => {});
       $('#typing').classList.add('hidden');
       const note = document.createElement('div');
       note.className = 'msg sys transient-note';
-      note.textContent = 'That one didn\'t send. Try putting it a different way.';
+      /* Name the provider. This is a CONTENT FILTER on the model that
+         answered — not her, not the app — and the useful response to a
+         provider that keeps refusing is a different provider, not different
+         words. Without the name the owner cannot tell which pool entry to
+         swap, and "try putting it a different way" reads as the app blaming
+         them for what a vendor decided. */
+      note.textContent = result.provider
+        ? `${result.provider} refused that one — that's its content filter, not her. Rephrasing may work; swapping that model in Settings works better.`
+        : 'That one didn\'t send — the model refused it. Try a different model in Settings.';
       $('#chat-messages').appendChild(note);
       scrollChat();
       return;

@@ -3796,7 +3796,7 @@ console.log('\n== image pipeline once-over (v10.43): one authority, one route, o
      and the archive could not make the one discrimination it exists for. */
   ok(/_onImageDecline\(e, i, rungs\.length, [^)]*'edits'\)/.test(apiSrc43),
     'ledger: the edit ladder names its endpoint');
-  ok(/_onImageDecline\(e, i, ladder\.length, 'generations'\)/.test(apiSrc43),
+  ok(/_onImageDecline\(e, i, rungs\.length, 'generations'\)/.test(apiSrc43),
     'ledger: the plain ladder names its endpoint');
   ok(/route/.test(appSrc43.slice(appSrc43.indexOf('_onImageDecline ='), appSrc43.indexOf('_onImageDecline =') + 700)),
     'ledger: deliverBubble records which endpoint the rung went out of');
@@ -4116,6 +4116,83 @@ console.log('\n== body dials (v10.44): text builds the reference, it never fight
   /* Entry point on the photos screen: this is a way to GET a reference, so
      it belongs beside the upload, not buried in the persona editor. */
   ok(/Build one|Build from description|Build a photo/i.test(appSrc44), 'screen: the photos list offers it as the second way to get a reference');
+}
+
+console.log('\n== blockers (v10.45): say which one, and stop over-de-escalating ==');
+{
+  const appSrc45 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  const htmlSrc45 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const SHEET45 = Personas.byId('bre').appearance;
+
+  /* THREE different things say "blocked" in this app and they need opposite
+     fixes: a chat provider's content_filter, an image provider declining
+     every framing, and frenz's OWN throttle (a `guarded` persona is told
+     photos are RARE). Until they are distinguishable, "the blocker hits
+     every time" is unactionable — the first two are answered by changing
+     PROVIDER, the third by a dial that until now had no UI at all. */
+
+  /* 1. The re-framing ladder gave up the register far too fast. A decline at
+     heat 2 went straight to heat 0 AND a composition with less of a person
+     in it — two concessions at once, when the calmer version of the SAME
+     picture was still available and is the likelier objection. v10.32
+     considered this rung and rejected it on latency; each rung is already
+     budget-gated, and the cost falls only on sends that were at the top
+     register to begin with. */
+  const o2 = { heat: 2, appearance: SHEET45, faceShown: true };
+  const rungs2 = API._recoveryRungs('curled on the couch', 'pov', o2, true);
+  ok(rungs2.length >= 1 && rungs2[0].heat === 1 && rungs2[0].mode === 'pov',
+    'ladder: a decline at heat 2 first retries the SAME picture one register calmer');
+  ok(rungs2[0].prompt.includes('more considered frame') && !rungs2[0].prompt.includes('implication rather than display'),
+    'ladder: …and that rung really is the middle register');
+  ok(rungs2[0].faceShown === true, 'ladder: the calmer rung keeps her face — it gave up the register, not the person');
+  for (const r of rungs2.slice(1)) {
+    ok(r.heat === 0 && r.faceShown === false, `ladder: rung "${r.mode}" is faceless at heat 0 — strictly less of a person`);
+  }
+  ok(rungs2[rungs2.length - 1].mode === 'scene', 'ladder: still ends at the room');
+  /* The counter-rule: a send that was ALREADY calm has no register to give
+     up, so it must not gain a rung that repeats the identical picture. */
+  for (const h of [0, 1]) {
+    const rr = API._recoveryRungs('curled on the couch', 'pov', { heat: h, appearance: SHEET45 }, true);
+    ok(rr.every(r => r.heat === 0), `ladder: heat ${h} gains no calmer rung — there is nothing to calm`);
+  }
+  // A scene rung has nobody in it, so it drops the reference like every
+  // other scene shot (v10.43).
+  const sceneRung = rungs2.filter(r => r.mode === 'scene')[0];
+  ok(!/same woman as in the reference photo/.test(sceneRung.prompt),
+    'ladder: the scene rung carries no reference — there is no person in it to anchor');
+  // Both ladders read the same policy. Two de-escalation policies would
+  // drift, and the edit route is the one most sends now take.
+  ok((apiSrc45 => (apiSrc45.match(/_recoveryRungs\(/g) || []).length >= 3)(fs.readFileSync(path.join(ROOT, 'js/api.js'), 'utf8')),
+    'ladder: one policy, read by both ladders');
+
+  /* 2. Say WHICH blocker, and who did it. The provider's own words were
+     captured and then thrown away by the toast, so a content decision and a
+     malformed request read identically to the owner — and the fix for those
+     is opposite. */
+  // Sliced from the TOAST, not from the surrounding ledger write — the
+  // provider's words were already being captured for the ledger and thrown
+  // away by the toast, so a slice wide enough to catch both would have gone
+  // green while the owner still saw nothing.
+  const imgToast = appSrc45.slice(appSrc45.indexOf('toast(e.exhausted'), appSrc45.indexOf('toast(e.exhausted') + 420);
+  ok(/providerMessage/.test(imgToast),
+    'blocked: an exhausted photo tells the owner what the image provider actually said');
+  const refusalNote = appSrc45.slice(appSrc45.indexOf("kind: 'refusal', path: 'reply'"), appSrc45.indexOf("kind: 'refusal', path: 'reply'") + 800);
+  ok(/result\.provider/.test(refusalNote),
+    'blocked: a text refusal names the provider that refused — the fix is a different one, not different words');
+
+  /* 3. frenz's OWN throttle, which had no UI. A `guarded` persona is told
+     "Photos are RARE: most conversations have none" — so for three of the
+     shipped templates the app itself is the blocker, and there was no way
+     to reach the field from inside the app. */
+  ok(/id="f-candor"/.test(htmlSrc45), 'candor: the photo-candour dial exists in the editor');
+  ok(/f-candor/.test(appSrc45), 'candor: …and is read and written by it');
+  const poolOn45 = { pool: [{ id: 'e1', enabled: true, kind: 'bedrock', apiKey: 'k', model: 'x', imageModel: 'stability-image', region: 'us-east-1' }] };
+  const g = mkFriend('samantha'), op = mkFriend('samantha');
+  op.profile.photoCandor = 'open';
+  ok(/Photos are RARE/.test(API.photoNote(poolOn45, g)[1]) && !/Photos are RARE/.test(API.photoNote(poolOn45, op)[1]),
+    'candor: flipping it actually changes what she is told (the dial is not decorative)');
+  ok(/without ceremony/.test(API.photoNote(poolOn45, op)[1]),
+    'candor: open is the same open every other persona already had — no new register was invented');
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {

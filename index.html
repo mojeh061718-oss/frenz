@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">10.44</span></h1>
+        <h1 class="logo">frenz <span class="app-version">10.45</span></h1>
         <button class="icon-btn" id="btn-photos" title="Reference photos">🖼️</button>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
@@ -213,6 +213,13 @@
         <label>Appearance — used only for her photos
           <textarea id="f-appearance" rows="2" placeholder="curvy redhead, fair freckled skin, tattoos down both legs..."></textarea>
           <small>How she looks in the pictures she sends — describe her neck-down (build, hair, body markers). To lock her exact look across photos, upload a reference photo — here, or from the 🖼️ button on the friends list. Once one is locked it replaces this text as the authority on her body.</small>
+        </label>
+        <label>How freely she sends photos
+          <select id="f-candor">
+            <option value="guarded">Guarded — rare, deliberate, never because he pushed</option>
+            <option value="open">Open — without ceremony, as casually as she says things</option>
+          </select>
+          <small>This is her own caution, not a safety limit — some characters have a real reason to be careful about what exists of them, and some simply do not. Guarded also makes photos RARE, so a character who should be sending them and isn't is usually set to the wrong one here.</small>
         </label>
         <label>Her face in photos
           <select id="f-photoface">

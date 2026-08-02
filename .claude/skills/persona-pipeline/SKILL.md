@@ -493,6 +493,39 @@ the fixtures were wrong before.
     exclusions at all. Dead: `o.quality`, the `avoidText === undefined` leg,
     and four places still telling the owner to run `testlook ref`, deleted
     two releases ago — one of them user-facing in the shell.
+- **Three things say "blocked", and they need opposite fixes (v10.45).**
+  Owner report: "the blocker is hitting every single time." It was
+  unactionable because the app could not tell them apart —
+  (a) a CHAT provider's `content_filter`, (b) an IMAGE provider declining
+  every framing, (c) frenz's OWN throttle, which produces no error at all,
+  just a persona who never sends anything.
+  - (a) and (b) now name the provider and quote its words. The image
+    provider's message was already being captured for the ledger and thrown
+    away by the toast, so a content decision and a choked reference read
+    identically. The text refusal said "try putting it a different way",
+    which reads as the app blaming the owner for a vendor's decision; it now
+    names the model that refused, because the useful answer to a provider
+    that keeps refusing is a DIFFERENT PROVIDER, not different words. This
+    codebase does not reword prompts to get past an answer already given —
+    see `_xaiImageWithRecovery`, "no jailbreak here and no moderation flag
+    being flipped."
+  - (c) was the real gap: `photoCandor` has existed since v10.26 with **no
+    UI**. A `guarded` persona is told "Photos are RARE: most conversations
+    have none, you never offer one unprompted twice, and you never send one
+    because he pushed", and three of the shipped templates are guarded. A
+    character who should be sending photos and never does is usually this
+    field, not the provider. Now in the editor, defaulting guarded.
+  - **The ladder was giving up two things at once.** A decline at heat 2
+    dropped straight to heat 0 AND a composition with less of a person in
+    it, so a moment that was about her came back as a photo of a room. The
+    heat-1 rung was considered at v10.32 and rejected on latency; that was
+    wrong — the register is the likelier objection, every rung is already
+    8s-budget-gated, and the cost falls only on sends that were at the top
+    register anyway. `_recoveryRungs` is now ONE policy read by both
+    ladders: same picture one register calmer (heat 2 only), then
+    progressively less of a person at heat 0. Reachability checked while
+    doing this: heat 2 needs attraction ≥ 60 or tension ≥ 7, so the ceiling
+    was never the blocker.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

@@ -3574,41 +3574,62 @@ const ClaudeAPI = {
      retries as the room. Ordered, not shuffled — the point is that every
      retry contains strictly less of a person than the one before it. */
   _RECOVERY_LADDER: { selfie: ['pov', 'scene'], mirror: ['pov', 'scene'], pov: ['scene'], scene: [] },
-  async _xaiImageWithRecovery(entry, model, description, mode, o, width, height, firstPrompt) {
-    /* The avoid clause follows the FACE, exactly as it does on the edit
-       ladder. It used to be the hardcoded constant here, which was safe only
-       while a face could never ride this route — v10.44's candidate render
-       is a face with no reference, so that assumption is gone and the
-       constant would have banned the very thing the prompt asks for. */
-    const avoid = this._imageAvoid(!o.faceShown);
-    const ladder = [firstPrompt];
-    if (!o.raw) {
-      for (const m of (this._RECOVERY_LADDER[mode] || [])) {
-        // Heat resets to 0 on every recovery rung, deliberately: the decline
-        // being recovered from is usually a moderation judgement, and heat
-        // tone ("implication rather than display", closer crops) is the most
-        // likely ingredient to re-trip it. A rung exists to land SOME photo
-        // of the moment — the calmer register is the price of landing it,
-        // not a bug. (A heat-1 middle rung was considered and rejected: it
-        // would double the ladder's worst-case latency for a marginal tone
-        // win, inside a photo budget that is already the slow path.)
-        // No opts, and that is correct BY CONSTRUCTION rather than by
-        // accident: _generateImage collapses the face flag to false for
-        // anything that is not carrying a reference, and this route is
-        // precisely the no-reference one. Rungs are faceless because every
-        // shot on this route is.
-        ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 2600));
-      }
+
+  /* The recovery rungs, shared by both ladders — one de-escalation policy,
+     because two would drift and the edit route is the one most sends now
+     take. Each step gives up the least it can:
+
+       0.  what the caller asked for (built by the caller, not here)
+       1.  the SAME picture, one register calmer — and ONLY when the caller
+           was at the top one. This rung was considered at v10.32 and
+           rejected on latency, and that was the wrong call: a decline at
+           heat 2 is far more often about the register than the composition,
+           so going straight to heat 0 gave up the register AND the person in
+           one step and handed back a photo of a room for a moment that was
+           about her. Every rung is already budget-gated at 8s, and this one
+           only exists for sends that were at the top register to begin with.
+       2+. progressively less of a person, faceless, at heat 0.
+
+     What this still does NOT do is argue with the provider. Every rung is a
+     picture she would plausibly have taken instead; none of them is the same
+     ask in words chosen to slip past an answer already given. */
+  _recoveryRungs(description, mode, o, reference) {
+    const heat = Math.max(0, Math.min(2, Number(o.heat) || 0));
+    const rungs = [];
+    if (heat >= 2) {
+      rungs.push({
+        mode, heat: 1, faceShown: !!o.faceShown,
+        prompt: this._imagePrompt(description, mode, o.appearance, 1,
+          { faceShown: !!o.faceShown, reference: !!reference }).slice(0, 2600)
+      });
     }
+    for (const m of (this._RECOVERY_LADDER[mode] || [])) {
+      rungs.push({
+        mode: m, heat: 0, faceShown: false,
+        // A scene rung has nobody in it, so it carries no reference either
+        // (v10.43) — there is no person in the picture to anchor.
+        prompt: this._imagePrompt(description, m, o.appearance, 0,
+          { faceShown: false, reference: !!reference && m !== 'scene' }).slice(0, 2600)
+      });
+    }
+    return rungs;
+  },
+  async _xaiImageWithRecovery(entry, model, description, mode, o, width, height, firstPrompt) {
+    /* The avoid clause follows the FACE per rung, exactly as it does on the
+       edit ladder. It used to be the hardcoded constant here, which was safe
+       only while a face could never ride this route — v10.44's candidate
+       render is a face with no reference, so that assumption is gone and the
+       constant would have banned the very thing the prompt asks for. */
+    const rungs = [{ prompt: firstPrompt, mode, faceShown: !!o.faceShown }]
+      .concat(o.raw ? [] : this._recoveryRungs(description, mode, o, false));
     let declined = null;
-    for (let i = 0; i < ladder.length; i++) {
+    for (let i = 0; i < rungs.length; i++) {
       // Re-framing is worth a wait, but not an unbounded one — a photo the
       // thread has already moved past is worse than no photo.
       if (i > 0 && this._budgetLeft() < 8000) break;
+      const r = rungs[i];
       try {
-        // Rung 0 keeps the caller's face; every recovery rung is faceless by
-        // construction (built with no opts), so its exclusions are too.
-        return await this._xaiImage(entry, model, ladder[i], width, height, i === 0 ? avoid : this._IMAGE_AVOID);
+        return await this._xaiImage(entry, model, r.prompt, width, height, this._imageAvoid(!r.faceShown));
       } catch (e) {
         // Only a content decision is worth re-framing for. A bad key, a dead
         // network or a wrong model name will fail identically every time and
@@ -3616,7 +3637,7 @@ const ClaudeAPI = {
         if (!e || !e.declined) throw e;
         declined = e;
         if (this._onImageDecline) {
-          try { this._onImageDecline(e, i, ladder.length, 'generations'); } catch (_) { /* logging must never break the send */ }
+          try { this._onImageDecline(e, i, rungs.length, 'generations'); } catch (_) { /* logging must never break the send */ }
         }
       }
     }
@@ -3641,17 +3662,8 @@ const ClaudeAPI = {
        same reason: it is the thing that actually forbids a face on the wire,
        so a rung whose framing dropped the face has to drop it there too.
        (It was computed once, from rung 0, for every rung.) */
-    const rungs = [{ prompt: firstPrompt, mode, faceShown: !!o.faceShown }];
-    if (!o.raw) {
-      for (const m of (this._RECOVERY_LADDER[mode] || [])) {
-        // Heat resets to 0 per rung, same reasoning as the plain ladder.
-        rungs.push({
-          prompt: this._imagePrompt(description, m, o.appearance, 0, { faceShown: false, reference: m !== 'scene' }).slice(0, 2600),
-          mode: m,
-          faceShown: false
-        });
-      }
-    }
+    const rungs = [{ prompt: firstPrompt, mode, faceShown: !!o.faceShown }]
+      .concat(o.raw ? [] : this._recoveryRungs(description, mode, o, true));
     let declined = null;
     for (let i = 0; i < rungs.length; i++) {
       if (i > 0 && this._budgetLeft() < 8000) break;
