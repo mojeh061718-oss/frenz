@@ -750,6 +750,39 @@ the fixtures were wrong before.
     path where this bug returns. The editor checks the profile being SAVED,
     not the stored one: the photoFace select and the picture can both change
     in one visit and the pair that matters is the pair about to be written.
+- **Hidden means hidden: the reference gate (v10.54).** v10.53 warned that a
+  face-bearing reference beats a faceless framing — then sent it anyway, so
+  the faces kept coming and the warning was theatre. The owner called it:
+  "this is not that hard." It wasn't. `referenceFor(friend)` is now THE way
+  every photo path obtains the reference (chat, testlook, the suite), and it
+  keeps a reference known to contain a face HOME for a face-hidden persona —
+  her body falls back to the appearance sheet, the pre-reference authority,
+  still fully faceless. Proven live on the reported case: hidden persona +
+  face-bearing reference → headless render, 2/2.
+  - `referenceFace` is stored by the single writer WITH the image and
+    cleared with it (a stale answer about a replaced photo is worse than no
+    answer). The lock sites reuse the warn dialog's screening — one vision
+    call, returned as `{proceed, face}`, not two.
+  - Old locks are screened lazily (`ensureReferenceScreened`) at the next
+    photo, once ever — the answer persists. Unknown rides (fail-open), the
+    backfill closes that window at the next send. Never spent on a shown
+    persona, where it changes nothing.
+  - The photos row states the RESOLVED truth ("this photo is NOT used while
+    her face is set to stay out") instead of hedging about what might happen.
+  - The trade is explicit: with the reference home, her body is the sheet's,
+    not the photo's. That is the real constraint — you cannot have both a
+    face-bearing reference and faceless photos — and the app now picks the
+    owner's chosen face policy over body consistency instead of narrating.
+- **The testlook suite lives where references live (v10.54).** Scene chips ×
+  register chips (Ordinary/Flirty/Charged — the shipped 0-2 ladder under
+  friendlier names, no fourth tier) with a view window, on the Reference
+  photos page. Tap to render, tap again for another take; every render
+  re-rolls the salt. It runs the REAL pipeline through the REAL gates —
+  `ensureReferenceScreened`, `referenceFor`, `_faceShown`, the scene/sheet
+  lenses, raw and unscreened like every debug lens — so what the owner
+  cycles through is what the app would send. Out of band: nothing lands in
+  a thread or the ledger. The composer testlook commands remain for power
+  use.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

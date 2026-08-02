@@ -404,3 +404,10 @@ details.tune label { margin-top: 12px; }
 .provider-down .pd-text { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes pd-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .provider-down { animation: none; } }
+
+/* Testlook suite (v10.54): chips read as settable state, not buttons. */
+.tl-suite { margin-top: 18px; padding-top: 14px; border-top: 1px solid #2b3247; display: flex; flex-direction: column; gap: 10px; }
+.tl-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.tl-chip { padding: 8px 14px; border-radius: 999px; background: var(--bg2); border: 1px solid #2b3247; color: var(--text); font-size: 0.85rem; }
+.tl-chip.on { border-color: #6c8cff; background: #232d4d; color: #fff; }
+.tl-chip.off { opacity: 0.4; }

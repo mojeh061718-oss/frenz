@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">10.53</span></h1>
+        <h1 class="logo">frenz <span class="app-version">10.54</span></h1>
         <button class="icon-btn" id="btn-photos" title="Reference photos">🖼️</button>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
@@ -49,6 +49,22 @@
         <p class="muted small">A reference photo locks a friend's look, so she is the same person in every picture she sends. Without one her appearance is re-imagined from her written description each time and drifts. Whatever is in the photo carries over — outfit, room, lighting — so pick something ordinary and let the conversation set the mood.</p>
         <div id="photos-list" class="photos-list"></div>
         <div id="photos-empty" class="muted small hidden">No friends yet.</div>
+
+        <!-- The testlook suite (v10.54): cycle scenes and registers against
+             the REAL pipeline without leaving the page where references are
+             managed. Renders are transient — nothing lands in any thread. -->
+        <div id="tl-suite" class="tl-suite hidden">
+          <h2 id="tl-title">Test her look</h2>
+          <p class="muted small">Runs the exact photo pipeline — same framing, same reference rules — so what you see here is what she would send. Tap a scene to render it; tap again for another take. Nothing is saved or sent to her thread.</p>
+          <div id="tl-scenes" class="tl-chips"></div>
+          <div id="tl-heats" class="tl-chips"></div>
+          <div id="tl-stage" class="bd-stage hidden"><img id="tl-img" alt="test render"></div>
+          <div class="row">
+            <button type="button" class="btn-secondary" id="tl-again">Another take</button>
+            <button type="button" class="btn-secondary" id="tl-close">Close</button>
+          </div>
+          <p class="muted small hidden" id="tl-note"></p>
+        </div>
       </div>
       <input type="file" id="photos-file" accept="image/*" class="hidden">
     </section>

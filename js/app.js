@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.53';
+const APP_JS_VERSION = '10.54';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -785,8 +785,15 @@ async function renderPhotosList() {
     if (hasRef && !shown) {
       const warn = document.createElement('div');
       warn.className = 'pr-facewarn warn small';
-      warn.textContent = 'Her face is set to stay out of frame — if this photo shows her face, her pictures will have one anyway.';
-      body.appendChild(warn);
+      // Since v10.54 the app RESOLVES the contradiction instead of hoping:
+      // a face-bearing reference on a hidden persona stays home, and this
+      // row says so plainly rather than hedging about what might happen.
+      warn.textContent = p.referenceFace === true
+        ? 'This photo shows her face, so it is NOT used while her face is set to stay out of frame — her look comes from her written description instead. Replace the photo or switch her face on.'
+        : (p.referenceFace === false
+          ? ''
+          : 'Her face is set to stay out of frame — this photo will be checked for a face before it is used.');
+      if (warn.textContent) body.appendChild(warn);
     }
     state.textContent = hasRef
       ? (shown
@@ -837,6 +844,13 @@ async function renderPhotosList() {
       });
       actions.appendChild(clear);
     }
+
+    const test = document.createElement('button');
+    test.type = 'button';
+    test.className = 'btn-secondary';
+    test.textContent = 'Test';
+    test.addEventListener('click', () => openTestSuite(f));
+    actions.appendChild(test);
 
     const face = document.createElement('select');
     face.innerHTML = '<option value="hidden">Face out of frame</option><option value="shown">Face can be shown</option>';
@@ -1023,8 +1037,9 @@ async function useBuiltReference() {
      these dials is nobody. */
   try {
     const dataUrl = await downscaleImageFile(dataUrlToBlob(builtCandidate));
-    if (!await warnIfFaceMismatch(friend.profile, dataUrl)) return;
-    applyReferenceTo(friend.profile, dataUrl);
+    const check = await warnIfFaceMismatch(friend.profile, dataUrl);
+    if (!check.proceed) return;
+    applyReferenceTo(friend.profile, dataUrl, check.face);
     friend.profile.bodyDials = buildDials();
     friend.profile.refColouring = $('#bd-colouring').value.trim();
     await savePhotoRow(friend, 'Locked — her photos hold this build now.');
@@ -1126,13 +1141,111 @@ function downscaleImageFile(file) {
 ClaudeAPI._recodePhoto = (dataUrl) =>
   recodeImage(dataUrlToBlob(dataUrl), ClaudeAPI.PHOTO_MAX_EDGE, ClaudeAPI.PHOTO_MIME, ClaudeAPI.PHOTO_QUALITY);
 
+/* ---------------- the testlook suite (v10.54) ----------------
+   The composer testlook commands stay for power use, but the place you tune
+   a reference is the page the reference lives on — so the suite is here:
+   scene chips x register chips, one view window, tap to render, tap again
+   to re-roll. It runs the REAL pipeline through the REAL gates
+   (referenceFor, _faceShown, the scene/heat lenses), raw and unscreened
+   like every debug lens, and nothing it renders lands in a thread. */
+const TL_SCENES = [
+  { label: 'Sheet check', action: null },
+  { label: 'Couch', action: 'curled up on the couch, tv on' },
+  { label: 'Bed', action: 'lying on the bed' },
+  { label: 'Fit check', action: 'new outfit, fit check' },
+  { label: 'Kitchen', action: 'in the kitchen making a late snack' },
+  { label: 'Balcony', action: 'out on the balcony with a drink' }
+];
+const TL_HEATS = [['Ordinary', 0], ['Flirty', 1], ['Charged', 2]];
+let tlTargetId = null, tlScene = 1, tlHeat = 0, tlBusy = false;
+
+function renderSuiteChips() {
+  const scenes = $('#tl-scenes'), heats = $('#tl-heats');
+  scenes.innerHTML = ''; heats.innerHTML = '';
+  TL_SCENES.forEach((sc, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tl-chip' + (i === tlScene ? ' on' : '');
+    b.textContent = sc.label;
+    b.addEventListener('click', () => { tlScene = i; renderSuiteChips(); runSuiteShot(); });
+    scenes.appendChild(b);
+  });
+  TL_HEATS.forEach(([label, h]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    // The sheet check is byte-stable by design and takes no register.
+    b.className = 'tl-chip' + (h === tlHeat ? ' on' : '') + (TL_SCENES[tlScene].action ? '' : ' off');
+    b.textContent = label;
+    b.addEventListener('click', () => { tlHeat = h; renderSuiteChips(); runSuiteShot(); });
+    heats.appendChild(b);
+  });
+}
+
+async function openTestSuite(friend) {
+  if (!ClaudeAPI.imageEntry(Settings.get())) {
+    toast('No image model configured — add one in Settings to test looks.');
+    return;
+  }
+  tlTargetId = friend.id;
+  $('#tl-title').textContent = 'Test ' + friend.profile.name + "'s look";
+  $('#tl-suite').classList.remove('hidden');
+  $('#tl-stage').classList.add('hidden');
+  $('#tl-img').removeAttribute('src');
+  renderSuiteChips();
+  $('#tl-suite').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function runSuiteShot() {
+  if (tlBusy || !tlTargetId) return;
+  const friend = await DB.getFriend(tlTargetId);
+  const entry = ClaudeAPI.imageEntry(Settings.get());
+  if (!friend || !entry) return;
+  tlBusy = true;
+  const note = $('#tl-note');
+  note.classList.remove('hidden');
+  note.textContent = 'Rendering…';
+  try {
+    // The suite must show what the PIPELINE would send: same lazy screen,
+    // same reference gate, same face rule as a real photo.
+    await ensureReferenceScreened(friend);
+    const reference = ClaudeAPI.referenceFor(friend);
+    const faceShown = ClaudeAPI._faceShown(friend);
+    const sc = TL_SCENES[tlScene];
+    const prompt = sc.action
+      ? ClaudeAPI.testLookScenePrompt(friend, sc.action, tlHeat, ClaudeAPI._now(), { reference: !!reference, faceShown })
+      : ClaudeAPI.testLookPrompt(friend, { reference: !!reference });
+    const url = await ClaudeAPI.generateImage(entry, prompt, Object.assign(
+      { raw: true, reference, faceShown: sc.action ? faceShown : false },
+      sc.action ? {} : { width: 768, height: 1024 }
+    ));
+    $('#tl-img').src = url;
+    $('#tl-stage').classList.remove('hidden');
+    note.textContent = friend.profile.referenceFace === true && friend.profile.photoFace !== 'shown'
+      ? 'Rendered from her written description — the locked photo shows her face, so it stays out of use while her face is set to hidden.'
+      : '';
+    note.classList.toggle('hidden', !note.textContent);
+  } catch (err) {
+    note.textContent = 'Render failed — ' + ((err && err.message) || 'image error');
+  } finally {
+    tlBusy = false;
+  }
+}
+
 /* THE single writer of referenceImage. Two UIs reach it — the friend editor
    (staged, committed by the form's save) and the Reference photos screen
    (immediate) — and both mutate through here so there is exactly one place
    the field is ever set or cleared. Mutates only; the caller persists. */
-function applyReferenceTo(profile, dataUrl) {
-  if (dataUrl) profile.referenceImage = dataUrl;
-  else delete profile.referenceImage;
+function applyReferenceTo(profile, dataUrl, hasFace) {
+  if (dataUrl) {
+    profile.referenceImage = dataUrl;
+    // The face fact lives and dies with the image it describes — a stale
+    // answer about a replaced photo would be worse than no answer.
+    if (hasFace === true || hasFace === false) profile.referenceFace = hasFace;
+    else delete profile.referenceFace;
+  } else {
+    delete profile.referenceImage;
+    delete profile.referenceFace;
+  }
 }
 
 /* The face-vs-policy contradiction, caught at lock time (v10.53).
@@ -1149,16 +1262,34 @@ function applyReferenceTo(profile, dataUrl) {
    inform the owner's decision, not to gate it. He can see his own photo;
    being wrongly blocked from locking it would be the worse failure. */
 async function warnIfFaceMismatch(profile, dataUrl) {
-  if (!profile || profile.photoFace === 'shown') return true;
+  if (!profile || profile.photoFace === 'shown') return { proceed: true, face: null };
   let hasFace = null;
   try { hasFace = await ClaudeAPI.screenReferenceFace(Settings.get(), dataUrl); } catch (_) { hasFace = null; }
-  if (hasFace !== true) return true;
-  return confirm(
+  if (hasFace !== true) return { proceed: true, face: hasFace };
+  return { face: hasFace, proceed: confirm(
     `That photo shows her face, but ${profile.name || 'she'} is set to keep her face out of frame.\n\n`
     + 'A reference with a visible face puts one in her pictures whatever the framing asks for — this is measured, not a guess. '
     + 'Either pick a photo where her face is covered, turned away or cropped out, or switch her to "Face can be shown".\n\n'
     + 'Lock it anyway?'
-  );
+  ) };
+}
+
+/* Old locks predate the face screening. Screened once, lazily, at the next
+   photo — and the answer persisted, so it costs one vision call per photo
+   ever, not per send. Never spent on a shown persona (it changes nothing
+   there) and never a block: an unreadable answer just leaves the reference
+   riding, exactly as before. */
+async function ensureReferenceScreened(friend) {
+  const p = friend && friend.profile;
+  if (!p || !p.referenceImage) return;
+  if (p.photoFace === 'shown') return;
+  if (p.referenceFace !== undefined) return;
+  let face = null;
+  try { face = await ClaudeAPI.screenReferenceFace(Settings.get(), p.referenceImage); } catch (_) { face = null; }
+  if (face === true || face === false) {
+    p.referenceFace = face;
+    try { await DB.saveFriend(friend); } catch (_) { /* screened again next photo */ }
+  }
 }
 
 const REF_ACK_KEY = 'frenz-ref-ack';
@@ -1290,8 +1421,13 @@ async function saveFriendFromForm(e) {
     // Checked against the profile being SAVED, not the stored one — the
     // photoFace select and the picture can both change in one visit, and
     // the pair that matters is the pair about to be written.
-    if (pendingReference.dataUrl && !await warnIfFaceMismatch(friend.profile, pendingReference.dataUrl)) return;
-    applyReferenceTo(friend.profile, pendingReference.dataUrl);
+    let refFace;
+    if (pendingReference.dataUrl) {
+      const check = await warnIfFaceMismatch(friend.profile, pendingReference.dataUrl);
+      if (!check.proceed) return;
+      refFace = check.face;
+    }
+    applyReferenceTo(friend.profile, pendingReference.dataUrl, refFace);
   }
   try {
     await DB.saveFriend(friend);
@@ -1961,11 +2097,14 @@ async function deliverBubble(friend, b, atTs) {
     // against the route it actually takes and can fall back mid-flight, so
     // the gate reads what was resolved rather than what was asked for. Two
     // authorities on one fact is how it ended up checking the wrong thing.
+    // Locks that predate the face screening get their one lazy screen here,
+    // so the gate below has an answer to act on.
+    await ensureReferenceScreened(friend);
     const dataUrl = await ClaudeAPI.generateScreenedImage(entry, Settings.get(), desc, {
       // who she is — with no reference locked, the appearance sheet is the
       // identity anchor exactly as before; with one, the reference is.
       appearance: friend.profile.appearance || '',
-      reference: friend.profile.referenceImage || null,
+      reference: ClaudeAPI.referenceFor(friend),
       faceShown: ClaudeAPI._faceShown(friend),
       // the photo tracks where the thread actually is, not a fixed neutral
       heat: ClaudeAPI._imageHeat(friend)
@@ -2225,7 +2364,8 @@ async function runTestLook(friend, action, heat, wantsFace) {
      do. `testlook face` additionally forces the face live so the owner can
      preview photoFace: 'shown' before committing to it; it changes no
      setting, exactly like every other testlook path. */
-  const reference = (friend.profile && friend.profile.referenceImage) || null;
+  await ensureReferenceScreened(friend);
+  const reference = ClaudeAPI.referenceFor(friend);
   const faceShown = wantsFace || ClaudeAPI._faceShown(friend);
   if (wantsFace && !reference) {
     toast('No reference photo locked — a face shot would be a different stranger each time.', 6000);
@@ -3255,6 +3395,12 @@ function init() {
     showView('view-photos');
   });
   $('#btn-photos-back').addEventListener('click', () => { renderFriendsList(); showView('view-friends'); });
+  $('#tl-again').addEventListener('click', () => runSuiteShot());
+  $('#tl-close').addEventListener('click', () => {
+    tlTargetId = null;
+    $('#tl-img').removeAttribute('src');   // multi-MB data URL, released
+    $('#tl-suite').classList.add('hidden');
+  });
 
   /* Build a reference. Back always returns to the photos list, because that
      is the only place this screen is reachable from and the candidate it
@@ -3278,8 +3424,9 @@ function init() {
       try {
         const dataUrl = await downscaleImageFile(file);
         const fresh = await DB.getFriend(id);
-        if (!await warnIfFaceMismatch(fresh.profile, dataUrl)) return;
-        applyReferenceTo(fresh.profile, dataUrl);
+        const check = await warnIfFaceMismatch(fresh.profile, dataUrl);
+        if (!check.proceed) return;
+        applyReferenceTo(fresh.profile, dataUrl, check.face);
         await savePhotoRow(fresh, 'Reference locked — her pictures hold this look now.');
       } catch (err) {
         toast(err.message, 6000);

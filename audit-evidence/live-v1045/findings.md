@@ -163,3 +163,10 @@ references:
 
 The prompt was never wrong. `screenReferenceFace` now checks at lock time,
 verified live: face-visible → true, phone-over-face → false, headless → false.
+
+## 9. v10.54 — the reference gate, proven on the reported case
+
+photoFace hidden + a reference that SHOWS a face. Before: the reference rode
+and the face leaked (2/2, section 8). After: `referenceFor` keeps it home,
+the sheet renders her, and the render is headless per the app's own contract
+(cropped above the mouth) — 2/2 (`GATE54-*.jpg`).

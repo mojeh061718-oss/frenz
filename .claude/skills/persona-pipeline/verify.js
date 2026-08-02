@@ -3413,7 +3413,8 @@ console.log('\n== reference-locked photos: per-persona faces, owner-approved ref
      the ONE shared rule; the editor is the only writer of referenceImage;
      the editor carries the photoFace choice. */
   const appSrc2 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
-  ok(/reference:\s*friend\.profile\.referenceImage/.test(appSrc2), 'wire: deliverBubble passes the locked reference');
+  ok(/reference:\s*ClaudeAPI\.referenceFor\(friend\)/.test(appSrc2),
+    'wire: deliverBubble passes the reference through the ONE gate that knows about faces');
   ok(/_faceShown\(/.test(appSrc2) && /faceForbidden/.test(appSrc2),
     'wire: deliverBubble computes the face flag off the shared rule');
   const refWrites = (appSrc2.match(/\.referenceImage\s*=/g) || []).length;
@@ -3531,7 +3532,8 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
   const lensFriend = { profile: { appearance: Personas.byId('bre').appearance, referenceImage: 'data:x' } };
   ok(/reference,\s*faceShown/.test(appSrc3) || /reference,\s*faceShown/.test(appSrc3.replace(/\s+/g, ' ')),
     'lens: runTestLook passes the reference and face flag into generateImage');
-  ok(/referenceImage\)\s*\|\|\s*null/.test(appSrc3), 'lens: the reference is read off the friend');
+  ok(/reference = ClaudeAPI\.referenceFor\(friend\)/.test(appSrc3),
+    'lens: testlook reads the reference through the same gate — the lens must show what the pipeline sends');
 
   // Heat is the shipped 0-2 ladder and nothing past it. heat1 was
   // previously unreachable (the old boolean jumped 0 -> 2).
@@ -4687,15 +4689,91 @@ console.log('\n== v10.53: a face in the reference is caught at lock time ==');
   const calls = (appSrc53.match(/warnIfFaceMismatch\(/g) || []).length;
   ok(calls >= 4, 'reflock: every lock path calls it (definition + 3 sites), found ' + calls);
   const wfn = appSrc53.slice(appSrc53.indexOf('async function warnIfFaceMismatch'),
-    appSrc53.indexOf('async function warnIfFaceMismatch') + 900);
-  ok(/photoFace === 'shown'\) return true/.test(wfn),
+    appSrc53.indexOf('async function warnIfFaceMismatch') + 1100);
+  ok(/return \{ proceed: true, face: null \}/.test(wfn),
     'reflock: a face-shown persona is never warned — there is no contradiction to warn about');
-  ok(/hasFace !== true\) return true/.test(wfn),
-    'reflock: unknown or faceless proceeds silently — it informs, it never gates');
+  ok(/proceed: true, face(: hasFace| \})/.test(wfn) && /face: hasFace/.test(wfn),
+    'reflock: the screening answer is RETURNED so the lock site can store it — one vision call, not two');
   // The same caution now appears where references are actually managed.
   ok(/pr-facewarn|face-warn/.test(appSrc53) || /facewarn/i.test(appSrc53),
     'reflock: the photos screen carries the caution too, not just the editor');
   ok(/id="f-ref-facewarn"/.test(htmlSrc53), 'reflock: the editor caution survives (counter-rule)');
+}
+
+console.log('\n== v10.54: hidden means hidden — and the suite to prove it from the page ==');
+{
+  /* Owner, correctly: "faces are rendering still. This is not that hard."
+     It wasn't. v10.53 warned about a face-bearing reference and then SENT
+     IT ANYWAY, and the measured rule is that the picture beats the prompt —
+     so the warning was theatre. The rewrite is one gate: a face-hidden
+     persona never sends a reference known to contain a face. Her body
+     comes from the appearance sheet instead (the pre-reference authority,
+     still fully faceless), until the owner locks a faceless reference or
+     turns her face on. The contradiction is resolved by the app, not
+     narrated at the owner. */
+  const mkRef = (photoFace, referenceFace) => {
+    const f = { profile: { appearance: 'x', referenceImage: 'data:image/jpeg;base64,REF', photoFace } };
+    if (referenceFace !== undefined) f.profile.referenceFace = referenceFace;
+    return f;
+  };
+  ok(API.referenceFor(mkRef('hidden', true)) === null,
+    'gate: hidden + face-bearing reference -> the reference STAYS HOME (the fix)');
+  ok(API.referenceFor(mkRef('hidden', false)) === 'data:image/jpeg;base64,REF',
+    'gate: hidden + known-faceless reference rides — that pairing is correct and measured headless');
+  ok(API.referenceFor(mkRef('hidden')) === 'data:image/jpeg;base64,REF',
+    'gate: an unscreened reference rides until screened (lazy backfill closes this, never a block)');
+  ok(API.referenceFor(mkRef('shown', true)) === 'data:image/jpeg;base64,REF',
+    'gate: a shown persona uses her face-bearing reference — that is the point of it');
+  ok(API.referenceFor({ profile: {} }) === null && API.referenceFor(null) === null,
+    'gate: no reference, no crash');
+
+  const appSrc54 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  const htmlSrc54 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  /* The face fact is stored WITH the image by the single writer, and dies
+     with it — a stale answer about a replaced photo would be worse than no
+     answer. */
+  const applyFn = appSrc54.slice(appSrc54.indexOf('function applyReferenceTo'), appSrc54.indexOf('function applyReferenceTo') + 700);
+  ok(/referenceFace = hasFace/.test(applyFn), 'gate: the lock stores what the screening saw');
+  ok((applyFn.match(/delete profile\.referenceFace/g) || []).length >= 2,
+    'gate: replacing or clearing the photo clears the face fact with it — no stale answers');
+  /* Old locks predate the screening. They are screened once, lazily, at the
+     next photo — and the result persisted so it is once per photo, not per
+     send. */
+  ok(/async function ensureReferenceScreened/.test(appSrc54), 'gate: old locks get screened lazily');
+  const ens = appSrc54.slice(appSrc54.indexOf('async function ensureReferenceScreened'), appSrc54.indexOf('async function ensureReferenceScreened') + 800);
+  ok(/referenceFace !== undefined\) return/.test(ens), 'gate: …exactly once — a stored answer is never re-bought');
+  ok(/photoFace === 'shown'\) return/.test(ens), 'gate: …and never spent on a shown persona, where it changes nothing');
+  ok(/ensureReferenceScreened\(/.test(appSrc54.slice(appSrc54.indexOf('async function deliverBubble'))),
+    'gate: the chat photo path backfills before it renders');
+
+  /* The photos screen now tells the truth about the resolved state instead
+     of hedging: a face-bearing reference on a hidden persona is NOT in use. */
+  ok(/not (being )?used|stays? home|isn'?t (being )?used/i.test(appSrc54.slice(appSrc54.indexOf('function renderPhotosList'), appSrc54.indexOf('function renderPhotosList') + 4200)),
+    'gate: the photos row says the reference is not in use, not merely that it might misbehave');
+
+  /* ---- the suite: scenes x registers, on the page where references live.
+     It runs the REAL pipeline (same prompts, same gate, raw and unscreened
+     like every lens) so what the owner cycles through is what the app would
+     actually send. */
+  for (const id of ['tl-suite', 'tl-scenes', 'tl-heats', 'tl-img', 'tl-again']) {
+    ok(new RegExp('id="' + id + '"').test(htmlSrc54), `suite: #${id} is in the shell`);
+  }
+  ok(/TL_SCENES/.test(appSrc54) && /TL_HEATS/.test(appSrc54), 'suite: scenes and registers are data, not hardcoded buttons');
+  const scenesSrc = appSrc54.slice(appSrc54.indexOf('const TL_SCENES'), appSrc54.indexOf('const TL_SCENES') + 900);
+  ok((scenesSrc.match(/action:/g) || []).length >= 5, 'suite: a real spread of scenes to cycle');
+  ok(/action: null/.test(scenesSrc), 'suite: the sheet check is one of them — the comparable baseline lens');
+  const heatsSrc = appSrc54.slice(appSrc54.indexOf('const TL_HEATS'), appSrc54.indexOf('const TL_HEATS') + 300);
+  ok(/Ordinary/.test(heatsSrc) && /Flirty/.test(heatsSrc) && /Charged/.test(heatsSrc),
+    'suite: ordinary -> flirty -> charged, the shipped 0-2 ladder under friendlier names');
+  ok(!/3\]|heat: 3/.test(heatsSrc), 'suite: no fourth register invented');
+  const suiteFn = appSrc54.slice(appSrc54.indexOf('async function runSuiteShot'), appSrc54.indexOf('async function runSuiteShot') + 2400);
+  ok(/referenceFor\(/.test(suiteFn) && /ensureReferenceScreened\(/.test(suiteFn),
+    'suite: it renders through the SAME gate as real photos — the lens must show what the pipeline sends');
+  ok(/testLookScenePrompt/.test(suiteFn) && /testLookPrompt/.test(suiteFn),
+    'suite: scenes use the scene lens, the sheet check uses the sheet lens');
+  ok(/raw: true/.test(suiteFn), 'suite: raw and unscreened, like every debug lens');
+  ok(/_now\(\)/.test(suiteFn), 'suite: every render re-rolls the salt, so cycling actually cycles');
+  ok(!/DB\.addMessage|addEvent/.test(suiteFn), 'suite: out of band — nothing lands in the thread or the ledger');
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {

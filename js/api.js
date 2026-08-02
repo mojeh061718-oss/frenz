@@ -3975,6 +3975,26 @@ const ClaudeAPI = {
 
      Fails to NULL, never to a block: an unscreenable photo must not stop
      the owner locking one. This informs a decision, it does not gate it. */
+  /* THE reference gate (v10.54). v10.53 warned that a face-bearing
+     reference beats a faceless framing — and then sent it anyway, so the
+     photos still had faces and the warning was theatre. This resolves the
+     contradiction instead of narrating it: a face-hidden persona never
+     sends a reference known to contain a face. Her body falls back to the
+     appearance sheet — the pre-reference authority, still fully faceless —
+     until the owner locks a faceless reference or turns her face on.
+
+     `referenceFace` is written by the lock (stored with the image, cleared
+     with it) and lazily backfilled for old locks. `undefined` rides: an
+     unscreened reference must not silently lose its body consistency, and
+     the backfill closes that window at the next photo. Every photo path —
+     chat, testlook, the suite — reads THIS and nothing else. */
+  referenceFor(friend) {
+    const p = friend && friend.profile;
+    if (!p || !p.referenceImage) return null;
+    if (!this._faceShown(friend) && p.referenceFace === true) return null;
+    return p.referenceImage;
+  },
+
   _REF_FACE_SYSTEM: 'You are looking at one photo that will be used as a visual reference for a fictional character. Answer ONE question: is a human face visible in it, clearly enough that you could recognise the person again? A face covered by a phone, turned away, cropped out of frame, or too small or blurred to identify does NOT count. Reply with ONLY JSON: {"face": true or false}.',
   async screenReferenceFace(settings, dataUrl) {
     if (!dataUrl) return null;
