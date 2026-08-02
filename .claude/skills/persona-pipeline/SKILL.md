@@ -393,7 +393,7 @@ the fixtures were wrong before.
   reference stripped and mode recomputed. The selfie mode exists only behind
   `_faceShown` + explicit see-HER words, its posed clause is its own (a
   selfie is camera-aware — the unposed clause would contradict the framing),
-  and `mirrorFace` replaces phone-over-face only when the face is live.
+  and the face-live outfit shot is `outfitFace` (see v10.52 — no longer a mirror).
   Harness law learned shipping this: an async verify block that patches the
   engine MUST restore in a `finally` and register its own crash as a
   failure — the v10.31 fail-open assertions crashed silently, never ran,
@@ -460,7 +460,7 @@ the fixtures were wrong before.
     `selfie` is, and since v10.38 `pov` is what every body word routes to for
     a face-live persona — so the unposed clause was contradicting the most
     common face-live framing, which is exactly what heat and heat2 are.
-    Keyed off `_frameKey`. `mirror`/`mirrorFace` stay on the original clause:
+    Keyed off `_frameKey`. The faceless `mirror` stays on the original clause:
     the phone points at glass, not at her.
   - **The ladder steps the FACE down too.** Its doctrine is that each rung
     holds strictly less of a person than the last; carrying the flag down
@@ -688,6 +688,41 @@ the fixtures were wrong before.
     heat 0 → "nah not tonight" 3/3 (a thread that is not there yet); heat 2
     → a charged photo 3/3, and her own unedited descriptions rendered clean
     with no declines.
+- **"All the photos still show an iPhone" — it was the mirror, not the
+  camera register (v10.52).** Measured before changing anything, which
+  mattered: the pov path was CLEAN, 0 phones in 4 renders, so neither the
+  iPhone-naming camera register (v10.47) nor a phone-bearing reference was
+  the cause. Both hypotheses were tested and cleared — a reference whose own
+  content is a phone-over-face mirror shot did NOT bleed a phone into an
+  ordinary pov render.
+  It was the face-live mirror pool. `_MIRROR_RE` catches outfit / fit check /
+  getting ready / going out / new dress / heels on — a large share of the
+  messages that most want a photo — and that pool put a phone dead centre,
+  covering her chest.
+  - **Two rounds of wording lost to the training prior.** Mirror selfies
+    always have a raised phone. "Held low by her hip" worked about half the
+    time. Restating the reflection-only rule as positive composition ("the
+    mirror fills the frame") produced an impossible SECOND phone in the
+    foreground, 2 for 2 — the phone IS the camera and cannot photograph
+    itself from outside.
+  - **So the mirror went, not the phone.** That pool existed only because
+    the phone was what hid her face; for a FACE-LIVE persona the reason is
+    gone entirely. `outfitFace` is a self-timer full-length — whole outfit,
+    face clear, hands empty, no phone at all — which is how people actually
+    photograph an outfit without a mirror. Renamed from `mirrorFace`
+    because a pool called "mirror" containing no mirror is exactly the drift
+    that breeds the next bug.
+  - **Naming the phone put one back.** "Propped across the room" rendered a
+    phone on the table. Unnamed, with the timer carrying the meaning, it is
+    clean — and nobody else is in the room, which is the doctrine that
+    actually matters. Asserted: no entry may contain the word.
+  - The FACELESS `mirror` pool is untouched, byte for byte. There the phone
+    IS the composition, and it is the only headless whole-figure ask grok
+    renders cleanly. Asserted as a counter-rule so a future edit cannot
+    "helpfully" apply this fix to it.
+  - A self-timer she set up and stood back for is deliberate by definition,
+    so it joins the camera-aware register; "caught the way she actually
+    stands" would contradict the framing (invariant 5).
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s
@@ -793,7 +828,7 @@ the fixtures were wrong before.
   head-out meant flipping `photoFace` to 'shown' changed almost nothing:
   only fit-checks (mirror) and explicit selfies ever showed a face, and the
   owner reported the setting looked broken. Now `_frame` swaps
-  mirror→`mirrorFace` and pov→`povFace` whenever the face is live, and
+  mirror→`outfitFace` and pov→`povFace` whenever the face is live, and
   `faceRule` inverts with them. `povFace` keeps the pov pool's actual
   property — her world stays in the picture with her — while the camera
   tilts back far enough to catch her face. Invariant 5 is the thing to hold:

@@ -2912,13 +2912,42 @@ const ClaudeAPI = {
     /* The two face-live pools (v10.32). Everything above stays faceless by
        construction; these are reachable ONLY through _faceShown (photoFace
        'shown' AND an owner-locked reference — the edits-spike outcome-A
-       flow). mirrorFace replaces the phone-over-face trick with the phone at
+       flow). outfitFace replaces the mirror entirely with a self-timer shot at
        chest height; selfie is a fourth mode gated on explicit see-HER words,
        and both keep the phone-is-a-viewpoint doctrine — no third-person
        camera positions, ever. */
-    mirrorFace: [
-      'A full-length mirror photo she took on her phone, the phone held at chest height, her whole outfit visible from shoes up and her face visible in the reflection. The picture contains only the mirror\'s reflection.',
-      'A mirror photo she took on her phone at chest height and a little to one side, her face and whole outfit visible in the reflection. The picture contains only the mirror\'s reflection.'
+    /* NOT a mirror any more, and the rename is the point (v10.52).
+
+       Owner report: "all the photos still show an iPhone." Measured, not
+       guessed. The pov path was clean — 0 phones in 4 renders — so neither
+       the camera register (which names an iPhone since v10.47) nor a
+       phone-bearing reference was the cause; both were tested and cleared.
+       It was this pool. `_MIRROR_RE` catches outfit / fit check / getting
+       ready / going out / new dress / heels on, a large share of the
+       messages that most want a photo, and the face-live mirror put a phone
+       dead centre covering her chest.
+
+       Two rounds of wording lost to the training prior: mirror selfies
+       always have a raised phone. Holding it low worked about half the
+       time, and restating the reflection-only rule as composition added an
+       impossible SECOND phone in the foreground, 2 for 2 — the phone IS the
+       camera, it cannot photograph itself from outside.
+
+       So the prior was never the enemy; the mirror was. This pool existed
+       only because the phone was what hid her face, and for a FACE-LIVE
+       persona that reason is gone entirely. A self-timer full-length is how
+       people actually photograph an outfit without a mirror: whole outfit,
+       face clear, hands empty, no phone anywhere. Naming the phone at all —
+       even "propped across the room" — put one back on the table, so it
+       goes unnamed; the timer carries the meaning and nobody else is in the
+       room, which is the doctrine that matters.
+
+       The FACELESS `mirror` pool above is untouched: there the phone is the
+       composition, and it is the only headless whole-figure ask grok
+       renders cleanly. */
+    outfitFace: [
+      'A full-length photo she set up herself on a self-timer and stood back for, so she is head to toe in the picture with her face clear and her whole outfit visible, the room around her. She is empty-handed and there is no mirror in the picture.',
+      'A full-length self-timer photo taken from across the room: she is standing a few steps back, whole outfit from shoes up, face clear and unposed, nothing held in her hands, no mirror anywhere.'
     ],
     /* The face-live counterpart of the pov pool (v10.38). Without it,
        turning her face on changed almost nothing: pov is what any body word
@@ -2966,7 +2995,7 @@ const ClaudeAPI = {
   // the frame text and the face rule would contradict (invariant 5), and the
   // model resolves contradictions unpredictably. Both pools that crop the
   // head by construction have a face-live sibling.
-  _FACE_POOL: { mirror: 'mirrorFace', pov: 'povFace' },
+  _FACE_POOL: { mirror: 'outfitFace', pov: 'povFace' },
   /* Which POOL a request actually draws from. Split out of _frame because
      the pool — not the mode — is what the model reads, so anything that has
      to agree with the picture has to key off this. */
@@ -3200,10 +3229,12 @@ const ClaudeAPI = {
        v10.38 pov is what every body word routes to for a face-live persona,
        so the most common face-live framing — the one heat and heat2 are —
        was carrying the unposed clause against a frame that contradicts it
-       (invariant 5). mirror and mirrorFace are deliberately NOT here: the
+       (invariant 5). outfitFace joins them: a self-timer she set up and
+       stood back for is deliberate by definition. Only the faceless mirror
+       stays out — there the
        phone points at glass, not at her, and that register has shipped
        unchanged since v8.2. */
-    const cameraAware = key === 'selfie' || key === 'povFace';
+    const cameraAware = key === 'selfie' || key === 'povFace' || key === 'outfitFace';
 
     /* THE BUG THIS FIXES. The appearance sheet used to sit immediately after
        the composition, as its own sentence: "…looking down at her own lap.

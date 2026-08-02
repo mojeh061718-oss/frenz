@@ -3763,7 +3763,12 @@ console.log('\n== image pipeline once-over (v10.43): one authority, one route, o
   // The counter-rule: every framing that is NOT camera-aware keeps the
   // original clause byte-for-byte. This is the register that has shipped
   // since v8.2 and nothing here is allowed to quietly retire it.
-  for (const [mode, face] of [['pov', false], ['mirror', false], ['mirror', true]]) {
+  /* ['mirror', true] dropped at v10.52: a face-live fit check now routes to
+     the self-timer pool, which IS camera-aware (she set it up and stood
+     back). The v10.52 block asserts that directly. The two faceless
+     framings below still keep the original clause — the phone points at
+     glass or away from her, and nothing there is deliberate. */
+  for (const [mode, face] of [['pov', false], ['mirror', false]]) {
     const p = API._imagePrompt('my legs on the couch', mode, SHEET43, 2, { faceShown: face });
     ok(/She is not posing/.test(p) && /imagination/.test(p),
       `face: ${mode}${face ? ' (face live)' : ''} keeps the unposed clause — the phone points away from her`);
@@ -4571,6 +4576,58 @@ console.log('\n== v10.51: heat reaches the DECISION, not just the lighting ==');
     const n = API.photoNote(poolOn51, f);
     ok(n && n[1].length < 3000, t.id + ': photo note stays a note, not an essay (' + (n ? n[1].length : 0) + ')');
   }
+}
+
+console.log('\n== v10.52: the outfit shot stops being a mirror selfie ==');
+{
+  /* Owner report: "all the photos still show an iPhone." Measured, not
+     guessed. The pov path was CLEAN — 0 phones in 4 renders — so neither the
+     camera register (which names an iPhone since v10.47) nor a phone-bearing
+     reference was the cause; both were tested and cleared. It was the
+     face-live mirror pool, which put a phone dead centre covering her.
+
+     Two rounds of wording lost to the training prior (mirror selfies always
+     have a raised phone), and restating the reflection-only rule as
+     composition added an impossible SECOND phone in the foreground 2 for 2 —
+     the phone IS the camera and cannot photograph itself from outside.
+
+     So the mirror went, not the phone. That pool existed only because the
+     phone was what hid her face; for a FACE-LIVE persona the reason is gone.
+     A self-timer full-length gives the whole outfit, her face, empty hands
+     and no phone at all. */
+  ok(!API._FRAMING.mirrorFace, 'outfit: the misleading mirrorFace name is gone');
+  const outfit = API._FRAMING.outfitFace;
+  ok(Array.isArray(outfit) && outfit.length >= 2, 'outfit: the face-live pool still rotates');
+  for (const f of outfit) {
+    ok(!/\bphone\b/i.test(f),
+      `outfit: "${f.slice(0, 34)}…" never names a phone — naming one put a phone back in frame`);
+    ok(!/mirror photo|in the reflection|mirror's reflection/i.test(f),
+      `outfit: "${f.slice(0, 34)}…" is not a mirror COMPOSITION (it may still say there is no mirror)`);
+    ok(/self-timer|timer/i.test(f), `outfit: "${f.slice(0, 34)}…" is her own timer — nobody else in the room`);
+    ok(/full-length|head to toe|shoes up/i.test(f), `outfit: "${f.slice(0, 34)}…" still shows the whole outfit, which is the point of a fit check`);
+    ok(/face clear|her face/i.test(f), `outfit: "${f.slice(0, 34)}…" still shows her face`);
+  }
+  /* THE counter-rule. The FACELESS mirror pool is untouched, byte for byte:
+     there the phone IS the composition — it is what covers her face — and it
+     is the only headless whole-figure ask grok renders cleanly. */
+  const hidden = API._FRAMING.mirror;
+  ok(hidden.some(f => /covers her face completely/.test(f)) && hidden.some(f => /in front of her face/.test(f)),
+    'outfit: the FACELESS mirror is untouched — there the phone is what hides her (counter-rule)');
+  ok(hidden.every(f => /mirror/i.test(f) && /phone/i.test(f)),
+    'outfit: …it is still a mirror shot with a phone, exactly as measured');
+  // Routing is unchanged and correct: a fit check still wants a full-length.
+  ok(API._modeFor('new dress, fit check before i go out', true) === 'mirror',
+    'outfit: a fit check still routes here — the routing was never the problem');
+  ok(API._frameKey('mirror', true) === 'outfitFace' && API._frameKey('mirror', false) === 'mirror',
+    'outfit: face-live takes the timer shot, faceless keeps the mirror');
+  const p52 = API._imagePrompt('new dress, fit check', 'mirror', Personas.byId('bre').appearance, 1, { faceShown: true, reference: true });
+  ok(!/covers her face/.test(p52) && /face clear|Her face is/.test(p52),
+    'outfit: a face-live fit check never draws the head-hiding framing');
+  /* A self-timer she set up and stood back for is deliberate by definition,
+     so it takes the camera-aware register — "caught the way she actually
+     stands" would contradict the framing (invariant 5). */
+  ok(!/She is not posing/.test(p52) && /It is a selfie and she knows it/.test(p52),
+    'outfit: the timer shot is camera-aware, not "caught unposed" (invariant 5)');
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {
