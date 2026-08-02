@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">10.43</span></h1>
+        <h1 class="logo">frenz <span class="app-version">10.44</span></h1>
         <button class="icon-btn" id="btn-photos" title="Reference photos">🖼️</button>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
@@ -51,6 +51,40 @@
         <div id="photos-empty" class="muted small hidden">No friends yet.</div>
       </div>
       <input type="file" id="photos-file" accept="image/*" class="hidden">
+    </section>
+
+    <!-- ============ BUILD A REFERENCE ============
+         The other way to get a reference: construct one. Dials describe the
+         build, a plain-background candidate is rendered from that text
+         alone, and approving it locks the picture.
+
+         Why text and not a dial on her normal photos: measured, four
+         renders — with a reference riding, the reference owns the body and
+         no phrasing moves it. Text only has authority where there is no
+         picture yet, which is exactly here. -->
+    <section id="view-build" class="view hidden">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-build-back">←</button>
+        <h1 id="bd-title">Build a reference</h1>
+        <span></span>
+      </header>
+      <div class="form scroll-area">
+        <p class="muted small">Describe the build you want, render it, and lock the one you like. Once it is locked the <em>picture</em> is what her photos hold — these dials do nothing to a friend who already has a reference, so re-run this and replace it instead.</p>
+        <p class="warn small hidden" id="bd-face-note"></p>
+        <div id="bd-sliders" class="sliders"></div>
+        <p class="muted small" id="bd-preview"></p>
+        <label>Hair, skin and colouring
+          <textarea id="bd-colouring" rows="3" placeholder="e.g. long dark brown hair worn down, fair skin"></textarea>
+          <small>Everything except her body — the dials above own that. Leave it empty and the render picks for you.</small>
+        </label>
+        <p class="warn small hidden" id="bd-warn"></p>
+        <button type="button" class="btn-secondary" id="bd-render">Render a candidate</button>
+        <div id="bd-stage" class="bd-stage hidden"><img id="bd-img" alt="candidate reference"></div>
+        <div class="row hidden" id="bd-accept">
+          <button type="button" class="btn-primary" id="bd-use">Use this one</button>
+          <button type="button" class="btn-secondary" id="bd-again">Render another</button>
+        </div>
+      </div>
     </section>
 
     <!-- ============ NEW MESSAGE: TEMPLATE GALLERY ============ -->

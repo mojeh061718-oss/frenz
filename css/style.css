@@ -187,6 +187,13 @@ details.tune label { margin-top: 12px; }
 .photo-row .pr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .photo-row .pr-actions button { flex: none; padding: 8px 12px; font-size: 0.85rem; }
 .photo-row select { padding: 8px 10px; font-size: 0.85rem; background: var(--bg2); border: 1px solid #2b3247; color: var(--text); border-radius: 10px; }
+/* Build a reference: the candidate sits at the size it will actually be
+   judged at — a thumbnail hides exactly the build detail this screen exists
+   to decide on. */
+.bd-stage { margin: 4px 0; border-radius: 14px; overflow: hidden; background: #232838; border: 1px solid #2b3247; }
+.bd-stage img { display: block; width: 100%; height: auto; }
+.warn { color: #f0b429; line-height: 1.4; }
+
 .panic-cover { position: fixed; inset: 0; z-index: 100; background: #1e1e1e; color: #d4d4d4; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; display: flex; flex-direction: column; user-select: none; cursor: default; }
 .pc-tabs { display: flex; background: #252526; border-bottom: 1px solid #171717; flex: none; padding-top: env(safe-area-inset-top); }
 .pc-tab { padding: 9px 16px; font-size: 12px; color: #969696; background: #2d2d2d; border-right: 1px solid #171717; }

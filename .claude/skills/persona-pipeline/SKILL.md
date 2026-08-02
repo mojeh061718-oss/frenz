@@ -543,9 +543,54 @@ the fixtures were wrong before.
   the older lesson: models are weak at exclusion, and comparison fails the
   same way. So **do not build body dials that adjust a locked reference** —
   they would silently do nothing, which is worse than absent. The lever for
-  build while a reference is locked is THE REFERENCE PHOTO. Dials would work
-  on the no-reference path, where the sheet is the only description; that is
-  a different feature. Evidence: `audit-evidence/edits-spike/spike.md`.
+  build while a reference is locked is THE REFERENCE PHOTO. Evidence:
+  `audit-evidence/edits-spike/spike.md`.
+- **So the dials build the reference instead (v10.44).** The negative result
+  above kills one design, not the feature: text has no authority against a
+  picture, but it is the ONLY authority when there is no picture yet — which
+  is how Bre's build was actually moved, twice, through her sheet at v10.25
+  and v10.26. `_BODY_DIALS` (height / build / chest / hips) therefore drive
+  `referenceCandidatePrompt`, a render that carries **no reference at all**;
+  the owner approves the picture and it becomes the reference, and from that
+  moment the PICTURE is the authority again. Text builds the reference; it
+  never fights one. That "no reference" is the entire mechanism and is
+  asserted on the call site, not just the prompt.
+  - One authority per fact, structurally: the dials own build, a colouring
+    field owns hair and skin, and the appearance SHEET — prose describing
+    both, which cannot be split — is not used here at all. The colouring
+    field gets an advisory tripwire (`_BUILD_WORDS`) when it also describes
+    her body; it warns and never edits, because the owner is looking
+    straight at the text and a silent rewrite is worse than the
+    contradiction it fixes.
+  - Middle band is `null`, so an untouched dial contributes NOTHING — the
+    `sliderText` doctrine, and what stops a tuning control becoming a second
+    author. Neutral is 40-60, not exactly 50: a few points is a slip, not an
+    instruction. Anything unset reads neutral, checked BEFORE `Number()`
+    because `null` and `''` both coerce to 0, i.e. to the bottom band.
+  - Band words pass `_B_FACE` and `_B_MODERATION` like any sheet: a named
+    face feature commissions a portrait, and a portrait is precisely the
+    reference shape measured to defeat the faceless framings.
+  - Candidate framing is plain-background and full-length in both face
+    policies (background bleed is measured and strong; a plain wall bleeding
+    beats a specific room bleeding), keeps the unretouched-skin cues (an
+    airbrushed reference bleeds airbrushed), and is a square-on stand rather
+    than a mirror for a `shown` persona — a mirror reference nudges every
+    later pov composition mirror-ward. A `hidden` persona keeps the mirror
+    phone-over-face composition, the only headless whole-figure ask grok
+    renders cleanly.
+  - **This is the case v10.43 declared unreachable**: a face in frame with no
+    reference. "A face is live only because a reference holds it" is right
+    for every COMPOSED request and wrong for this one, which exists to CREATE
+    the anchor — so a RAW caller, having authored its own framing, states the
+    face itself. `_xaiImage` now takes its avoid text like `_xaiImageEdit`
+    does, and `_imageNegative` makes Bedrock's negative face-conditional too;
+    without both, the request would ban the face its own prompt asks for.
+  - A `shown` persona's candidate has to contain a face, and that face is
+    INVENTED — which is what the owner rejected when uploads replaced the
+    rolling-candidate flow. The screen says so before you render rather than
+    after. No acknowledgement gate here: that gate exists because an upload
+    can be a real person who never agreed, and a render from these dials is
+    nobody.
 - **Both head-cropping pools have a face-live sibling** (v10.38, reversing a
   v10.32 call on owner report). The old rule was "pov stays head-out even for
   a face-live persona: a look-down shot has no face" — true of one shot,

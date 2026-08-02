@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.43';
+const APP_JS_VERSION = '10.44';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -11,7 +11,7 @@ const $ = (sel) => document.querySelector(sel);
 // Every view section in index.html MUST be listed here: showView only
 // toggles ids it knows about, so an unregistered view hides every other
 // screen and stays hidden itself — a blank app. Asserted in verify.js.
-const views = ['view-friends', 'view-photos', 'view-gallery', 'view-builder', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
+const views = ['view-friends', 'view-photos', 'view-build', 'view-gallery', 'view-builder', 'view-customize', 'view-editor', 'view-chat', 'view-relationship', 'view-settings'];
 
 let currentFriend = null;       // friend object while chatting/editing
 let editingId = null;           // friend id being edited, null = creating
@@ -805,6 +805,15 @@ async function renderPhotosList() {
     });
     actions.appendChild(pick);
 
+    // The second way to GET a reference, so it belongs beside the upload
+    // rather than buried in the persona editor.
+    const build = document.createElement('button');
+    build.type = 'button';
+    build.className = 'btn-secondary';
+    build.textContent = 'Build one';
+    build.addEventListener('click', () => openBuildReference(f));
+    actions.appendChild(build);
+
     if (hasRef) {
       const clear = document.createElement('button');
       clear.type = 'button';
@@ -849,6 +858,169 @@ async function savePhotoRow(friend, message) {
   if (currentFriend && currentFriend.id === friend.id) currentFriend = friend;
   toast(message);
   await renderPhotosList();
+}
+
+/* ---------------- build a reference (v10.44) ----------------
+
+   The owner asked for body dials to fix a persona rendering the wrong
+   shape. Dials that adjust a render carrying her reference are measured
+   dead — comparative and absolute phrasing both moved nothing across four
+   renders, because a reference owns the body absolutely. So the dials live
+   HERE instead, on the one path where text is the only description of her
+   and therefore the only authority: they build a candidate photo, and the
+   approved photo becomes the reference. Text builds the reference; it never
+   fights one.
+
+   Nothing on this screen touches her appearance sheet. The dials own build,
+   the colouring field owns hair and skin, and the sheet — prose that
+   describes both and cannot be split — stays out entirely, so there is one
+   authority per fact in the candidate prompt. */
+let buildTargetId = null;
+let builtCandidate = null;   // the un-downscaled render awaiting approval
+let buildBusy = false;
+
+function buildDials() {
+  const d = {};
+  for (const def of ClaudeAPI._BODY_DIALS) {
+    const el = $('#bd-' + def.key);
+    if (el) d[def.key] = Number(el.value);
+  }
+  return d;
+}
+
+/* Advisory only. The colouring field owns hair and skin; if it also
+   describes her body then two authorities are in one prompt, which is the
+   contradiction this whole workstream keeps re-learning. It warns rather
+   than edits — the owner is looking straight at the text, and silently
+   rewriting what someone typed is worse than the contradiction. */
+function refreshBuildPreview() {
+  const text = ClaudeAPI.bodyDialText(buildDials());
+  $('#bd-preview').textContent = text || 'Every dial is centred, so nothing is being said about her build — the render will pick one.';
+  const col = $('#bd-colouring').value || '';
+  const warn = $('#bd-warn');
+  const bad = ClaudeAPI._BUILD_WORDS.test(col);
+  warn.classList.toggle('hidden', !bad);
+  if (bad) warn.textContent = 'That still describes her body — the dials own that now, and two descriptions of one thing fight each other in the render. Trim it to hair, skin and colouring.';
+}
+
+async function openBuildReference(friend) {
+  const entry = ClaudeAPI.imageEntry(Settings.get());
+  if (!entry) {
+    toast('No image model configured — add one in Settings to build a reference.', 6000);
+    return;
+  }
+  buildTargetId = friend.id;
+  builtCandidate = null;
+  const p = friend.profile;
+  $('#bd-title').textContent = 'Build ' + p.name + "'s reference";
+  // Dial positions persist on the friend, so tuning can be picked back up
+  // instead of restarting from centre every visit.
+  const saved = p.bodyDials || {};
+  const wrap = $('#bd-sliders');
+  wrap.innerHTML = '';
+  for (const def of ClaudeAPI._BODY_DIALS) {
+    const val = def.key in saved ? saved[def.key] : ClaudeAPI.BODY_DIAL_NEUTRAL;
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    row.innerHTML = `
+      <div class="slider-head"><span>${escapeHtml(def.label)}</span></div>
+      <input type="range" min="0" max="100" value="${val}" id="bd-${def.key}">
+      <div class="slider-ends"><span>${escapeHtml(def.low)}</span><span>${escapeHtml(def.high)}</span></div>`;
+    row.querySelector('input').addEventListener('input', refreshBuildPreview);
+    wrap.appendChild(row);
+  }
+  /* A shown persona's candidate must contain a face — a faceless reference
+     on a shown persona leaves her face unanchored and re-invented every
+     render, the exact failure _faceShown exists to prevent. But that face is
+     INVENTED, which is what the owner rejected when the rolling-candidate
+     flow was replaced by uploads. Say it here rather than let it be
+     rediscovered after a render. */
+  const faceNote = $('#bd-face-note');
+  const invents = p.photoFace === 'shown';
+  faceNote.classList.toggle('hidden', !invents);
+  if (invents) faceNote.textContent = 'Her face is set to show, so this render has to invent one — it will be consistent once locked, but it will not be a face you chose. Re-render until one fits, or upload a photo instead. The build dials work either way.';
+  $('#bd-colouring').value = p.refColouring || '';
+  $('#bd-stage').classList.add('hidden');
+  $('#bd-accept').classList.add('hidden');
+  $('#bd-img').removeAttribute('src');
+  refreshBuildPreview();
+  showView('view-build');
+}
+
+async function runBuildReference() {
+  if (buildBusy) return;
+  const friend = await DB.getFriend(buildTargetId);
+  if (!friend) return;
+  const entry = ClaudeAPI.imageEntry(Settings.get());
+  if (!entry) { toast('No image model configured.'); return; }
+  buildBusy = true;
+  const btn = $('#bd-render');
+  const label = btn.textContent;
+  btn.textContent = 'Rendering…';
+  btn.disabled = true;
+  try {
+    /* Carrying NO reference, and that is the entire mechanism: the moment
+       one rides, the dials are back to fighting a picture, which four
+       renders proved does not work.
+
+       The face flag is the one place this render is unlike every other: it
+       normally means "a reference is holding her face", and here there is no
+       reference — the render is CREATING the anchor. So it is passed raw,
+       matching the framing referenceCandidatePrompt just chose, or the
+       exclusions in the same request would ban the face the prompt asks
+       for. */
+    const prompt = ClaudeAPI.referenceCandidatePrompt(friend, {
+      dials: buildDials(),
+      colouring: $('#bd-colouring').value.trim()
+    });
+    builtCandidate = await ClaudeAPI.generateImage(entry, prompt, {
+      raw: true, width: 768, height: 1024,
+      faceShown: friend.profile.photoFace === 'shown'
+    });
+    $('#bd-img').src = builtCandidate;
+    $('#bd-stage').classList.remove('hidden');
+    $('#bd-accept').classList.remove('hidden');
+  } catch (err) {
+    builtCandidate = null;
+    toast('Render failed — ' + ((err && err.message) || 'image error'), 8000);
+  } finally {
+    buildBusy = false;
+    btn.textContent = label;
+    btn.disabled = false;
+  }
+}
+
+/* A data URL from the model, through the SAME downscaler an upload takes —
+   the reference rides in every /images/edits body and every backup export,
+   so where it came from changes nothing about what it costs. */
+function dataUrlToBlob(dataUrl) {
+  const m = /^data:([^;,]+)[^,]*,(.*)$/.exec(String(dataUrl) || '');
+  if (!m) throw new Error('That render came back in a form this app cannot read.');
+  const bin = atob(m[2]);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: m[1] });
+}
+
+async function useBuiltReference() {
+  if (!builtCandidate) return;
+  const friend = await DB.getFriend(buildTargetId);
+  if (!friend) return;
+  if (friend.profile.referenceImage
+    && !confirm(`Replace ${friend.profile.name}'s reference photo? Her pictures will hold this one instead.`)) return;
+  /* No acknowledgement gate here, deliberately: that gate exists because an
+     UPLOAD can be a real person who has not agreed to it. A render from
+     these dials is nobody. */
+  try {
+    const dataUrl = await downscaleImageFile(dataUrlToBlob(builtCandidate));
+    applyReferenceTo(friend.profile, dataUrl);
+    friend.profile.bodyDials = buildDials();
+    friend.profile.refColouring = $('#bd-colouring').value.trim();
+    await savePhotoRow(friend, 'Locked — her photos hold this build now.');
+    showView('view-photos');
+  } catch (err) {
+    toast('Could not save that render — ' + ((err && err.message) || 'storage error'), 7000);
+  }
 }
 
 /* ---------------- friend editor ---------------- */
@@ -2980,6 +3152,21 @@ function init() {
     showView('view-photos');
   });
   $('#btn-photos-back').addEventListener('click', () => { renderFriendsList(); showView('view-friends'); });
+
+  /* Build a reference. Back always returns to the photos list, because that
+     is the only place this screen is reachable from and the candidate it
+     leaves behind is deliberately not persisted — an unapproved render is
+     not a decision. */
+  $('#btn-build-back').addEventListener('click', async () => {
+    builtCandidate = null;
+    $('#bd-img').removeAttribute('src');   // multi-MB data URL, released on the way out
+    await renderPhotosList();
+    showView('view-photos');
+  });
+  $('#bd-colouring').addEventListener('input', refreshBuildPreview);
+  $('#bd-render').addEventListener('click', runBuildReference);
+  $('#bd-again').addEventListener('click', runBuildReference);
+  $('#bd-use').addEventListener('click', useBuiltReference);
   $('#photos-file').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     const id = photosTargetId;

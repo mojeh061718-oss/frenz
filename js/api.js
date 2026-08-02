@@ -2777,6 +2777,16 @@ const ClaudeAPI = {
   },
 
   _IMAGE_NEGATIVE: 'professional studio photography, posed fashion model, perfect makeup, watermark, text, caption, logo, cartoon, illustration, 3d render, oversaturated, hdr, extra fingers, deformed hands, visible face, head in frame, portrait framing, posed selfie smile, camera-aware pose',
+  /* The Bedrock counterpart of _imageAvoid, and it needs one for the same
+     reason: this is the ONLY route that reads a negative prompt, and every
+     face-live framing the app can now produce asks for exactly what the tail
+     of that string bans. A prompt saying "her face clearly visible" beside a
+     negative saying "visible face" is a contradiction inside one request,
+     and the model resolves those unpredictably (invariant 5). */
+  _imageNegative(faceForbidden) {
+    if (faceForbidden) return this._IMAGE_NEGATIVE;
+    return this._IMAGE_NEGATIVE.replace(', visible face, head in frame, portrait framing, posed selfie smile, camera-aware pose', '');
+  },
 
   // Inline avoid-clause for routes with no negativeText parameter (xAI) —
   // same intent as _IMAGE_NEGATIVE, phrased as prose.
@@ -3156,6 +3166,122 @@ const ClaudeAPI = {
       (isScene ? '' : (this._HEAT_TONE[Math.max(0, Math.min(2, heat | 0))] || ''));
   },
 
+  /* ---------------- body dials (v10.44) --------------------------------
+
+     The owner asked for dials — height, build, chest, hips — to fix a
+     persona whose renders came out the wrong shape. The obvious design was
+     to let them adjust a render that already carries her reference, and that
+     design is measured DEAD: comparative wording ("distinctly fuller than
+     that") and absolute wording with the reference scoped to face and
+     colouring both left the build untouched, four renders, zero effect
+     (audit-evidence/edits-spike/spike.md). A reference governs body and
+     identity absolutely; prompt text governs only what the reference does
+     not depict.
+
+     So the dials never sit in a request that carries a reference. They drive
+     a CANDIDATE render — no reference, text the only description of her and
+     therefore the only authority, which is the same path that moved Bre's
+     build twice through her sheet at v10.25 and v10.26. The owner approves
+     the picture, it becomes the reference, and from then on the PICTURE is
+     the authority. Text builds the reference; it never fights one.
+
+     One authority per fact throughout: the dials own build, the colouring
+     field owns hair and skin, and the appearance sheet — which describes
+     both, in prose that cannot be split — is not used here at all. */
+  /* Five bands, and the middle one is null on purpose: an untouched dial
+     contributes NOTHING. That is the doctrine every slider in this app
+     already follows (`sliderText`: "untouched dials contribute NOTHING —
+     template prose already says it better"), and it is what keeps a tuning
+     control from quietly becoming a second author. Band words carry no face
+     features (_B_FACE — a named face feature commissions a portrait, and a
+     portrait is the reference shape measured to defeat the faceless
+     framings) and none of the words measured to trip Grok live. */
+  BODY_DIAL_NEUTRAL: 50,
+  _BODY_DIALS: [
+    { key: 'height', label: 'Height', low: 'short', high: 'tall',
+      bands: ['very short', 'a little on the short side', null, 'fairly tall', 'tall'] },
+    { key: 'build', label: 'Overall build', low: 'slight', high: 'full-figured',
+      bands: ['slight and slim', 'lean', null, 'soft and full-figured', 'heavy and full-figured'] },
+    { key: 'chest', label: 'Chest', low: 'small', high: 'very full',
+      bands: ['a small chest', 'a modest chest', null, 'a full chest', 'a very full, heavy chest'] },
+    { key: 'hips', label: 'Hips and thighs', low: 'narrow', high: 'very wide',
+      bands: ['narrow hips and slim thighs', 'slim hips and thighs', null, 'wide hips and full thighs', 'very wide hips and heavy thighs'] }
+  ],
+  /* 40-60 is neutral, not just 50: a dial nudged a few points is a slip, not
+     an instruction, and every band boundary here is a visible change in the
+     render. Anything missing or unreadable reads neutral — the direction
+     that says nothing, never an accidental extreme (invariant 8). */
+  _dialBand(v) {
+    // Explicitly BEFORE the Number() coercion: null and '' both coerce to 0,
+    // which is the bottom band — so an unset dial would have read as "very
+    // short" rather than as silence. Exactly the accidental-extreme this
+    // whole function is written to avoid.
+    if (v === null || v === undefined || v === '') return 2;
+    const n = Number(v);
+    if (!isFinite(n)) return 2;
+    const c = Math.max(0, Math.min(100, n));
+    if (c < 20) return 0;
+    if (c < 40) return 1;
+    if (c <= 60) return 2;
+    if (c <= 80) return 3;
+    return 4;
+  },
+  bodyDialText(dials) {
+    const d = dials || {};
+    const word = k => {
+      const dial = this._BODY_DIALS.filter(x => x.key === k)[0];
+      return dial ? dial.bands[this._dialBand(d[k])] : null;
+    };
+    // Shape first, then what she carries — the order a person would say it.
+    const shape = [word('height'), word('build')].filter(Boolean);
+    const carries = [word('chest'), word('hips')].filter(Boolean);
+    if (!shape.length && !carries.length) return '';
+    let s = 'Her build: ';
+    if (shape.length) s += 'she is ' + shape.join(', ');
+    if (shape.length && carries.length) s += ', with ';
+    else if (carries.length) s += 'she has ';
+    if (carries.length) s += carries.join(' and ');
+    return s + '.';
+  },
+  /* Advisory tripwire for the colouring field, which owns hair and skin and
+     nothing about her body. It WARNS and never edits: the owner is looking
+     straight at the text, and silently rewriting what someone typed is worse
+     than the contradiction it would be fixing. */
+  _BUILD_WORDS: /\b(build|figure|figured|curvy|curves|thick|thin|slim|slender|petite|short|tall|heavy|heavyset|chubby|plump|skinny|lean|athletic|toned|chest|bust|busty|cup|hips?|waist|stomach|tummy|belly|frame|body|weight|size)\b/i,
+
+  /* Shared by the bare sheet lens and the candidate render. Both want the
+     same thing said the same way, and it was maintained in two places. */
+  _SNAP_UNRETOUCHED: ' true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.',
+
+  /* The candidate render. Two framings, and they differ for a measured
+     reason rather than a stylistic one: a face-forward reference DEFEATS the
+     faceless pov framing outright — it does not nudge it, it wins — so a
+     hidden persona's candidate must not contain a face either. The hidden
+     framing is the mirror phone-over-face composition, kept because three
+     rounds of live testing found it is the only headless whole-figure ask
+     grok renders cleanly (crop-at-the-neck leaked a face 1 in 5; crop plus
+     reflection-only produced duplicate-torso junk). The shown framing is a
+     square-on stand and deliberately NOT a mirror, because a mirror
+     reference nudges every later pov composition mirror-ward.
+
+     Plain background in both: background bleed from a reference is measured
+     and strong, and a plain wall bleeding is a great deal better than a
+     specific room bleeding. The unretouched cues ride here too — an
+     airbrushed reference bleeds airbrushed into every photo after it. */
+  referenceCandidatePrompt(friend, o) {
+    o = o || {};
+    const p = (friend && friend.profile) || {};
+    const build = this.bodyDialText(o.dials);
+    const colouring = String(o.colouring || '').trim();
+    const who = (build ? ' ' + build : '')
+      + (colouring ? ' Her hair, skin and colouring: ' + colouring.replace(/\.?$/, '.') : '');
+    const framing = p.photoFace === 'shown'
+      ? 'A full-length photo of an adult woman standing relaxed against a plain bare wall at home, square-on to the camera, arms easy at her sides, head to feet in frame, her face clearly visible with an ordinary everyday expression, hair the way she normally wears it, in simple plain everyday clothes that show her true build.'
+      : 'A full-length mirror photo an adult woman took on her phone, standing square to a tall mirror on a plain bare wall, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet, in simple plain everyday clothes that show her true build. The picture contains only the mirror\'s reflection.';
+    return framing + (who || ' She is an ordinary adult woman.') +
+      ' Shot plainly and evenly: level framing, ordinary even room light, an uncluttered background,' + this._SNAP_UNRETOUCHED;
+  },
+
   /* Debug-only portrait (the composer command 'testlook'): the neck-down
      mirror check. A quality lens, not a message — it never reaches the
      model, the history, or the state engine. One fixed framing so persona
@@ -3190,7 +3316,7 @@ const ClaudeAPI = {
       (o.reference
         ? ' The woman in the reflection is the same woman as in the reference photo — identical build, hair, skin, and features.'
         : ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.')) +
-      ' Shot like a quick snap: careless tilted framing, slightly grainy, flat unedited colour, ordinary room light, true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.';
+      ' Shot like a quick snap: careless tilted framing, slightly grainy, flat unedited colour, ordinary room light,' + this._SNAP_UNRETOUCHED;
   },
 
   /* testlook [action] [normal|spicy] — the SCENE variant of the debug lens.
@@ -3312,7 +3438,14 @@ const ClaudeAPI = {
        (see _faceLiveFor), and nothing downstream reads o.faceShown again —
        framing pool, face rule, avoid clause, ladder rungs and the quality
        gate all read this one value. */
-    const faceApproved = this._faceLiveFor(entry, o);
+    /* …except for a RAW caller, which has authored the whole framing itself
+       and therefore states the face itself. The one legitimate face with no
+       reference is the candidate render (v10.44): it exists to CREATE the
+       anchor, not to read one, and collapsing its flag would have it ask for
+       a face while the exclusions in the same request ban one. Every
+       COMPOSED request is unchanged — there, a face still needs a reference
+       to hold it. */
+    const faceApproved = o.raw ? !!o.faceShown : this._faceLiveFor(entry, o);
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
     const mode = o.mode || this._modeFor(description, faceApproved);
@@ -3329,8 +3462,9 @@ const ClaudeAPI = {
        a raw caller has built the framing itself and keeps its reference. */
     const isSceneShot = !o.raw && mode === 'scene';
     const refRides = !!o.reference && this._isGrokImageModel(model) && !isSceneShot;
-    // …and a face needs a framing that contains her, not just a route.
-    const faceShown = faceApproved && refRides;
+    // …and a composed face needs a framing that contains her, not just a
+    // route. A raw framing already contains whatever it says it contains.
+    const faceShown = faceApproved && (o.raw || refRides);
     /* Budget bug, caught at v10.18: the old 1000-char slice was SHORTER than
        every assembled pov prompt (appearance sheet + framing alone run
        ~1000), so the camera register and heat tone were being cut off before
@@ -3373,7 +3507,10 @@ const ClaudeAPI = {
         url: `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(model)}/invoke`,
         body: {
           taskType: 'TEXT_IMAGE',
-          textToImageParams: { text: prompt, negativeText: this._IMAGE_NEGATIVE },
+          // Face-conditional, same rule as the xAI avoid prose: this is the
+          // only route that reads a negative prompt, and its tail bans
+          // exactly what a face-live framing asks for.
+          textToImageParams: { text: prompt, negativeText: this._imageNegative(!faceShown) },
           imageGenerationConfig: { numberOfImages: 1, width, height, quality: 'standard', cfgScale: 6.5 }
         },
         parse: d => d && d.images && d.images[0]
@@ -3384,7 +3521,7 @@ const ClaudeAPI = {
         // route in the app that stated none of them. The prose form is what
         // the xAI routes already ride; it belongs here for the same reason.
         url: `https://bedrock-mantle.${region}.api.aws/openai/v1/images/generations`,
-        body: { model, prompt: prompt + this._IMAGE_AVOID, n: 1, size: `${width}x${height}`, response_format: 'b64_json' },
+        body: { model, prompt: prompt + this._imageAvoid(!faceShown), n: 1, size: `${width}x${height}`, response_format: 'b64_json' },
         parse: d => d && d.data && d.data[0] && d.data[0].b64_json
       }
     ];
@@ -3438,6 +3575,12 @@ const ClaudeAPI = {
      retry contains strictly less of a person than the one before it. */
   _RECOVERY_LADDER: { selfie: ['pov', 'scene'], mirror: ['pov', 'scene'], pov: ['scene'], scene: [] },
   async _xaiImageWithRecovery(entry, model, description, mode, o, width, height, firstPrompt) {
+    /* The avoid clause follows the FACE, exactly as it does on the edit
+       ladder. It used to be the hardcoded constant here, which was safe only
+       while a face could never ride this route — v10.44's candidate render
+       is a face with no reference, so that assumption is gone and the
+       constant would have banned the very thing the prompt asks for. */
+    const avoid = this._imageAvoid(!o.faceShown);
     const ladder = [firstPrompt];
     if (!o.raw) {
       for (const m of (this._RECOVERY_LADDER[mode] || [])) {
@@ -3463,7 +3606,9 @@ const ClaudeAPI = {
       // thread has already moved past is worse than no photo.
       if (i > 0 && this._budgetLeft() < 8000) break;
       try {
-        return await this._xaiImage(entry, model, ladder[i], width, height);
+        // Rung 0 keeps the caller's face; every recovery rung is faceless by
+        // construction (built with no opts), so its exclusions are too.
+        return await this._xaiImage(entry, model, ladder[i], width, height, i === 0 ? avoid : this._IMAGE_AVOID);
       } catch (e) {
         // Only a content decision is worth re-framing for. A bad key, a dead
         // network or a wrong model name will fail identically every time and
@@ -3517,7 +3662,7 @@ const ClaudeAPI = {
            endpoint rather than posting her photograph as the source for a
            picture she is not in. Same rule as the top of _generateImage. */
         return r.mode === 'scene'
-          ? await this._xaiImage(entry, model, r.prompt, width, height)
+          ? await this._xaiImage(entry, model, r.prompt, width, height, this._imageAvoid(!r.faceShown))
           : await this._xaiImageEdit(entry, model, r.prompt, width, height, refUrl, this._imageAvoid(!r.faceShown));
       } catch (e) {
         if (!e || !e.declined) throw e;
@@ -3706,7 +3851,7 @@ const ClaudeAPI = {
      exclusions ride inline in the prompt instead. b64_json, not url: the
      returned URLs are temporary and a second cross-origin fetch is a second
      failure mode. */
-  async _xaiImage(entry, model, prompt, width, height) {
+  async _xaiImage(entry, model, prompt, width, height, avoidText) {
     // A Bedrock entry has no xAI base URL, and grok-imagine only exists at
     // one address — so the host is fixed here rather than read off the entry,
     // and only an actual xAI chat entry overrides it.
@@ -3723,7 +3868,7 @@ const ClaudeAPI = {
         headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + key },
         body: JSON.stringify({
           model: modelId,
-          prompt: prompt + this._IMAGE_AVOID,
+          prompt: prompt + avoidText,
           n: 1,
           response_format: 'b64_json',
           aspect_ratio: this._nearestAspect(width, height),

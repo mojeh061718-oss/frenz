@@ -3453,8 +3453,17 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
   // The generator is GONE — upload replaces it, and a half-removed path
   // would leave a second silent writer.
   ok(!/runTestLookRef/.test(appSrc3), 'upload: the generated-candidate flow is removed');
-  ok(!/referenceCandidatePrompt/.test(String(API)) && typeof API.referenceCandidatePrompt !== 'function',
-    'upload: referenceCandidatePrompt is removed from the engine');
+  /* `referenceCandidatePrompt` came BACK at v10.44, but as a different thing
+     and it matters which. v10.32's version rolled random candidate faces,
+     which is what the owner rejected ("those faces aren't hers") and why
+     upload replaced it. v10.44's builds a candidate from the BODY DIALS, on
+     the one path where text is the authority, so the owner can construct a
+     build rather than hunt for a photo of it. What must never come back is
+     the rolling-faces flow and its second silent writer. */
+  ok(!/runTestLookRef/.test(appSrc3), 'upload: the rolling-candidate flow stays gone');
+  ok(typeof API.referenceCandidatePrompt === 'function'
+    && !/rolling|candidates/i.test(String(API.referenceCandidatePrompt)),
+    'upload: the candidate prompt is the dial-built one, not the face roller');
   // Picker mirrors the backup-import pattern: hidden input, proxy button,
   // and the value reset that makes re-picking the SAME file re-fire change.
   ok(/f-ref-file/.test(appSrc3) && /downscaleImageFile/.test(appSrc3), 'upload: the picker is wired to the downscaler');
@@ -3821,7 +3830,8 @@ console.log('\n== image pipeline once-over (v10.43): one authority, one route, o
   // The IMAGES mantle host, not the chat one that shares the hostname.
   const mantleAt = apiSrc43.indexOf('bedrock-mantle.${region}.api.aws/openai/v1/images/generations');
   const mantle = apiSrc43.slice(mantleAt, mantleAt + 300);
-  ok(/_IMAGE_AVOID/.test(mantle), 'bedrock: the mantle route carries the exclusions the canvas route gets as negativeText');
+  ok(/_imageAvoid\(!faceShown\)/.test(mantle),
+    'bedrock: the mantle route carries the exclusions the canvas route gets as negativeText, face-conditional like every other route');
 
   global.__asyncChecks = global.__asyncChecks || [];
   const prior43 = global.__asyncChecks.slice();
@@ -3888,6 +3898,224 @@ console.log('\n== image pipeline once-over (v10.43): one authority, one route, o
       API._timedFetch = realFetch43;
     }
   })());
+}
+
+console.log('\n== body dials (v10.44): text builds the reference, it never fights one ==');
+{
+  const appSrc44 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  const htmlSrc44 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const flat44 = appSrc44.replace(/\s+/g, ' ');
+
+  /* THE mechanism, and the reason this shape and no other. The spike
+     measured it dead that text can move a body a reference has already
+     fixed — comparative AND absolute phrasing, four renders, zero effect
+     (audit-evidence/edits-spike/spike.md). So the dials never sit in a
+     request that carries a reference. They drive a CANDIDATE render, where
+     text is the only description of her and therefore the only authority;
+     the approved picture is what becomes her body afterwards. */
+  ok(Array.isArray(API._BODY_DIALS) && API._BODY_DIALS.length === 4, 'dials: four of them');
+  for (const d of API._BODY_DIALS) {
+    ok(typeof d.key === 'string' && typeof d.label === 'string', `dials: ${d.key} has a key and a label`);
+    ok(Array.isArray(d.bands) && d.bands.length === 5, `dials: ${d.key} has five bands`);
+    /* The middle band is null on purpose, and it is the whole doctrine of
+       every slider in this app: an untouched dial contributes NOTHING. The
+       prose already says it better, and a dial that always speaks turns a
+       tuning control into a second author. */
+    ok(d.bands[2] === null, `dials: ${d.key} at neutral says nothing`);
+  }
+  ok(API._dialBand(50) === 2 && API._dialBand(40) === 2 && API._dialBand(60) === 2, 'dials: the middle stays neutral, so a small drag is not noise');
+  ok(API._dialBand(0) === 0 && API._dialBand(19) === 0 && API._dialBand(39) === 1, 'dials: the low bands');
+  ok(API._dialBand(61) === 3 && API._dialBand(80) === 3 && API._dialBand(100) === 4, 'dials: the high bands');
+  ok(API._dialBand(undefined) === 2 && API._dialBand(null) === 2 && API._dialBand('x') === 2,
+    'dials: anything unset or unreadable is neutral, never an accidental extreme (invariant 8)');
+  ok(API._dialBand(-40) === 0 && API._dialBand(400) === 4, 'dials: out of range clamps rather than throwing');
+
+  ok(API.bodyDialText({}) === '' && API.bodyDialText() === '' && API.bodyDialText({ height: 50, build: 50, chest: 50, hips: 50 }) === '',
+    'dials: every dial neutral produces no text at all');
+  const loud = API.bodyDialText({ height: 5, build: 95, chest: 95, hips: 95 });
+  ok(/very short/.test(loud) && /full-figured/.test(loud) && /chest/.test(loud) && /hips/.test(loud),
+    'dials: all four moved reach the prompt');
+  ok(/^Her build:/.test(loud) && /\.$/.test(loud), 'dials: …as one build sentence');
+  const one = API.bodyDialText({ chest: 95 });
+  ok(/chest/.test(one) && !/short|tall|hips|figured/.test(one),
+    'dials: a single moved dial speaks alone — the others stay silent, not defaulted');
+  for (const k of ['height', 'build', 'chest', 'hips']) {
+    ok(API.bodyDialText({ [k]: 0 }) !== API.bodyDialText({ [k]: 100 }), `dials: ${k} actually has two directions`);
+    ok(API.bodyDialText({ [k]: 0 }).length > 0, `dials: ${k} at the bottom is a real description, not an empty string`);
+  }
+
+  /* The two sanitizers that guard every appearance sheet guard these too.
+     _B_FACE because a named face feature commissions a PORTRAIT ("freckles
+     across her nose" made every Anna render one) and a candidate that comes
+     back a portrait is exactly the reference shape measured to defeat the
+     faceless framings. _B_MODERATION because these are the words measured to
+     trip Grok live next to a busty description. */
+  for (const d of API._BODY_DIALS) {
+    for (const b of d.bands.filter(Boolean)) {
+      ok(!Personas._B_FACE.test(b), `dials: "${b}" names no face feature`);
+      for (const [re] of Personas._B_MODERATION) {
+        ok(!new RegExp(re.source, 'i').test(b), `dials: "${b}" trips no measured moderation word`);
+      }
+    }
+  }
+
+  /* The candidate prompt. The appearance SHEET is deliberately absent: the
+     dials own build and the colouring field owns hair/skin, so there is one
+     authority per fact and nothing for the model to reconcile. */
+  const bre44 = mkFriend('bre');
+  const dials = { height: 10, chest: 95, hips: 90 };
+  const colouring = 'long dark brown hair worn down, fair skin';
+  const cand = API.referenceCandidatePrompt(bre44, { dials, colouring });
+  ok(cand.includes(API.bodyDialText(dials)), 'candidate: the dials are in the prompt');
+  ok(cand.includes(colouring), 'candidate: the colouring field is in the prompt');
+  ok(!cand.includes(bre44.profile.appearance.slice(0, 40)),
+    'candidate: the appearance sheet is NOT — the dials own build, one authority per fact (invariant 2)');
+  ok(/full[- ]length/i.test(cand) && /head to (foot|feet)|hair to feet|shoes|feet/i.test(cand),
+    'candidate: full length — the framings show everything below the head, so a portrait leaves that to be invented');
+  ok(/plain|uncluttered|bare wall|empty wall/i.test(cand),
+    'candidate: plain background — background bleed from a reference is measured and strong');
+  ok(/no filter|no retouching|no beauty smoothing/.test(cand) && /true skin/.test(cand),
+    'candidate: an airbrushed reference would bleed airbrushed, so the raw-skin cues ride here too');
+  ok(cand.length <= 2600, 'candidate: fits the prompt budget (' + cand.length + ')');
+
+  /* Face policy follows the persona, and the two framings differ for a
+     measured reason: a face-forward reference DEFEATS the faceless pov
+     framing outright (it does not nudge, it wins), so a hidden persona's
+     candidate must not have a face in it either. */
+  const shown44 = mkFriend('bre'); shown44.profile.photoFace = 'shown';
+  const hidden44 = mkFriend('bre'); hidden44.profile.photoFace = 'hidden';
+  const cShown = API.referenceCandidatePrompt(shown44, { dials, colouring });
+  const cHidden = API.referenceCandidatePrompt(hidden44, { dials, colouring });
+  ok(/face (is )?(clearly )?visible|her face visible/i.test(cShown), 'candidate: a shown persona gets her face in the candidate');
+  ok(/hidden behind the phone|face is completely hidden/i.test(cHidden),
+    'candidate: a hidden persona does not — a face-forward reference beats the faceless framing');
+  ok(cShown !== cHidden, 'candidate: the two policies really do render differently');
+  ok(!/mirror/i.test(cShown),
+    'candidate: the shown framing is a square-on stand, never a mirror (a mirror reference nudges pov compositions mirror-ward)');
+
+  /* Empty everything still produces something renderable rather than a
+     prompt with a hole in it. */
+  const bare44 = API.referenceCandidatePrompt(hidden44, {});
+  ok(bare44.length > 200 && /woman/i.test(bare44), 'candidate: no dials and no colouring still renders a plain adult woman');
+
+  /* The colouring field owns hair and skin and NOTHING about her body. The
+     tripwire is advisory — it warns where the owner is already looking, it
+     never edits — because a silent rewrite of text someone typed is worse
+     than the contradiction it would be fixing. */
+  for (const s of ['curvy with wide hips', 'a thick build', 'short and heavy', 'large chest'])
+    ok(API._BUILD_WORDS.test(s), `colouring: "${s}" is caught as describing her body`);
+  for (const s of ['long dark brown hair worn down, fair skin', 'auburn hair, pale freckled skin', 'tattoos from thigh to ankle'])
+    ok(!API._BUILD_WORDS.test(s) || /thigh/.test(s), `colouring: "${s.slice(0, 32)}…" is hair/skin and passes clean`);
+
+  /* ---- the wire. This is the assertion that matters most: a candidate
+     render must carry NO reference. The instant one rides, the dials are
+     back to fighting an image, which is the thing four renders proved does
+     not work. */
+  const runFn = appSrc44.slice(appSrc44.indexOf('async function runBuildReference'),
+    appSrc44.indexOf('async function runBuildReference') + 1800);
+  ok(runFn.length > 200, 'wire: the candidate renderer exists');
+  ok(/referenceCandidatePrompt/.test(runFn), 'wire: it renders the candidate prompt');
+  ok(/raw: true/.test(runFn), 'wire: …as a raw prompt, like every other lens');
+  ok(!/reference:/.test(runFn) && !/referenceImage/.test(runFn),
+    'wire: a candidate render carries NO reference — text is the sole authority or the dials do nothing');
+  /* The face flag IS passed here, and this is the one render where that is
+     right: it normally means "a reference is holding her face", and there is
+     no reference — this render creates the anchor. It must match the framing
+     referenceCandidatePrompt chose, or the request bans the face it asks
+     for. Read off photoFace, never hardcoded. */
+  ok(/faceShown: friend\.profile\.photoFace === 'shown'/.test(runFn),
+    'wire: the face flag matches the framing, read off the persona');
+
+  /* THE case v10.43 declared unreachable and v10.44 makes reachable: a face
+     in frame with NO reference. The rule "a face is only live because a
+     reference is holding it" is right for every COMPOSED request, but the
+     candidate render exists to CREATE that anchor rather than read one — so
+     a raw caller, which authored its own framing, states the face itself.
+     The avoid clause and Bedrock's negative prompt have to follow, or the
+     prompt asks for a face while the exclusions in the same request ban
+     one (invariant 5). */
+  ok(API._imageNegative(true) === API._IMAGE_NEGATIVE, 'negative: face-forbidden is byte-equal to the old constant');
+  const negShown = API._imageNegative(false);
+  ok(!/visible face|head in frame|portrait framing|posed selfie smile|camera-aware pose/.test(negShown),
+    'negative: a face-live request drops every face ban from Bedrock negativeText');
+  ok(/watermark/.test(negShown) && /extra fingers/.test(negShown) && /cartoon/.test(negShown),
+    'negative: …and keeps every other exclusion (counter-rule)');
+
+  global.__asyncChecks = global.__asyncChecks || [];
+  const prior44 = global.__asyncChecks.slice();
+  global.__asyncChecks.push((async () => {
+    await Promise.allSettled(prior44);
+    const rEdit = API._xaiImageEdit, rPlain = API._xaiImage, rFetch = API._timedFetch;
+    try {
+      const seen = [];
+      API._xaiImage = async (e, m, prompt, w, h, avoid) => { seen.push({ route: 'generations', prompt, avoid }); return 'ok'; };
+      API._xaiImageEdit = async () => { seen.push({ route: 'edits' }); return 'ok'; };
+      const GROK44 = { imageModel: 'grok-imagine-image' };
+
+      const shownCand = API.referenceCandidatePrompt(shown44, { dials, colouring });
+      await API._generateImage(GROK44, shownCand, { raw: true, faceShown: true });
+      ok(seen.length === 1 && seen[0].route === 'generations',
+        'candidate: renders through the plain route — no reference exists yet, which is the whole point');
+      ok(/face clearly visible/.test(seen[0].prompt), 'candidate: the prompt asks for her face');
+      ok(!/Her face stays out of the picture/.test(String(seen[0].avoid)),
+        'candidate: …and the avoid clause in the SAME request does not ban it (invariant 5)');
+      ok(/amateur self-taken phone photo/.test(String(seen[0].avoid)),
+        'candidate: every other exclusion still rides (counter-rule)');
+
+      seen.length = 0;
+      await API._generateImage(GROK44, API.referenceCandidatePrompt(hidden44, { dials, colouring }), { raw: true, faceShown: false });
+      ok(/Her face stays out of the picture/.test(String(seen[0].avoid)),
+        'candidate: a hidden persona keeps the face exclusion');
+
+      // A COMPOSED request is unchanged: a face still needs a reference.
+      seen.length = 0;
+      await API._generateImage(GROK44, 'my legs on the couch', { faceShown: true });
+      ok(/Her face stays out of the picture/.test(String(seen[0].avoid)) && !/Her face is in the picture/.test(seen[0].prompt),
+        'candidate: a composed request still cannot turn a face on without a reference');
+
+      // Bedrock: the negative prompt follows the same flag.
+      let body = null;
+      API._timedFetch = async (u, init) => { body = JSON.parse(init.body); return { ok: true, json: async () => ({ images: ['AA'] }) }; };
+      await API._generateImage({ imageModel: 'amazon.nova-canvas-v1:0', kind: 'bedrock' }, shownCand, { raw: true, faceShown: true });
+      ok(!/visible face/.test(body.textToImageParams.negativeText),
+        'candidate: Bedrock negativeText drops the face ban too, or it fights the prompt beside it');
+    } catch (e) {
+      ok(false, 'candidate: async block crashed mid-run', e && e.message);
+    } finally {
+      API._xaiImageEdit = rEdit; API._xaiImage = rPlain; API._timedFetch = rFetch;
+    }
+  })());
+
+  ok(/id="view-build"/.test(htmlSrc44), 'screen: the build screen exists');
+  ok(/'view-build'/.test(appSrc44), 'screen: …and is registered in views (an unregistered section blanks the app)');
+  /* The sliders are BUILT from _BODY_DIALS rather than written into the
+     shell, so the screen cannot drift from the engine's dial list — adding a
+     fifth dial adds a fifth slider with no markup change. What the shell has
+     to provide is the container. Read and write sides must agree on the id
+     scheme or a dial would render and then never be read. */
+  ok(/id="bd-sliders"/.test(htmlSrc44), 'screen: the shell provides the slider container');
+  ok(/_BODY_DIALS/.test(appSrc44) && /id="bd-\$\{def\.key\}"/.test(appSrc44),
+    'screen: sliders are generated from the engine list, so the two cannot disagree');
+  ok(/\$\('#bd-' \+ def\.key\)/.test(appSrc44),
+    'screen: …and read back by the same id scheme they were written with');
+  ok(/id="bd-colouring"/.test(htmlSrc44) && /id="bd-warn"/.test(htmlSrc44), 'screen: the colouring field and its tripwire exist');
+  ok(/id="bd-render"/.test(htmlSrc44) && /id="bd-use"/.test(htmlSrc44), 'screen: render and accept controls exist');
+  /* A 'shown' persona's candidate has to contain a face — a faceless
+     reference on a shown persona leaves her face unanchored and invented per
+     render, which is the failure _faceShown exists to prevent. But that face
+     is INVENTED, and inventing faces is exactly what the owner rejected at
+     v10.33 ("those faces aren't hers"). So the screen says so up front
+     instead of letting it be rediscovered after a render. */
+  ok(/id="bd-face-note"/.test(htmlSrc44), 'screen: the invented-face caveat has somewhere to appear');
+  ok(/photoFace === 'shown'/.test(appSrc44.slice(appSrc44.indexOf('async function openBuildReference'),
+    appSrc44.indexOf('async function openBuildReference') + 2200)),
+    'screen: …and it is shown only to the personas it applies to');
+  ok(/applyReferenceTo\(/.test(flat44.slice(flat44.indexOf('function useBuiltReference'), flat44.indexOf('function useBuiltReference') + 700)),
+    'screen: accepting goes through THE single writer, like every other path');
+  ok(/bodyDials/.test(appSrc44), 'screen: the dial positions persist, so tuning can be resumed');
+  /* Entry point on the photos screen: this is a way to GET a reference, so
+     it belongs beside the upload, not buried in the persona editor. */
+  ok(/Build one|Build from description|Build a photo/i.test(appSrc44), 'screen: the photos list offers it as the second way to get a reference');
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {
