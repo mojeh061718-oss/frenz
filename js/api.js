@@ -4035,6 +4035,38 @@ const ClaudeAPI = {
      Samantha's fear onto a woman who has never had it. 'open' is not a
      licence to escalate; it is the absence of a constraint that was never
      hers, and where it stops is where it would stop in life. */
+  /* What she SAYS when a photo she meant to send never arrives (v10.49).
+
+     Before this, a failed photo returned nothing: a toast for the owner and
+     silence in the thread. Since v10.48 made the marker actually fire, her
+     whole reply is often just the [photo] bubble — so a failure left a
+     literal gap and she read as having ignored him, which is a worse lie
+     than the missing picture.
+
+     One register for every cause. She has no idea whether a provider
+     declined it, the network died or a key expired — she knows her phone
+     did not send the thing she just took, which is an experience every
+     person has had. The technical truth stays in the toast and the ledger,
+     where it is useful; none of it reaches her mouth.
+
+     None of these promise a retry. This fires when the re-framing ladder is
+     already spent, and a line that says "hold on" while nothing further is
+     coming is a second broken promise. */
+  _PHOTO_FAIL_LINES: [
+    'ugh that didnt send. my phone is being a nightmare tonight',
+    'ok apparently that photo is not happening lol',
+    'that refused to send. of course it did',
+    'my phone just ate that one. dont know what to tell you',
+    'nope. it wont send. phone says no',
+    'that didnt go through and im choosing not to fight it',
+    'well it didnt send. cool. love that for me'
+  ],
+  photoFailLine(friend, desc) {
+    const id = (friend && friend.id) || '';
+    const bank = this._PHOTO_FAIL_LINES;
+    return bank[this._hash32(String(id) + '|pf|' + String(desc || '')) % bank.length];
+  },
+
   photoNote(settings, friend) {
     // Utility personas make prompts ABOUT images; they never send photos.
     if (this._isUtility(friend)) return null;

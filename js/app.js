@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.48';
+const APP_JS_VERSION = '10.49';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -1942,7 +1942,24 @@ async function deliverBubble(friend, b, atTs) {
       ? 'Her photo didn\'t send — the image provider declined every framing.'
         + (e.providerMessage ? ' It said: "' + String(e.providerMessage).slice(0, 140) + '"' : '')
       : 'Her photo didn\'t send — ' + e.message, 9000);
-    return null;
+    /* She still says something (v10.49). Returning null left a literal hole
+       in the thread — and since v10.48 made the marker actually fire, her
+       whole reply is often JUST the photo bubble, so the hole was the entire
+       reply. She reads as having ignored him, which is a worse lie than the
+       missing picture.
+       Persisted like any other bubble, deliberately: the model sees it next
+       turn, so "did you try to send something?" gets a real answer instead
+       of a character who does not know what he is talking about. The
+       technical reason stays in the toast and the ledger and never reaches
+       her mouth — she does not know what an API is. */
+    const line = ClaudeAPI.photoFailLine(friend, desc);
+    const failMsg = { friendId: friend.id, role: 'assistant', text: line, ts: ClaudeAPI._now() };
+    const failEl = bubbleEl('assistant', line, failMsg);
+    $('#chat-messages').appendChild(failEl);
+    refreshTails();
+    scrollChat();
+    try { armMessageDelete(failEl, await DB.addMessage(failMsg)); } catch (_) { /* the bubble is on screen either way */ }
+    return line;
   } finally {
     ClaudeAPI._onImageDecline = null;
     ClaudeAPI._onImageScreen = null;

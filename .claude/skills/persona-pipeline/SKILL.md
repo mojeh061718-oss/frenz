@@ -603,6 +603,32 @@ the fixtures were wrong before.
     and live in their aftermath, and a fully-played act is memory, not
     instruction. After: 0/5 replayed the joke. No template change — the
     frame is runtime, so existing friends get it on the next send.
+- **An undelivered photo is a moment, not a hole (v10.49).** `deliverBubble`
+  returned `null` on any photo failure — a toast for the owner, and she said
+  NOTHING. Since v10.48 made the marker actually fire, her whole reply is
+  often just the `[photo]` bubble, so the failure ate the entire reply and
+  she read as having ignored him. That is a worse lie than the missing
+  picture. She now says one short line in her own voice
+  (`_PHOTO_FAIL_LINES` / `photoFailLine`), rotated per moment and stable on
+  a retry like every other bank.
+  - **One register for every cause.** She has no idea whether a provider
+    declined it, the network died, or a key expired — she knows her phone
+    did not send the thing she just took. Asserted: no line may contain
+    app/api/server/network/provider/error/moderation/filter/decline
+    vocabulary. The technical truth stays in the toast and the ledger, where
+    it is actually useful.
+  - **Persisted, deliberately** — the model sees it next turn, so "did you
+    try to send something?" gets a real answer instead of a character who
+    does not know what he is talking about.
+  - **No line promises a retry.** This fires only once the re-framing ladder
+    is already spent; "hold on" with nothing coming is a second broken
+    promise.
+  - **This is NOT a retry mechanism, and the distinction is the point.** The
+    ladder is the only retry in this app and it re-frames toward a genuinely
+    DIFFERENT picture — same moment, calmer register, then further back from
+    her. What this codebase does not do, and did not add here, is re-word a
+    request to get the same output past an answer the provider already gave.
+    That rule is stated at `_xaiImageWithRecovery` and it still holds.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

@@ -4369,6 +4369,57 @@ console.log('\n== v10.48 fix 3: an opening act is a shape, not a script for one 
   ok(/_ACT_STAGECRAFT/.test(actSite), 'act: the frame rides the injection site, so every persona with an act gets it');
 }
 
+console.log('\n== v10.49: an undelivered photo is a moment, not a hole ==');
+{
+  /* deliverBubble returned null on ANY photo failure — a toast, and she
+     said nothing at all. When her whole reply was the [photo] bubble (which
+     is now the common case, since v10.48 made the marker actually fire) the
+     thread got a silent gap and she read as having ignored him. That is the
+     real fidelity damage from a failed photo, and it is the same damage
+     whether the cause was a decline, a dead network, a bad key or a spent
+     budget — so there is ONE answer, in her voice, for all of them.
+
+     What this deliberately is NOT: a retry that re-words a request the
+     provider already answered. The re-framing ladder above is the only
+     retry in this app, it re-frames toward a genuinely different picture,
+     and when it is spent the answer stands. This is what she SAYS when it
+     is spent. */
+  const bank = API._PHOTO_FAIL_LINES;
+  ok(Array.isArray(bank) && bank.length >= 5, 'photofail: there is a bank, big enough to rotate');
+  for (const l of bank) {
+    /* She has no idea an API exists. A line that leaks the plumbing breaks
+       the fiction harder than the missing photo did. */
+    ok(!/\b(apps?|api|server|network|provider|error|generat\w*|moderat\w*|block\w*|filter\w*|declin\w*|upload\w*|request\w*)\b/i.test(l),
+      `photofail: "${l.slice(0, 40)}…" never leaks the plumbing`);
+    ok(!/\[photo\]/i.test(l), `photofail: "${l.slice(0, 40)}…" is not itself a photo attempt`);
+    ok(l.length <= 90, `photofail: "${l.slice(0, 40)}…" is text-length, not a paragraph`);
+    ok(l === l.trim() && l.length > 8, `photofail: "${l.slice(0, 40)}…" is a real line`);
+  }
+  /* Rotation, same discipline as every other bank: deterministic per moment
+     so a retry of the same send is stable, different across moments so two
+     failures in a row are not the identical sentence. */
+  const f49 = mkFriend('bre');
+  const a = API.photoFailLine(f49, 'my legs on the couch');
+  ok(a === API.photoFailLine(f49, 'my legs on the couch'), 'photofail: stable for one moment');
+  const seen49 = new Set();
+  for (let i = 0; i < 12; i++) seen49.add(API.photoFailLine(f49, 'scene ' + i));
+  ok(seen49.size >= 3, 'photofail: rotates across moments (' + seen49.size + '/12 distinct)');
+  ok(bank.indexOf(a) >= 0, 'photofail: it returns a line from the bank, never something invented');
+  ok(typeof API.photoFailLine({}, '') === 'string' && API.photoFailLine(null, null).length > 0,
+    'photofail: tolerates a missing friend — this runs on the failure path, it cannot fail too');
+
+  const appSrc49 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  const catchAt = appSrc49.indexOf('} catch (e) {', appSrc49.indexOf('async function deliverBubble'));
+  const catchBlock = appSrc49.slice(catchAt, catchAt + 3000);
+  ok(/photoFailLine/.test(catchBlock), 'photofail: the catch delivers her line instead of nothing');
+  ok(/DB\.addMessage/.test(catchBlock),
+    'photofail: …and it is PERSISTED, so the thread is continuous and she can be asked about it next turn');
+  ok(/toast\(/.test(catchBlock),
+    'photofail: the toast still carries the technical truth — she never says it, the owner still sees it');
+  ok(/return\s+line/.test(catchBlock) || /return\s+txt/.test(catchBlock),
+    'photofail: the line becomes the notification preview, like any other bubble');
+}
+
 Promise.allSettled(global.__asyncChecks || []).then(() => {
   console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
     + (intendedRed ? ', ' + intendedRed + ' intended-red (expected \u2014 see RED* lines)' : ''));
