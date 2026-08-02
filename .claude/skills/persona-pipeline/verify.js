@@ -426,9 +426,17 @@ console.log('\n== 15. significant nights get reckoned with, not small-talked pas
 
 console.log('\n== 16. testlook lens ==');
 {
+  /* The budget here is 2600, not 1000. `testLookPrompt` output goes through
+     generateImage as a RAW description, and _generateImage slices raw at
+     2600 like everything else — there has been no 1000-char slice in the
+     code since v10.18 raised it (that shorter budget was the bug: it cut
+     the camera register out of every assembled pov prompt). This assertion
+     kept naming the old number, which left Bre's sheet with 40 chars of
+     phantom headroom and nearly forced a rewrite to be cramped around a
+     limit that does not exist. Assert the real one. */
   for (const t of Personas.templates) {
     const p = API.testLookPrompt({ profile: { appearance: t.appearance } });
-    ok(p.length <= 1000, t.id + ': prompt survives the 1000-char slice (' + p.length + ')');
+    ok(p.length <= 2600, t.id + ': testlook prompt fits the real 2600 budget (' + p.length + ')');
   }
   const p = API.testLookPrompt(mkFriend('samantha'));
   ok(/directly in front of her face/.test(p) && /hair to feet/.test(p), 'phone-over-face full figure (the framing grok renders cleanly — 4 live rounds)');
@@ -1261,6 +1269,41 @@ console.log('\n== templates: appearance sheets — faceless, no measured moderat
   const tay = Personas.byId('tay');
   const len = (tay.appearance || '').length;
   ok(len >= 200 && len <= 340, 'templates: tay appearance sheet in range of the others (' + len + ' chars, was 144)');
+
+  /* Bre's sheet is the most-retuned in the project — three passes against
+     live renders, overshooting trim at v10.25 and back to soft at v10.26.
+     v10.37 corrects the UPPER body to the owner's reference and deliberately
+     leaves the lower body alone (the reference is a chest-up shot; nothing
+     evidences her thighs). Assert both halves of that intent so a future
+     retune cannot quietly delete the anchors that stop "neat and ordinary"
+     rendering skinny the way "trim" did. */
+  const bre = Personas.byId('bre');
+  ok(/neat and ordinary through the shoulders and arms/.test(bre.appearance),
+    'bre: the frame reads neat and ordinary, not soft all over');
+  ok(!/soft all over|full soft upper arms/.test(bre.appearance),
+    'bre: the contradicted v10.26 upper-body wording is gone');
+  ok(/a little tummy/.test(bre.appearance) && /thick thighs/.test(bre.appearance),
+    'bre: the lower-body anchors survive — nothing evidenced them, so nothing changed them');
+  ok(/freckled across her chest and shoulders/.test(bre.appearance),
+    'bre: freckling rides as a BODY identity marker');
+  ok(/very full natural chest/.test(bre.appearance), 'bre: the chest stays the dominant feature');
+
+  /* The upgrade chain must actually fire on an existing friend, and must
+     leave a hand-edited sheet alone — the whole reason this ships as a
+     substring rule rather than a templateRev bump. */
+  const stale = { name: 'Bre', template: 'bre', appearance: 'Short brunette in her early thirties, soft all over in the way that reads good rather than heavy — full soft upper arms, a little tummy she doesn\'t hide, thick thighs, fair skin — and a genuinely large, very full natural chest that dominates any top she wears; long dark brown hair worn down, easy unfussy look.' };
+  Personas.upgradeProfile(stale);
+  ok(stale.appearance === bre.appearance, 'bre: an existing friend upgrades in place to the new sheet');
+  const handEdited = { name: 'Bre', template: 'bre', appearance: 'Whatever the owner typed instead.' };
+  Personas.upgradeProfile(handEdited);
+  ok(handEdited.appearance === 'Whatever the owner typed instead.', 'bre: a hand-edited sheet is left alone');
+
+  /* No two appearance rules may share a `from`: rules apply in array order,
+     so the second could never fire. v10.26 shipped exactly that pair and it
+     sat dead until v10.37 removed it. */
+  const froms = Personas._UPGRADES.filter(r => r.field === 'appearance').map(r => r.name + ' ' + r.from);
+  ok(new Set(froms).size === froms.length,
+    'upgrades: no two appearance rules share a from-string (the later one could never fire)');
 }
 
 console.log('\n== templates: depth-4 fact dedupe — no 4-gram shared across plist/interests/style (invariant 2) ==');
