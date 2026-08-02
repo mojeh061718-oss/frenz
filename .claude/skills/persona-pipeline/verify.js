@@ -1328,6 +1328,34 @@ console.log('\n== templates: appearance sheets — faceless, no measured moderat
   ok(breT.greeting.join(' ').toLowerCase().includes('five years'),
     'bre: the greeting opens on the number');
   ok(/forgotten how/.test(breT.unsaidSeed || ''), 'bre: the unsaid seed is the fear, not the joke');
+
+  /* v10.42 — a retired term coming straight back. Detection was never the
+     gap (_ruts fires); obedience was, so the callout escalates to one silent
+     regenerate. */
+  {
+    const rf = { id: 'b', profile: Object.assign(JSON.parse(JSON.stringify(Personas.byId('bre'))), { userName: 'Jon' }),
+                 state: Personas.seedState(Personas.byId('bre'), Personas.byId('bre').sliders, Date.now()) };
+    const hers = ['honestly time is fake', 'time isnt real anyway', 'clocks are a scam',
+                  'time is a construct', 'whats a schedule even', 'time means nothing at this hour',
+                  'i do not believe in time', 'time is made up anyway'];
+    const mk = (his) => { const h = []; hers.forEach((t2, i) => { h.push({ role: 'user', text: his[i] }); h.push({ role: 'assistant', text: t2 }); }); return h; };
+    const neutral = mk(['how was work', 'lol', 'you ok', 'hm', 'go to bed', 'ha', 'night', 'ok']);
+    ok(API._ruts(neutral, rf).includes('time'), 'retired: the rut is detected in the first place');
+    ok(API._isRetiredRepeat(['time is fake honestly'], neutral, rf),
+      'retired: repeating the retired term triggers the regenerate');
+    ok(!API._isRetiredRepeat(['ok fine ill go to bed'], neutral, rf),
+      'retired: a reply that drops the tic passes');
+    /* THE counter-rule: answering him is not a rut. If he just asked about
+       the time she must be able to say it, or the guard eats the reply. */
+    const asked = mk(['how was work', 'lol', 'you ok', 'hm', 'go to bed', 'ha', 'night', 'what time do you finish tomorrow']);
+    ok(!API._isRetiredRepeat(['i finish at 7 so any time after that'], asked, rf),
+      'retired: NEAREST GOOD CASE — she may use the word when he just asked about it');
+    ok(API._RETIRED_STRICT.length > 80 && /synonym|new coat/.test(API._RETIRED_STRICT),
+      'retired: the strict note retires the IDEA, not just the wording');
+    const src = fs.readFileSync(path.join(ROOT, 'js/api.js'), 'utf8');
+    ok(/_isRetiredRepeat\(res\.bubbles, history, friend\)/.test(src),
+      'retired: wired into the single-redo lane beside the other quality guards');
+  }
   /* Suggestion register: her photo rules and pace material assume it, so a
      premise that broke it would contradict them in one prompt. */
   ok(!/\b(fuck|cock|pussy|naked|nude)\b/i.test(breT.opening.text),

@@ -2652,6 +2652,8 @@ const ClaudeAPI = {
             strictNote = this._SHAPE_STRICT;
           } else if (this._isDodgeRerun(res.bubbles, history)) {
             strictNote = this._DODGE_STRICT;
+          } else if (this._isRetiredRepeat(res.bubbles, history, friend)) {
+            strictNote = this._RETIRED_STRICT;
           }
           if (strictNote !== undefined) {
             this._strictNext = true;
@@ -5772,6 +5774,37 @@ const ClaudeAPI = {
     const words = this._wordRuts(history, friend).filter(w => !phrases.some(p => p.includes(w)));
     return phrases.concat(words).slice(0, 3);
   },
+
+  /* A RETIRED term coming straight back. The phi callout names her worn
+     phrases and orders them retired — but prompts are advisory, and the
+     archive shows the same tic surviving the instruction that just banned
+     it (this is why _deTic exists as a mechanical backstop for the laugh
+     opener; this is the same shape for worn phrases). Detection was never
+     the gap: _ruts fires correctly. Obedience was. So a reply that repeats
+     the very term it was just told to retire gets ONE silent regenerate,
+     the same single-redo lane as the filler and parrot guards.
+
+     Counter-rule, and it is the whole reason this is safe (invariant 1):
+     the nearest good case is her ANSWERING him. If he just asked "what time
+     do you finish", she must be able to say "time" — so a term he used in
+     his last two turns is not a rut, it is the conversation, and this never
+     fires on it. _wordRuts' own exemption covers the same ground one layer
+     up; this repeats it here because the flagged list is computed before
+     his newest turn is weighed. */
+  _isRetiredRepeat(bubbles, history, friend) {
+    const ruts = this._ruts(history, friend);
+    if (!ruts.length || !bubbles || !bubbles.length) return false;
+    const real = this._realHistory(history);
+    const hisRecent = real.filter(m => m.role === 'user').slice(-2)
+      .map(m => this._normBubble(m.text || '')).join(' ');
+    const said = this._normBubble(bubbles.join(' '));
+    return ruts.some((r) => {
+      if (!said.includes(r)) return false;
+      // his words, his topic — never her rut
+      return !hisRecent.includes(r);
+    });
+  },
+  _RETIRED_STRICT: 'That reply used the exact phrasing you were just told you had worn out. Retiring a phrase means the IDEA goes with it for now, not just those words — no synonym, no restatement, no reaching for the same observation in a new coat. Say something that could only have been written in reply to his last message, and let the worn thing stay gone.',
 
   /* Dead-air rerun: a reply of real length whose every content word already
      sits in the immediate context — she re-announced the standing bit and

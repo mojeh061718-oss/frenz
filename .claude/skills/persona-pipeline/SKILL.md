@@ -443,6 +443,20 @@ the fixtures were wrong before.
   `imgerr {screened:true, attempt}`; clean ones stay out of the ledger.
   testlook stays on raw `generateImage` — the lens exists to show unscreened
   pipeline output.
+- **Detection was never the gap on worn phrases — obedience was** (v10.42).
+  Reported live: she kept saying "time is fake" / "time doesn't matter".
+  `_ruts` was verified firing correctly on exactly that transcript, and the
+  callout was verified reaching `_phi` at the wire — the model simply ignored
+  the instruction that had just retired the phrase. Prompts are advisory;
+  this is the same lesson `_deTic` was built on. So `_isRetiredRepeat` gives
+  a reply that repeats its own just-retired term ONE silent regenerate, in
+  the existing single-redo lane. Counter-rule and the reason it is safe: the
+  nearest good case is her ANSWERING him — if he asked "what time do you
+  finish", she must be able to say it, so a term he used in his last two
+  turns is the conversation, not her rut, and the guard never fires on it.
+  Note also the diagnostic order that found this: reproduce in the harness
+  first, then check the wire; do not add rules to fix a guard that was
+  already working.
 - **A reference governs BODY and IDENTITY absolutely; prompt text governs
   everything else — but only what it actually NAMES.** Measured against a
   deliberately distinctive reference (arms folded, red plaid, flat stare):
