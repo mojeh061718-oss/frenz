@@ -21,7 +21,7 @@
       <header class="topbar">
         <!-- Bump alongside CACHE in sw.js on every deploy so users can tell
              at a glance whether the update reached their phone. -->
-        <h1 class="logo">frenz <span class="app-version">10.39</span></h1>
+        <h1 class="logo">frenz <span class="app-version">10.40</span></h1>
         <button class="icon-btn" id="btn-photos" title="Reference photos">🖼️</button>
         <button class="icon-btn" id="btn-settings" title="Settings">⚙️</button>
       </header>
@@ -365,7 +365,16 @@
     <span class="pd-code">404</span>
     <span class="pd-text"></span>
   </button>
-  <div id="photo-viewer" class="photo-viewer hidden"><img alt="photo"></div>
+  <!-- Photo viewer. The app sets user-scalable=no so texting never zooms by
+       accident, which also kills native pinch here — so the stage handles
+       its own pinch and pan. Tap still dismisses, as it always has. -->
+  <div id="photo-viewer" class="photo-viewer hidden">
+    <div class="pv-bar">
+      <button type="button" class="icon-btn" id="pv-close" title="Close">✕</button>
+      <button type="button" class="icon-btn" id="pv-save" title="Save photo">⤓</button>
+    </div>
+    <div class="pv-stage" id="pv-stage"><img alt="photo"></div>
+  </div>
   <!-- Triple-tap anywhere: the app instantly becomes a boring code editor
        (dark IDE, dull utility file, blinking cursor). Triple-tap again to
        come back. Nothing here is interactive on purpose. -->

@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.39';
+const APP_JS_VERSION = '10.40';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -137,6 +137,134 @@ async function renderFriendsList() {
     item.addEventListener('click', () => openChat(f.id));
     list.appendChild(item);
   }
+}
+
+/* ---------------- photo viewer: pinch, pan, save ----------------
+   The app sets user-scalable=no so texting never zooms by accident, which
+   also means the browser will not pinch-zoom this image for us. The stage
+   therefore handles its own gestures (and its CSS sets touch-action: none,
+   without which the browser claims them first).
+
+   Tap still dismisses, because that is what the viewer has always done —
+   which is why there is no double-tap-to-zoom: it would have to fight the
+   dismiss gesture for the same event. Pinch zooms on touch, the wheel
+   zooms on desktop, and a tap while zoomed returns to fit rather than
+   closing, so there is always a way back out. */
+let pv = { scale: 1, x: 0, y: 0, photo: null };
+
+function pvApply() {
+  const img = $('#photo-viewer img');
+  // Clamp the pan so a zoomed photo can never be flung off-screen and
+  // stranded — at fit-scale there is nothing to pan, so it pins to centre.
+  const st = $('#pv-stage').getBoundingClientRect();
+  const maxX = Math.max(0, (img.clientWidth * pv.scale - st.width) / 2);
+  const maxY = Math.max(0, (img.clientHeight * pv.scale - st.height) / 2);
+  pv.x = Math.max(-maxX, Math.min(maxX, pv.x));
+  pv.y = Math.max(-maxY, Math.min(maxY, pv.y));
+  img.style.transform = `translate(${pv.x}px, ${pv.y}px) scale(${pv.scale})`;
+}
+
+function openPhotoViewer(dataUrl) {
+  pv = { scale: 1, x: 0, y: 0, photo: dataUrl };
+  const img = $('#photo-viewer img');
+  img.src = dataUrl;
+  img.style.transform = '';
+  $('#photo-viewer').classList.remove('hidden');
+}
+
+function closePhotoViewer() {
+  $('#photo-viewer').classList.add('hidden');
+  // Photos are multi-MB data URLs; holding one in a hidden <img> keeps it
+  // decoded in memory for as long as the app is open.
+  $('#photo-viewer img').removeAttribute('src');
+  pv = { scale: 1, x: 0, y: 0, photo: null };
+}
+
+/* Save. navigator.share with a File is the path that works on iOS, where
+   the share sheet is how a photo reaches the camera roll and the download
+   attribute is ignored. Everywhere else falls back to a download link. */
+async function savePhoto() {
+  if (!pv.photo) return;
+  const name = 'frenz-' + new Date().toISOString().slice(0, 10) + '-' + Math.random().toString(36).slice(2, 6) + '.png';
+  try {
+    // fetch() decodes the data URL for us — no base64 handling needed, and
+    // the service worker ignores it (a data: URL's origin is not ours).
+    const blob = await (await fetch(pv.photo)).blob();
+    const file = new File([blob], name, { type: blob.type || 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return;                                  // the sheet reports its own outcome
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast('Photo saved.');
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;   // user dismissed the share sheet
+    toast('Could not save that photo — ' + ((err && err.message) || 'unknown error'), 5000);
+  }
+}
+
+function armPhotoViewer() {
+  const stage = $('#pv-stage');
+  const pts = new Map();
+  let gesture = null;
+
+  stage.addEventListener('pointerdown', (e) => {
+    stage.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) {
+      gesture = { x: e.clientX, y: e.clientY, px: pv.x, py: pv.y, moved: false };
+    } else if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      gesture = Object.assign(gesture || { moved: true }, {
+        dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale0: pv.scale, moved: true
+      });
+    }
+  });
+
+  stage.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId) || !gesture) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size >= 2 && gesture.dist) {
+      const [a, b] = [...pts.values()];
+      pv.scale = Math.max(1, Math.min(6, gesture.scale0 * (Math.hypot(a.x - b.x, a.y - b.y) / gesture.dist)));
+      gesture.moved = true;
+      pvApply();
+    } else if (pts.size === 1) {
+      const dx = e.clientX - gesture.x, dy = e.clientY - gesture.y;
+      if (Math.hypot(dx, dy) > 8) gesture.moved = true;
+      if (pv.scale > 1.01) { pv.x = gesture.px + dx; pv.y = gesture.py + dy; pvApply(); }
+    }
+  });
+
+  const release = (e) => {
+    pts.delete(e.pointerId);
+    if (pts.size > 0) return;
+    const tapped = gesture && !gesture.moved;
+    gesture = null;
+    if (!tapped) return;
+    // A tap while zoomed returns to fit; at fit it dismisses, which is what
+    // this viewer has always done on tap.
+    if (pv.scale > 1.01) { pv.scale = 1; pv.x = 0; pv.y = 0; pvApply(); }
+    else closePhotoViewer();
+  };
+  stage.addEventListener('pointerup', release);
+  stage.addEventListener('pointercancel', release);
+
+  // Desktop has no pinch; the wheel is the equivalent.
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    pv.scale = Math.max(1, Math.min(6, pv.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    if (pv.scale <= 1.01) { pv.x = 0; pv.y = 0; }
+    pvApply();
+  }, { passive: false });
+
+  $('#pv-close').addEventListener('click', closePhotoViewer);
+  $('#pv-save').addEventListener('click', savePhoto);
 }
 
 function escapeHtml(s) {
@@ -1438,11 +1566,7 @@ function bubbleEl(role, text, msg) {
     const img = document.createElement('img');
     img.src = msg.photo;
     img.alt = 'photo';
-    img.addEventListener('click', () => {
-      const viewer = $('#photo-viewer');
-      viewer.querySelector('img').src = msg.photo;
-      viewer.classList.remove('hidden');
-    });
+    img.addEventListener('click', () => openPhotoViewer(msg.photo));
     div.appendChild(img);
   } else {
     div.textContent = text;
@@ -2779,7 +2903,7 @@ function init() {
   $('#btn-chat-back').addEventListener('click', () => { renderFriendsList(); showView('view-friends'); });
   $('#btn-chat-edit').addEventListener('click', () => openEditor(currentFriend));
   $('#chat-title-wrap').addEventListener('click', openRelationship);
-  $('#photo-viewer').addEventListener('click', () => $('#photo-viewer').classList.add('hidden'));
+  armPhotoViewer();
   $('#btn-rel-back').addEventListener('click', () => { if (currentFriend) openChat(currentFriend.id); else showView('view-friends'); });
 
   const composer = $('#composer');

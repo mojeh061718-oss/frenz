@@ -3508,6 +3508,37 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
   const photosFn = appSrc3.slice(appSrc3.indexOf('async function renderPhotosList'), appSrc3.indexOf('async function renderPhotosList') + 900);
   ok(/profile\.utility/.test(photosFn), 'photos: utility personas are excluded — they never send photos');
 
+  /* Photo viewer (v10.40): pinch/pan zoom and save. The app sets
+     user-scalable=no, so the browser will not pinch-zoom the image for us —
+     the stage owns its gestures, and touch-action:none is what lets them
+     reach the handlers at all. */
+  const cssSrc = fs.readFileSync(path.join(ROOT, 'css/style.css'), 'utf8');
+  ok(/user-scalable=no/.test(htmlSrc), 'viewer: the app still disables native zoom (why the stage handles its own)');
+  ok(/\.pv-stage[^}]*touch-action:\s*none/.test(cssSrc),
+    'viewer: the stage sets touch-action:none, without which no gesture reaches the handlers');
+  ok(/id="pv-close"/.test(htmlSrc) && /id="pv-save"/.test(htmlSrc), 'viewer: close and save controls exist');
+  ok(/id="pv-stage"/.test(htmlSrc), 'viewer: the gesture stage exists');
+
+  const viewer = appSrc3.slice(appSrc3.indexOf('function armPhotoViewer'), appSrc3.indexOf('function armPhotoViewer') + 2600);
+  ok(/pointerdown/.test(viewer) && /pointermove/.test(viewer) && /pointercancel/.test(viewer),
+    'viewer: pointer gestures wired, cancel included (a lost pointer must not strand the gesture)');
+  ok(/Math\.hypot/.test(viewer), 'viewer: pinch distance drives the scale');
+  ok(/wheel/.test(viewer), 'viewer: desktop gets wheel zoom, which has no pinch');
+  /* THE way-out rule: tap has always dismissed this viewer, so zoom must
+     never trap the user with no gesture that closes it. */
+  ok(/pv\.scale > 1\.01\)\s*\{[^}]*pv\.scale = 1[\s\S]{0,80}else closePhotoViewer/.test(viewer),
+    'viewer: a tap while zoomed returns to fit; at fit it dismisses — never a trap');
+  ok(/gesture && !gesture\.moved/.test(viewer), 'viewer: a drag is not mistaken for a tap');
+
+  const saveFn = appSrc3.slice(appSrc3.indexOf('async function savePhoto'), appSrc3.indexOf('async function savePhoto') + 1400);
+  ok(saveFn.indexOf('navigator.share') > 0 && saveFn.indexOf('navigator.share') < saveFn.indexOf('a.download'),
+    'viewer: share sheet is tried BEFORE the download link (iOS ignores download)');
+  ok(/canShare/.test(saveFn), 'viewer: share is feature-detected, not assumed');
+  ok(/AbortError/.test(saveFn), 'viewer: cancelling the share sheet is not reported as a failure');
+  ok(/revokeObjectURL/.test(saveFn), 'viewer: the object URL is released');
+  ok(/removeAttribute\('src'\)/.test(appSrc3),
+    'viewer: closing releases the photo — these are multi-MB data URLs');
+
   /* END TO END, the configuration the owner is actually turning on:
      photoFace 'shown' AND an uploaded reference. Every piece is asserted
      individually above, but nothing proved the two flags travel together

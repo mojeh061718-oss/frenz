@@ -200,7 +200,12 @@ details.tune label { margin-top: 12px; }
 @keyframes pc-blink { 50% { opacity: 0; } }
 .pc-status { display: flex; justify-content: space-between; background: #007acc; color: #fff; font-size: 11px; padding: 4px 10px calc(4px + env(safe-area-inset-bottom)); flex: none; }
 .photo-viewer { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.92); display: flex; align-items: center; justify-content: center; }
-.photo-viewer img { max-width: 100%; max-height: 100%; }
+/* touch-action: none is load-bearing — without it the browser claims the
+   gestures and neither pinch nor pan reaches the handlers. */
+.photo-viewer .pv-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+.photo-viewer img { max-width: 100%; max-height: 100%; transform-origin: center center; will-change: transform; user-select: none; -webkit-user-drag: none; }
+.photo-viewer .pv-bar { position: absolute; top: calc(8px + var(--safe-top, 0px)); right: 8px; z-index: 2; display: flex; gap: 4px; }
+.photo-viewer .pv-bar .icon-btn { background: rgba(0,0,0,0.45); border-radius: 50%; width: 40px; height: 40px; font-size: 1.05rem; color: #fff; }
 .form { padding: 18px 18px calc(30px + var(--safe-bottom)); display: flex; flex-direction: column; gap: 16px; }
 .form label { display: flex; flex-direction: column; gap: 6px; font-size: 0.88rem; color: var(--muted); font-weight: 500; }
 .form input, .form textarea, .form select {
