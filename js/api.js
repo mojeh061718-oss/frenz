@@ -2917,13 +2917,19 @@ const ClaudeAPI = {
     if (this._BODY_SUBJECT.test(s)) return 'pov';
     return 'scene';
   },
+  // A face-live framing must not pick a composition that hides the face —
+  // the frame text and the face rule would contradict (invariant 5), and the
+  // model resolves contradictions unpredictably. Both pools that crop the
+  // head by construction have a face-live sibling.
+  _FACE_POOL: { mirror: 'mirrorFace', pov: 'povFace' },
+  /* Which POOL a request actually draws from. Split out of _frame because
+     the pool — not the mode — is what the model reads, so anything that has
+     to agree with the picture has to key off this. */
+  _frameKey(mode, faceShown) {
+    return (faceShown && this._FACE_POOL[mode]) || (this._FRAMING[mode] ? mode : 'scene');
+  },
   _frame(mode, desc, faceShown) {
-    // A face-live framing must not pick a composition that hides the face —
-    // the frame text and the face rule would contradict (invariant 5), and
-    // the model resolves contradictions unpredictably. Both pools that crop
-    // the head by construction have a face-live sibling.
-    const faceSwap = { mirror: 'mirrorFace', pov: 'povFace' };
-    const key = (faceShown && faceSwap[mode]) || mode;
+    const key = this._frameKey(mode, faceShown);
     const set = this._FRAMING[key] || this._FRAMING.scene;
     // Day salt: hashing the description alone froze the framing — "my legs
     // on the couch, tv on" produced the identical composition on every wine
@@ -2940,7 +2946,14 @@ const ClaudeAPI = {
   // "I thought you were hot, you are wearing tons of clothes" — the picture
   // was overdressed because the prompt insisted on it. The anti-nudity floor
   // stays, but only when the scene is silent, and phrased for being at home.
-  _CLOTHING_NAMED: /\b(hoodie|sweater|jumper|shirt|tee|t-shirt|top|dress|skirt|jeans|leggings|shorts|pyjamas|pajamas|pjs|robe|towel|bikini|swimsuit|sweats|sweatshirt|tank|bra|socks|coat|jacket|uniform|outfit|wearing|dressed|heels|boots)\b/i,
+  /* The nightwear half was missing, and it is the half the top heat register
+     lives in: the spicy garnish bank names a thin cami and the floor was
+     firing beside it anyway — the prompt talking over her own words about
+     the same fact (invariant 2), in the one register where an extra layer
+     costs the most. Nothing suggestive-but-garmentless was added on purpose:
+     "a slipped strap, a hem higher than she noticed" names no clothing, and
+     that is exactly the scene the anti-nudity floor exists for. */
+  _CLOTHING_NAMED: /\b(hoodie|sweater|jumper|shirt|tee|t-shirt|top|dress|skirt|jeans|leggings|shorts|pyjamas|pajamas|pjs|robe|towel|bikini|swimsuit|sweats|sweatshirt|tank|bra|socks|coat|jacket|uniform|outfit|wearing|dressed|heels|boots|cami|camisole|nightie|nightgown|nightshirt|nightdress|negligee|slip dress)\b/i,
 
   /* How charged the thread actually is, 0-2. A photo she sends on an ordinary
      Tuesday and one she sends on a night that has been building should not
@@ -2950,7 +2963,7 @@ const ClaudeAPI = {
      never enters, exactly as her own photo rules already say. */
   /* THE face rule (v10.32), used by every reader — pipeline, photoNote,
      deliverBubble: a face is live only when the owner flipped the persona to
-     'shown' AND locked a reference via testlook ref. A shown persona with no
+     'shown' AND uploaded a reference photo. A shown persona with no
      reference behaves hidden, because pre-reference faces are random women —
      the exact inconsistency the reference exists to fix. Default is hidden
      (invariant 8: the failure directions are not symmetric; a face nobody
@@ -2958,6 +2971,25 @@ const ClaudeAPI = {
   _faceShown(friend) {
     const p = friend && friend.profile;
     return !!(p && p.photoFace === 'shown' && p.referenceImage);
+  },
+
+  /* _faceShown answers "is this persona's face approved?". This answers the
+     only question a prompt may act on: "can it be live in THIS request?"
+
+     A face has no anchor unless a reference is actually riding, and a
+     reference only rides the xAI edit route. On a Bedrock image entry the
+     reference is downscaled, stored, carried in every backup — and never
+     sent. Turning the face on there rendered a new stranger every photo,
+     which is the exact failure the reference exists to fix, while
+     _IMAGE_NEGATIVE's "visible face" (the one thing that route DOES read)
+     contradicted the framing inside the same request.
+
+     One conjunction, read by the prompt builder and the quality gate alike,
+     so the framing and the defect check can never disagree about whether a
+     face belongs in the picture. Default is hidden for every shape of
+     missing input (invariant 8: the failure directions are not symmetric). */
+  _faceLiveFor(entry, o) {
+    return !!(o && o.faceShown && o.reference && this._isGrokImageModel(entry && entry.imageModel));
   },
 
   /* Reference downscale dials (v10.33). The reference the owner picks rides
@@ -3033,9 +3065,21 @@ const ClaudeAPI = {
        photos unchanged until the owner locks a reference. */
     o = o || {};
     const m = this._FRAMING[mode] ? mode : this._modeFor(desc, o.faceShown);
+    const key = this._frameKey(m, o.faceShown);
     const frame = this._frame(m, desc, o.faceShown);
     const isScene = m === 'scene';
     const isSelfie = m === 'selfie';
+    /* Camera-aware means SHE IS HOLDING THE PHONE AT HER OWN FACE, and it is
+       a property of the pool, not of the mode — povFace ("arm out, the
+       camera tilted back toward her") is that shot just as much as the
+       selfie pool is. Keyed off _frameKey for exactly that reason: since
+       v10.38 pov is what every body word routes to for a face-live persona,
+       so the most common face-live framing — the one heat and heat2 are —
+       was carrying the unposed clause against a frame that contradicts it
+       (invariant 5). mirror and mirrorFace are deliberately NOT here: the
+       phone points at glass, not at her, and that register has shipped
+       unchanged since v8.2. */
+    const cameraAware = key === 'selfie' || key === 'povFace';
 
     /* THE BUG THIS FIXES. The appearance sheet used to sit immediately after
        the composition, as its own sentence: "…looking down at her own lap.
@@ -3072,12 +3116,11 @@ const ClaudeAPI = {
        language genuinely unposed, the pull coming from what the frame
        almost shows. Stated positively so it steers the pose instead of
        censoring it. */
-    /* A selfie is camera-aware by definition — the unposed clause would
-       contradict the framing (invariant 5), so it gets its own register:
-       deliberate but unforced. Every other non-scene mode keeps the
-       original clause verbatim. */
+    /* A camera-aware framing gets its own register: deliberate but
+       unforced. Every other non-scene framing keeps the original clause
+       verbatim. */
     const posed = isScene ? ''
-      : isSelfie
+      : cameraAware
         ? ' It is a selfie and she knows it — relaxed and unforced, taken the way she would actually send it: no studio angles, no performance, just her.'
         : ' She is not posing — caught the way she actually sits or stands, weight where it really falls —' +
           ' and that is exactly what makes it quietly, accidentally alluring: the picture suggests more than it shows' +
@@ -3120,7 +3163,17 @@ const ClaudeAPI = {
      neck, full figure below it, everyday clothes, the same amateur camera
      as every real photo. What varies between personas is exactly what the
      lens exists to inspect: the appearance sheet. */
-  testLookPrompt(friend) {
+  /* Reference-aware since v10.43, and it had to be. This is the ONE prompt
+     whose whole job is to isolate the appearance sheet — and with a
+     reference locked it was shipping the sheet AND the picture into the same
+     /edits request: two authorities on her body, in the tool built to
+     inspect exactly that (invariant 2). The framing is what makes this lens
+     useful either way: full length, hair to feet, no face. With no reference
+     it renders the sheet, as it always has; with one it renders what the
+     reference actually gives you head to toe, which is the same question
+     asked of the authority that is now answering it. */
+  testLookPrompt(friend, o) {
+    o = o || {};
     const appearance = (friend && friend.profile && friend.profile.appearance) || 'an adult woman';
     // Compact camera clause, not the full _CAMERA block: the lens exists to
     // compare appearance sheets, so everything around the sheet stays as
@@ -3134,7 +3187,9 @@ const ClaudeAPI = {
     // people actually post: full length, phone held up in FRONT of the
     // face. The face region is occupied (no junk to invent) and hidden.
     return 'A full-length mirror photo she took on her phone, standing square to a tall wall mirror, holding the phone up directly in front of her face — in the reflection the phone and her hand are exactly where her face would be, so her face is completely hidden behind the phone. The reflection shows the rest of her from hair to feet exactly as she is, relaxed at home in simple everyday clothes that show her true build.' +
-      ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.') +
+      (o.reference
+        ? ' The woman in the reflection is the same woman as in the reference photo — identical build, hair, skin, and features.'
+        : ' The woman in the reflection: ' + String(appearance).trim().replace(/\.?$/, '.')) +
       ' Shot like a quick snap: careless tilted framing, slightly grainy, flat unedited colour, ordinary room light, true skin and fabric texture, no filter, no retouching, no beauty smoothing, no text or overlay.';
   },
 
@@ -3194,6 +3249,16 @@ const ClaudeAPI = {
     if (h === true) return 2;
     return Math.max(0, Math.min(2, Number(h) || 0));
   },
+  /* `testlook heat2` with no scene named. The heat word was being parsed,
+     the "top register — rendering that" toast was firing, and the branch it
+     landed on was the bare sheet lens, which has no heat parameter at all —
+     so the owner was told he was getting the top register and got heat 0.
+     A heat word is a request to see the REGISTER, and the register only
+     exists on the scene lens, so a heat word supplies a scene. Deliberately
+     unspecific: the garnish is what carries the evening, and naming a room
+     here would just fight it. Bare `testlook` with no heat word is
+     untouched — that one is the comparable sheet check. */
+  _TL_DEFAULT_SCENE: 'wherever she has ended up tonight',
   testLookScenePrompt(friend, action, heat, salt, o) {
     o = o || {};
     const heatN = this._tlHeat(heat);
@@ -3243,16 +3308,44 @@ const ClaudeAPI = {
     const model = entry.imageModel;
     const region = entry.imageRegion || entry.region || 'us-east-1';
     const width = o.width || 768, height = o.height || 1280;
+    /* The face flag is collapsed against the ROUTE before anything reads it
+       (see _faceLiveFor), and nothing downstream reads o.faceShown again —
+       framing pool, face rule, avoid clause, ladder rungs and the quality
+       gate all read this one value. */
+    const faceApproved = this._faceLiveFor(entry, o);
     // Shot choice is derived from the description itself, so the same moment
     // regenerates identically while successive photos vary.
-    const mode = o.mode || this._modeFor(description, o.faceShown);
+    const mode = o.mode || this._modeFor(description, faceApproved);
+    /* A scene photo contains no person — `who` is empty, the face rule is
+       "Nobody is in the frame" — so there is no identity for a reference to
+       hold. Posting her photograph as the edit SOURCE for a picture she must
+       not appear in is wasted payload at best and a composite at worst, and
+       scene is the DEFAULT mode: most photos she sends are of a thing, not
+       of her. The reference rides only the framings that actually contain
+       her.
+
+       Under `raw` the description IS the assembled prompt, so classifying it
+       is meaningless (mode is already the ladder's dead argument there) —
+       a raw caller has built the framing itself and keeps its reference. */
+    const isSceneShot = !o.raw && mode === 'scene';
+    const refRides = !!o.reference && this._isGrokImageModel(model) && !isSceneShot;
+    // …and a face needs a framing that contains her, not just a route.
+    const faceShown = faceApproved && refRides;
     /* Budget bug, caught at v10.18: the old 1000-char slice was SHORTER than
        every assembled pov prompt (appearance sheet + framing alone run
        ~1000), so the camera register and heat tone were being cut off before
        they ever reached the model. 2000 clears the longest persona's full
        prompt; xAI has been accepting well past this with _IMAGE_AVOID
        appended, so the cap is a runaway guard, not an API limit. */
-    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat, { faceShown: o.faceShown, reference: !!o.reference })).slice(0, 2600);
+    const prompt = (o.raw ? description : this._imagePrompt(description, mode, o.appearance, o.heat, { faceShown, reference: refRides })).slice(0, 2600);
+    /* Out-parameter for the quality gate. The defect check has to follow the
+       framing that was ACTUALLY rendered — the flag the caller passed cannot
+       see this collapse, and cannot see the fallback below either, which is
+       how a gate ended up being told "faces are fine" on a send whose
+       framing had already dropped the face. The recursive fallback carries
+       the same receipt and overwrites it, so the last write wins. */
+    if (o.resolved) { o.resolved.faceShown = faceShown; o.resolved.mode = mode; }
+    const ro = Object.assign({}, o, { faceShown });
 
     // Model decides the route, so a Bedrock-chat entry can still take photos
     // through xAI using its own image key.
@@ -3264,15 +3357,15 @@ const ClaudeAPI = {
       // back to the plain path with the reference stripped: the sheet rides
       // again, the mode recomputes (a selfie is not a plain-path shot), and
       // she still sends a photo.
-      if (o.reference) {
+      if (refRides) {
         try {
-          return await this._xaiImageEditWithRecovery(entry, model, description, mode, o, width, height, prompt, o.reference);
+          return await this._xaiImageEditWithRecovery(entry, model, description, mode, ro, width, height, prompt, o.reference);
         } catch (e) {
           if (e && (e.declined || e.timeout)) throw e;
           return this._generateImage(entry, description, Object.assign({}, o, { reference: null, faceShown: false, mode: null }));
         }
       }
-      return this._xaiImageWithRecovery(entry, model, description, mode, o, width, height, prompt);
+      return this._xaiImageWithRecovery(entry, model, description, mode, ro, width, height, prompt);
     }
 
     const attempts = [
@@ -3281,13 +3374,17 @@ const ClaudeAPI = {
         body: {
           taskType: 'TEXT_IMAGE',
           textToImageParams: { text: prompt, negativeText: this._IMAGE_NEGATIVE },
-          imageGenerationConfig: { numberOfImages: 1, width, height, quality: o.quality || 'standard', cfgScale: 6.5 }
+          imageGenerationConfig: { numberOfImages: 1, width, height, quality: 'standard', cfgScale: 6.5 }
         },
         parse: d => d && d.images && d.images[0]
       },
       {
+        // OpenAI-shaped: prompt and nothing else, so it has no negativeText
+        // channel and was going out with no exclusions AT ALL — the one
+        // route in the app that stated none of them. The prose form is what
+        // the xAI routes already ride; it belongs here for the same reason.
         url: `https://bedrock-mantle.${region}.api.aws/openai/v1/images/generations`,
-        body: { model, prompt, n: 1, size: `${width}x${height}`, response_format: 'b64_json' },
+        body: { model, prompt: prompt + this._IMAGE_AVOID, n: 1, size: `${width}x${height}`, response_format: 'b64_json' },
         parse: d => d && d.data && d.data[0] && d.data[0].b64_json
       }
     ];
@@ -3352,6 +3449,11 @@ const ClaudeAPI = {
         // not a bug. (A heat-1 middle rung was considered and rejected: it
         // would double the ladder's worst-case latency for a marginal tone
         // win, inside a photo budget that is already the slow path.)
+        // No opts, and that is correct BY CONSTRUCTION rather than by
+        // accident: _generateImage collapses the face flag to false for
+        // anything that is not carrying a reference, and this route is
+        // precisely the no-reference one. Rungs are faceless because every
+        // shot on this route is.
         ladder.push(this._imagePrompt(description, m, o.appearance, 0).slice(0, 2600));
       }
     }
@@ -3369,7 +3471,7 @@ const ClaudeAPI = {
         if (!e || !e.declined) throw e;
         declined = e;
         if (this._onImageDecline) {
-          try { this._onImageDecline(e, i, ladder.length); } catch (_) { /* logging must never break the send */ }
+          try { this._onImageDecline(e, i, ladder.length, 'generations'); } catch (_) { /* logging must never break the send */ }
         }
       }
     }
@@ -3385,24 +3487,43 @@ const ClaudeAPI = {
      it falls back to the plain route, because a photo feature that
      hard-fails is worse than an inconsistent one. */
   async _xaiImageEditWithRecovery(entry, model, description, mode, o, width, height, firstPrompt, refUrl) {
-    const avoid = this._imageAvoid(!o.faceShown);
-    const ladder = [firstPrompt];
+    /* Rung 0 is the framing the caller asked for. Every RECOVERY rung is
+       faceless as well as further back, because the ladder's whole doctrine
+       is that each retry contains strictly LESS of a person than the one
+       before it — and since v10.38 made pov face-live, carrying the flag
+       down left selfie -> pov still holding her face, which is a sideways
+       step, not a step back. The avoid clause is rebuilt per rung for the
+       same reason: it is the thing that actually forbids a face on the wire,
+       so a rung whose framing dropped the face has to drop it there too.
+       (It was computed once, from rung 0, for every rung.) */
+    const rungs = [{ prompt: firstPrompt, mode, faceShown: !!o.faceShown }];
     if (!o.raw) {
       for (const m of (this._RECOVERY_LADDER[mode] || [])) {
         // Heat resets to 0 per rung, same reasoning as the plain ladder.
-        ladder.push(this._imagePrompt(description, m, o.appearance, 0, { faceShown: o.faceShown, reference: true }).slice(0, 2600));
+        rungs.push({
+          prompt: this._imagePrompt(description, m, o.appearance, 0, { faceShown: false, reference: m !== 'scene' }).slice(0, 2600),
+          mode: m,
+          faceShown: false
+        });
       }
     }
     let declined = null;
-    for (let i = 0; i < ladder.length; i++) {
+    for (let i = 0; i < rungs.length; i++) {
       if (i > 0 && this._budgetLeft() < 8000) break;
+      const r = rungs[i];
       try {
-        return await this._xaiImageEdit(entry, model, ladder[i], width, height, refUrl, avoid);
+        /* The terminal rung of every ladder is `scene` — nobody in the
+           frame, so nothing for the reference to hold. It goes out the plain
+           endpoint rather than posting her photograph as the source for a
+           picture she is not in. Same rule as the top of _generateImage. */
+        return r.mode === 'scene'
+          ? await this._xaiImage(entry, model, r.prompt, width, height)
+          : await this._xaiImageEdit(entry, model, r.prompt, width, height, refUrl, this._imageAvoid(!r.faceShown));
       } catch (e) {
         if (!e || !e.declined) throw e;
         declined = e;
         if (this._onImageDecline) {
-          try { this._onImageDecline(e, i, ladder.length); } catch (_) { /* logging must never break the send */ }
+          try { this._onImageDecline(e, i, rungs.length, r.mode === 'scene' ? 'generations' : 'edits'); } catch (_) { /* logging must never break the send */ }
         }
       }
     }
@@ -3415,6 +3536,21 @@ const ClaudeAPI = {
      the reference as an image_url data URI, up to 3 source images per the
      docs (we send one). 404 here is a missing ROUTE, not a missing model —
      it stays non-declined so the caller's plain-path fallback fires. */
+  /* A 400 from /edits is ambiguous in a way a 400 from /generations is not:
+     this request carries an IMAGE, so one status covers both "we decline
+     this content" and "we cannot read your reference". The decline flag was
+     copied straight from the generations sibling, so a malformed or
+     oversized reference burned all three rungs, came back `exhausted`, and
+     told the owner the provider had declined every framing of his photo — a
+     content story for a plumbing failure — while skipping the plain-path
+     fallback that exists for exactly this class of failure.
+
+     Only messages that name the PAYLOAD are treated as structural. Anything
+     else is still the provider's answer about the picture and still surfaces
+     verbatim: we do not argue with the provider. Mis-reading a real decline
+     as a payload failure costs one plain-path attempt that declines too, so
+     the narrow direction is also the safe one. */
+  _EDIT_PAYLOAD_ERR: /\b(base64|data uri|mime|content[- ]type|decod\w+|payload|too large|file size|unsupported (image )?(format|type|mime)|invalid image|image[_ ]url|could not (read|parse|load|fetch))\b/i,
   async _xaiImageEdit(entry, model, prompt, width, height, refUrl, avoidText) {
     const base = this._isXaiEntry(entry)
       ? (entry.baseUrl || '').replace(/\/+$/, '')
@@ -3428,7 +3564,7 @@ const ClaudeAPI = {
         headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + key },
         body: JSON.stringify({
           model: modelId,
-          prompt: prompt + (avoidText === undefined ? this._IMAGE_AVOID : avoidText),
+          prompt: prompt + avoidText,
           image: { url: refUrl, type: 'image_url' },
           n: 1,
           response_format: 'b64_json',
@@ -3452,7 +3588,11 @@ const ClaudeAPI = {
       const err = new Error(msg || raw.slice(0, 180) || `Image edit failed (${res.status}).`);
       err.status = res.status;
       err.providerMessage = msg || raw.slice(0, 300);
-      err.declined = res.status === 400 || res.status === 422;
+      // See _EDIT_PAYLOAD_ERR: a reference the endpoint cannot read is a
+      // plumbing failure, and must stay non-declined so the caller's
+      // plain-path fallback fires instead of the re-framing ladder.
+      err.declined = (res.status === 400 || res.status === 422)
+        && !this._EDIT_PAYLOAD_ERR.test(err.providerMessage || '');
       throw err;
     }
     let data = null;
@@ -3529,12 +3669,21 @@ const ClaudeAPI = {
      hide exactly what it is for. */
   generateScreenedImage(entry, settings, description, opts) {
     return this.withBudget(this.PHOTO_BUDGET_MS, async () => {
-      const first = await this._generateImage(entry, description, opts);
-      // The face check follows the framing (v10.32): deliverBubble computes
-      // faceForbidden off _faceShown. Default stays forbidden — the safe
-      // direction for every caller that predates the flag.
+      /* The face check follows the framing that was ACTUALLY rendered
+         (v10.43). It used to follow a flag the caller computed, which is a
+         second authority on the same fact and could not see either of the
+         two places the pipeline changes its mind: the route collapse in
+         _generateImage, and the edit->plain fallback. Both leave the picture
+         faceless while the gate has already been told faces are fine — and a
+         gate told that simply stops looking for them.
+
+         Default is forbidden: a receipt nothing wrote means nothing turned
+         the face on (invariant 8 — the failure directions are not
+         symmetric). */
       const o = opts || {};
-      const faceForbidden = o.faceForbidden === undefined ? true : !!o.faceForbidden;
+      const resolved = {};
+      const first = await this._generateImage(entry, description, Object.assign({}, o, { resolved }));
+      const faceForbidden = !resolved.faceShown;
       // Fail-open is enforced HERE, structurally — not delegated to
       // _screenPhoto's own internal catch. A screening that dies for any
       // reason is a null verdict, and a null verdict ships the photo.
@@ -3543,7 +3692,7 @@ const ClaudeAPI = {
       if (v && this._onImageScreen) { try { this._onImageScreen(v, 0); } catch (_) { /* ledger never breaks a send */ } }
       if (this._photoGateDecision(v, 0, this._budgetLeft()) !== 'reroll') return first;
       let second;
-      try { second = await this._generateImage(entry, description, opts); }
+      try { second = await this._generateImage(entry, description, Object.assign({}, o, { resolved })); }
       catch (_) { return first; }   // a dead re-roll falls back to the flagged original, never to nothing
       let v2 = null;
       try { v2 = await this._screenPhoto(settings, second, faceForbidden); } catch (_) { v2 = null; }

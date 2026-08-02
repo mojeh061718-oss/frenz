@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.42';
+const APP_JS_VERSION = '10.43';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -980,8 +980,8 @@ function openEditor(friend) {
   $('#f-appearance').value = p.appearance || '';
   // photoFace defaults hidden on read — no backfill needed for existing
   // friends, and a face is only ever LIVE once a reference is also locked
-  // (the _faceShown rule); this select is half of that, testlook ref keep
-  // is the other half.
+  // (the _faceShown rule); this select is half of that, the uploaded
+  // reference photo below is the other half.
   $('#f-photoface').value = p.photoFace === 'shown' ? 'shown' : 'hidden';
   // A pick from a previous visit to this screen never carries over.
   pendingReference = { dataUrl: null, dirty: false };
@@ -1679,10 +1679,15 @@ async function deliverBubble(friend, b, atTs) {
   // a later one succeeds — otherwise a photo that took three tries looks
   // identical to one that worked first time, and there is no way to tell
   // which framings the provider actually objects to.
-  ClaudeAPI._onImageDecline = (e, i, total) => {
+  // `route` since v10.43: a send that falls back from /edits to /generations
+  // writes two independent 1/N sequences, and without the endpoint the
+  // archive cannot make the one discrimination it exists to make — whether
+  // the provider objected to the framing or to riding a reference at all.
+  ClaudeAPI._onImageDecline = (e, i, total, route) => {
     DB.addEvent({
       friendId: friend.id, ts: ClaudeAPI._now(), kind: 'imgerr',
       declined: true, status: e.status || 0, reframe: `${i + 1}/${total}`,
+      route: route || 'generations',
       message: String(e.providerMessage || e.message || '').slice(0, 200),
       desc: String(desc || '').slice(0, 160)
     }).catch(() => {});
@@ -1706,18 +1711,19 @@ async function deliverBubble(friend, b, atTs) {
     // blocks). testlook stays on raw generateImage — the lens is unscreened
     // by design.
     // The face flag comes from the ONE shared rule (_faceShown): 'shown'
-    // AND an owner-locked reference, never one alone. The reference (when
-    // locked via `testlook ref keep`) routes the request through the edit
-    // endpoint — same woman every photo — with the plain path as automatic
-    // fallback; the screening gate's face check follows the same flag.
-    const faceShown = ClaudeAPI._faceShown(friend);
+    // AND an uploaded reference, never one alone. The reference routes the
+    // request through the edit endpoint — same woman every photo — with the
+    // plain path as automatic fallback.
+    // faceForbidden is NOT passed (v10.43): the pipeline collapses this flag
+    // against the route it actually takes and can fall back mid-flight, so
+    // the gate reads what was resolved rather than what was asked for. Two
+    // authorities on one fact is how it ended up checking the wrong thing.
     const dataUrl = await ClaudeAPI.generateScreenedImage(entry, Settings.get(), desc, {
       // who she is — with no reference locked, the appearance sheet is the
       // identity anchor exactly as before; with one, the reference is.
       appearance: friend.profile.appearance || '',
       reference: friend.profile.referenceImage || null,
-      faceShown,
-      faceForbidden: !faceShown,
+      faceShown: ClaudeAPI._faceShown(friend),
       // the photo tracks where the thread actually is, not a fixed neutral
       heat: ClaudeAPI._imageHeat(friend)
     });
@@ -1834,7 +1840,13 @@ async function sendMessage() {
     const wantsFace = /^face$/i.test(rest);
     if (wantsFace) rest = '';
     if (atCeiling) toast('heat2 is the top register — rendering that.', 4000);
-    runTestLook(currentFriend, rest || null, heat, wantsFace);
+    /* A heat word with no scene named used to fall through to the bare sheet
+       lens, which has no heat parameter at all — so `testlook heat2` toasted
+       "rendering that" and rendered heat 0. A heat word is a request to see
+       the REGISTER, and the register only exists on the scene lens, so one
+       supplies a scene. Bare `testlook` with no heat word is untouched: that
+       form is the comparable sheet check, and it stays byte-stable. */
+    runTestLook(currentFriend, rest || (m ? ClaudeAPI._TL_DEFAULT_SCENE : null), heat, wantsFace);
     return;
   }
 
@@ -1972,9 +1984,13 @@ async function runTestLook(friend, action, heat, wantsFace) {
       ? ClaudeAPI.testLookFacePrompt(friend, { reference: !!reference, heat })
       : action
         ? ClaudeAPI.testLookScenePrompt(friend, action, heat, ClaudeAPI._now(), { reference: !!reference, faceShown })
-        : ClaudeAPI.testLookPrompt(friend);
+        : ClaudeAPI.testLookPrompt(friend, { reference: !!reference });
+    /* The bare lens hides her face behind the phone BY CONSTRUCTION, so it
+       must not also claim the face is live: that flag is what drops the face
+       sentence from the avoid clause, and a face-live persona was getting
+       weaker face suppression on the one shot that has no face to show. */
     const url = await ClaudeAPI.generateImage(entry, prompt, Object.assign(
-      { raw: true, reference, faceShown },
+      { raw: true, reference, faceShown: !!(action || wantsFace) && faceShown },
       (action || wantsFace) ? {} : { width: 768, height: 1024 }
     ));
     note.remove();

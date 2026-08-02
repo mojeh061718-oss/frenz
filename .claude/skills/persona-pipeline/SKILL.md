@@ -371,12 +371,12 @@ the fixtures were wrong before.
   not stroke-identical; all n=1 per cell, 0 declines in 11 calls, 4.2-7.9s
   per call. Shipped v10.32 as per-persona faces + owner-approved references
   (the owner's calls) — see the reference-lock dial below.
-- Reference lock (v10.32, `_faceShown` + `referenceImage` + `testlook ref`):
+- Reference lock (v10.32, `_faceShown` + `referenceImage`, uploaded since v10.33):
   the ONE rule is `_faceShown` — a face is live only when `photoFace ===
   'shown'` AND a reference is locked; a shown persona with no reference
   behaves hidden (pre-reference faces are random women, the exact failure
   the reference fixes), and everything reads the same helper (pipeline,
-  photoNote, deliverBubble, screening gate). `testlook ref keep` is the ONLY
+  photoNote, deliverBubble, screening gate). The editor is the ONLY
   writer of `referenceImage`, and locking is deliberate friction: the
   reference IS her body in every later photo, and the spike measured outfit
   and pose bleeding through too — so a 'shown' candidate is pose-neutral
@@ -428,6 +428,71 @@ the fixtures were wrong before.
   re-roll doing it, so a mismatched reference degrades to a wasted generation
   per photo rather than a broken feature. Background bleed is likewise strong —
   the source room reappears in renders.
+- **Image-pipeline once-over (v10.43).** A full sweep of every image route
+  after the reference feature landed, and it found that the feature had been
+  wired in without the routes around it being re-asked. The pattern in nine
+  of the ten defects is the same one: a fact with TWO authorities that could
+  not see each other.
+  - `_faceLiveFor(entry, o)` is now the ONLY thing a prompt may act on.
+    `_faceShown` answers "is her face approved?"; this answers "can it be
+    live in THIS request?" — flag AND reference AND a route that can carry
+    one. A reference only rides xAI `/images/edits`; on a Bedrock image entry
+    it was stored, backed up, never sent, and the face turned on anyway,
+    which is the random-stranger failure the reference exists to fix, next to
+    `_IMAGE_NEGATIVE`'s "visible face" contradicting the framing in the same
+    body. `_generateImage` collapses the flag once, at the top, where the
+    route is known; nothing downstream reads `o.faceShown` again.
+  - **A reference rides only a framing that contains her.** `scene` is the
+    DEFAULT mode and its own prompt says "Nobody is in the frame" — posting
+    her photograph as the edit SOURCE for a picture she must not appear in is
+    payload at best and a composite at worst. Same rule on the ladder: the
+    terminal `scene` rung of every ladder leaves the edit endpoint. Under
+    `raw` the description IS the prompt, so it cannot be classified and keeps
+    its reference.
+  - **The quality gate reads a receipt, not a flag.** `o.faceForbidden` was a
+    second authority computed by the caller, blind to both the route collapse
+    and the edit→plain fallback — so a send that fell back to a faceless
+    framing left the gate told "faces are fine", i.e. not looking. The
+    pipeline now reports what it resolved (`o.resolved`) and the gate reads
+    that; an unwritten receipt means forbidden.
+  - **Camera-aware is a property of the POOL, not the mode.** `povFace`
+    ("arm out, the camera tilted back toward her") is that shot as much as
+    `selfie` is, and since v10.38 `pov` is what every body word routes to for
+    a face-live persona — so the unposed clause was contradicting the most
+    common face-live framing, which is exactly what heat and heat2 are.
+    Keyed off `_frameKey`. `mirror`/`mirrorFace` stay on the original clause:
+    the phone points at glass, not at her.
+  - **The ladder steps the FACE down too.** Its doctrine is that each rung
+    holds strictly less of a person than the last; carrying the flag down
+    left `selfie → pov` still holding her face — a sideways step. The avoid
+    clause is rebuilt per rung for the same reason: it was computed once,
+    from rung 0, and it is the thing that actually forbids a face on the wire.
+  - **A 400 from `/edits` is ambiguous where a 400 from `/generations` is
+    not** — that request carries an IMAGE. An unreadable reference was being
+    called a content decline, which burned all three rungs, reported "the
+    provider declined every framing" for a plumbing failure, and skipped the
+    plain-path fallback built for exactly that. `_EDIT_PAYLOAD_ERR` is
+    deliberately narrow: mis-reading a real decline costs one extra attempt
+    that declines again, so narrow is also safe.
+  - **`testlook heat2` with no scene rendered heat 0** while toasting "top
+    register — rendering that": the heat word was parsed, the branch it
+    landed on (the bare sheet lens) has no heat parameter. A heat word now
+    supplies `_TL_DEFAULT_SCENE`. Bare `testlook` is untouched — that form is
+    the comparable sheet check and stays byte-stable.
+  - **The bare lens was the worst offender of all**: the ONE prompt whose job
+    is to isolate the appearance sheet was shipping the sheet AND the
+    reference into the same `/edits` body. `testLookPrompt(friend, o)` swaps
+    to the reference sentence when one rides — same framing, one authority.
+  - Smaller: the clothing floor missed the nightwear half, so the heat-2
+    garnish named a thin cami and "She is dressed for being at home" fired
+    beside it (the v8.2 talk-over, in the register where an extra layer costs
+    most) — while a garnish that names NO garment still gets the floor, which
+    is the case it exists for. The decline ledger now records which endpoint
+    a rung went out of, or a send that falls back writes two `1/N` sequences
+    the archive cannot tell apart. Bedrock's mantle attempt was sending no
+    exclusions at all. Dead: `o.quality`, the `avoidText === undefined` leg,
+    and four places still telling the owner to run `testlook ref`, deleted
+    two releases ago — one of them user-facing in the shell.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

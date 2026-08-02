@@ -3357,7 +3357,10 @@ console.log('\n== reference-locked photos: per-persona faces, owner-approved ref
     ok(out3 === 'data:image/png;base64,PLAIN', 'ref: a non-declined edit failure falls back to the plain path');
     API._xaiImageEditWithRecovery = async () => { const e = new Error('declined'); e.declined = true; e.exhausted = true; throw e; };
     let threw = null;
-    try { await API._generateImage(entry, 'x', { reference: 'data:image/png;base64,REF' }); } catch (e) { threw = e; }
+    // A BODY description, not 'x': since v10.43 a scene shot (the default
+    // mode, and what 'x' classifies as) deliberately leaves the reference
+    // behind, so 'x' would never have reached the edit ladder at all.
+    try { await API._generateImage(entry, 'my legs on the couch', { reference: 'data:image/png;base64,REF' }); } catch (e) { threw = e; }
     ok(!!(threw && threw.declined), 'ref: an exhausted decline surfaces verbatim — we do not argue with the provider');
     API._xaiImageEditWithRecovery = realEditRec; API._xaiImageWithRecovery = realPlainRec;
 
@@ -3383,8 +3386,14 @@ console.log('\n== reference-locked photos: per-persona faces, owner-approved ref
     let sawForbidden = null;
     API._generateImage = async () => 'data:image/png;base64,X';
     API._screenPhoto = async (s, d, ff) => { sawForbidden = ff; return { flagged: false, reason: '' }; };
-    await API.generateScreenedImage(entry, { pool: [] }, 'desc', { faceForbidden: false });
+    /* The gate reads what the pipeline RESOLVED, not a flag the caller
+       guessed at (v10.43) — o.faceForbidden was a second authority that
+       could not see the edit->plain fallback. Full coverage of the receipt
+       is in the once-over block below; this keeps the passthrough proof. */
+    API._generateImage = async (e2, d2, o2) => { if (o2.resolved) o2.resolved.faceShown = true; return 'data:image/png;base64,X'; };
+    await API.generateScreenedImage(entry, { pool: [] }, 'desc', { faceShown: true, reference: 'data:x' });
     ok(sawForbidden === false, 'ref: gate face check follows the framing (face-live persona)');
+    API._generateImage = async () => 'data:image/png;base64,X';
     await API.generateScreenedImage(entry, { pool: [] }, 'desc', {});
     ok(sawForbidden === true, 'ref: gate face check defaults to forbidden');
     API._generateImage = realGen; API._screenPhoto = realScreen;
@@ -3654,6 +3663,229 @@ console.log('\n== reference upload: downscale, ack gate, single writer ==');
       ok(false, 'e2e: block crashed mid-run', e && e.message);
     } finally {
       API._xaiImageEdit = realEdit; API._xaiImageWithRecovery = realPlain;
+    }
+  })());
+}
+
+console.log('\n== image pipeline once-over (v10.43): one authority, one route, one face rule ==');
+{
+  const SHEET43 = Personas.byId('bre').appearance;
+  const appSrc43 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  const apiSrc43 = fs.readFileSync(path.join(ROOT, 'js/api.js'), 'utf8');
+  const htmlSrc43 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const flat43 = appSrc43.replace(/\s+/g, ' ');
+  const GROK = { imageModel: 'grok-imagine-image' };
+  const NOVA = { imageModel: 'amazon.nova-canvas-v1:0', kind: 'bedrock' };
+
+  /* ---- 1. the bare lens: the sheet and the reference are not both the
+     authority. This was the ONE prompt whose entire job is to isolate the
+     appearance sheet, and it shipped the sheet AND the reference into the
+     same /edits request — the lens lying about exactly the thing it exists
+     to show. */
+  const bareNoRef = API.testLookPrompt({ profile: { appearance: SHEET43 } });
+  ok(bareNoRef.includes(SHEET43.slice(0, 40)), 'lens: with no reference the sheet is still the subject (unchanged)');
+  const bareRef = API.testLookPrompt({ profile: { appearance: SHEET43 } }, { reference: true });
+  ok(!bareRef.includes(SHEET43.slice(0, 40)),
+    'lens: a locked reference keeps the sheet OUT of the bare lens (invariant 2 — one authority)');
+  ok(/same woman as in the reference photo/.test(bareRef),
+    'lens: …and names the reference as the authority in its place');
+  ok(/directly in front of her face/.test(bareRef) && /hair to feet/.test(bareRef) && /no retouching/.test(bareRef),
+    'lens: the full-length phone-over-face framing and the camera cues survive the swap (counter-rule)');
+  ok(/testLookPrompt\(friend, \{ reference/.test(flat43),
+    'lens: runTestLook tells the bare lens whether a reference is riding');
+  /* The bare lens hides her face behind the phone BY CONSTRUCTION, so it
+     must not also weaken the avoid clause — a face-live persona's sheet
+     check was getting looser face suppression than a hidden persona's. */
+  ok(/\{ raw: true, reference, faceShown: action \|\| wantsFace \}/.test(flat43)
+    || /faceShown: !!\(action \|\| wantsFace\) && faceShown/.test(flat43),
+    'lens: the bare lens never turns the face on — its framing has no face to show');
+
+  /* ---- 2. `testlook heat2` with no scene rendered heat 0 while toasting
+     "heat2 is the top register — rendering that." The heat word was parsed,
+     the toast fired, and the branch it landed on has no heat parameter. */
+  ok(typeof API._TL_DEFAULT_SCENE === 'string' && API._TL_DEFAULT_SCENE.length > 8,
+    'lens: a heat word with no scene has a scene to render');
+  const bareHeat2 = API.testLookScenePrompt({ profile: { appearance: SHEET43 } }, API._TL_DEFAULT_SCENE, 2, 1);
+  ok(bareHeat2.includes('implication rather than display'),
+    'lens: `testlook heat2` with no scene reaches the top register (it silently rendered heat 0)');
+  ok(/_TL_DEFAULT_SCENE/.test(appSrc43),
+    'lens: the composer supplies that scene rather than dropping to the heat-blind sheet lens');
+  /* …and bare `testlook` with NO heat word stays the sheet lens, byte-stable
+     — that is the comparable check and the reason the two forms differ. */
+  ok(/rest \|\| \(m \? ClaudeAPI\._TL_DEFAULT_SCENE : null\)/.test(flat43),
+    'lens: only an explicit heat word routes to the scene lens; bare testlook is untouched');
+
+  /* ---- 3. scene is the DEFAULT mode and it contains no person, so there is
+     nothing for a reference to hold. Posting her photograph as the edit
+     source for a picture that must not contain her is payload at best and a
+     composite at worst. */
+  ok(API._modeFor('the bowl of ramen on the counter', true) === 'scene', 'route: an ordinary object is still a scene');
+  ok(/const isSceneShot/.test(apiSrc43) && /refRides/.test(apiSrc43),
+    'route: _generateImage decides separately whether the reference rides');
+
+  /* ---- 4. the face flag is collapsed against the ROUTE, not just the
+     persona. A reference only rides the xAI edit route; on a Bedrock image
+     entry it is stored, never sent — and turning the face on there renders a
+     new stranger every time (the exact failure the reference exists to fix)
+     while _IMAGE_NEGATIVE's "visible face" contradicts the framing in the
+     same request. */
+  const liveOpts = { faceShown: true, reference: 'data:image/jpeg;base64,REF' };
+  ok(API._faceLiveFor(GROK, liveOpts) === true, 'face: flag + reference + a route that carries it = live');
+  ok(API._faceLiveFor(NOVA, liveOpts) === false,
+    'face: a Bedrock image entry cannot carry a reference, so it never gets a face (no anchor)');
+  ok(API._faceLiveFor(GROK, { faceShown: true }) === false, 'face: the flag alone is never enough');
+  ok(API._faceLiveFor(GROK, { reference: 'data:x' }) === false, 'face: a reference alone never turns the face on');
+  ok(API._faceLiveFor(GROK, {}) === false && API._faceLiveFor(null, null) === false,
+    'face: default is hidden, for every shape of missing input (invariant 8)');
+
+  /* ---- 5. povFace is "arm out, camera tilted back toward her" — she is
+     holding the phone at her own face, exactly like a selfie. The unposed
+     clause contradicts that framing (invariant 5), and povFace is what every
+     body word routes to for a face-live persona, i.e. what heat/heat2 are. */
+  const pf = API._imagePrompt('my legs on the couch', 'pov', SHEET43, 2, { faceShown: true, reference: true });
+  ok(/tilted back toward her|arm's length|dipped/.test(pf), 'face: a face-live pov draws from the povFace pool');
+  ok(!/She is not posing/.test(pf),
+    'face: the unposed clause never rides a camera-aware framing (invariant 5)');
+  ok(/It is a selfie and she knows it/.test(pf), 'face: …it gets the camera-aware register instead');
+  // The counter-rule: every framing that is NOT camera-aware keeps the
+  // original clause byte-for-byte. This is the register that has shipped
+  // since v8.2 and nothing here is allowed to quietly retire it.
+  for (const [mode, face] of [['pov', false], ['mirror', false], ['mirror', true]]) {
+    const p = API._imagePrompt('my legs on the couch', mode, SHEET43, 2, { faceShown: face });
+    ok(/She is not posing/.test(p) && /imagination/.test(p),
+      `face: ${mode}${face ? ' (face live)' : ''} keeps the unposed clause — the phone points away from her`);
+  }
+
+  /* ---- 6. the ladder's doctrine is that each rung contains strictly LESS
+     of a person than the one before it. Since v10.38 made pov face-live,
+     carrying the flag down left selfie -> pov still holding her face — a
+     sideways step. And the avoid clause, which is what actually forbids a
+     face on the wire, was computed once from rung 0. */
+  ok(JSON.stringify(API._RECOVERY_LADDER.selfie) === '["pov","scene"]',
+    'ladder: selfie steps back to pov then the room (was shipped untested)');
+  ok(/rungs\.push/.test(apiSrc43) && /faceShown: false/.test(apiSrc43),
+    'ladder: recovery rungs are built faceless');
+
+  /* ---- 7. a 400 from /edits is ambiguous in a way a 400 from /generations
+     is not: this request carries an IMAGE. Calling a payload failure a
+     content decline burns all three rungs, tells the owner the provider
+     declined every framing, and skips the plain-path fallback that exists
+     for exactly this. */
+  // Not `instanceof RegExp`: the engine runs in a vm realm, so its RegExp is
+  // not this realm's. Duck-type it.
+  ok(!!API._EDIT_PAYLOAD_ERR && typeof API._EDIT_PAYLOAD_ERR.test === 'function',
+    'edits: payload failures are distinguishable from content declines');
+  for (const m of ['could not decode the image', 'unsupported mime type', 'image_url payload too large', 'invalid image data uri']) {
+    ok(API._EDIT_PAYLOAD_ERR.test(m), `edits: "${m}" reads as a payload failure, not a decline`);
+  }
+  for (const m of ['Your request was rejected by our content policy.', 'This prompt was declined.', ''] ) {
+    ok(!API._EDIT_PAYLOAD_ERR.test(m), `edits: "${m.slice(0, 34) || '(empty)'}" is still the provider's content answer`);
+  }
+
+  /* ---- 8. the ledger could not tell an /edits rung from a /generations
+     rung, so a send that fell back produced two independent 1/N sequences
+     and the archive could not make the one discrimination it exists for. */
+  ok(/_onImageDecline\(e, i, rungs\.length, [^)]*'edits'\)/.test(apiSrc43),
+    'ledger: the edit ladder names its endpoint');
+  ok(/_onImageDecline\(e, i, ladder\.length, 'generations'\)/.test(apiSrc43),
+    'ledger: the plain ladder names its endpoint');
+  ok(/route/.test(appSrc43.slice(appSrc43.indexOf('_onImageDecline ='), appSrc43.indexOf('_onImageDecline =') + 700)),
+    'ledger: deliverBubble records which endpoint the rung went out of');
+
+  /* ---- 9. dead weight, and stale instructions that tell the owner to run a
+     command that was deleted two releases ago. */
+  ok(!/o\.quality/.test(apiSrc43), 'dead: o.quality is gone — no caller ever set it');
+  ok(!/avoidText === undefined/.test(apiSrc43), 'dead: the avoidText default leg is gone — its only caller always passes one');
+  ok(!/testlook ref/i.test(htmlSrc43), 'docs: the shell no longer tells the owner to run a command that does not exist');
+  ok(!/testlook ref/i.test(apiSrc43) && !/testlook ref/i.test(appSrc43), 'docs: no stale testlook-ref comments left');
+
+  /* ---- 10. the clothing floor is an anti-nudity backstop for a scene that
+     says nothing about what she has on, and it has to STAND DOWN when the
+     scene does say — otherwise the prompt talks over her own words. Measured
+     at v8.2: appending it unconditionally rendered her overdressed on a dark
+     couch and he replied "I thought you were hot, you are wearing tons of
+     clothes". The heat-2 garnish names a thin cami and the floor was still
+     firing beside it: two authorities on one fact (invariant 2). */
+  for (const g of ['in a soft old cami', 'a thin camisole', 'in her nightie', 'a slip dress', 'an old nightshirt'])
+    ok(API._CLOTHING_NAMED.test(g), `clothing: "${g}" reads as a named outfit, so the floor stands down`);
+  // The counter-rule, and it is the one that matters: a scene that names no
+  // garment still gets the floor. Suggestion without a garment is exactly
+  // where an unclothed render would come from.
+  for (const g of ['a slipped strap, a hem higher than she noticed', 'curled up on the couch, tv on', 'stretched out and a little careless with herself'])
+    ok(!API._CLOTHING_NAMED.test(g), `clothing: "${g.slice(0, 30)}…" names nothing, so the floor still fires`);
+  ok(API._TL_GARNISH.spicy.filter(g => !API._CLOTHING_NAMED.test(g)).length >= 1,
+    'clothing: at least one suggestive garnish deliberately names no garment and keeps the floor');
+
+  /* ---- 11. Bedrock's second attempt sent no exclusions at all — neither
+     negativeText nor the avoid prose. */
+  // The IMAGES mantle host, not the chat one that shares the hostname.
+  const mantleAt = apiSrc43.indexOf('bedrock-mantle.${region}.api.aws/openai/v1/images/generations');
+  const mantle = apiSrc43.slice(mantleAt, mantleAt + 300);
+  ok(/_IMAGE_AVOID/.test(mantle), 'bedrock: the mantle route carries the exclusions the canvas route gets as negativeText');
+
+  global.__asyncChecks = global.__asyncChecks || [];
+  const prior43 = global.__asyncChecks.slice();
+  global.__asyncChecks.push((async () => {
+    await Promise.allSettled(prior43);
+    const realEdit43 = API._xaiImageEdit, realPlain43 = API._xaiImage;
+    const realGen43 = API._generateImage, realScreen43 = API._screenPhoto;
+    const realFetch43 = API._timedFetch;
+    try {
+      /* Routing, end to end and on the wire. A body word carries the
+         reference; the default scene mode does not. */
+      const wire = [];
+      API._xaiImageEdit = async (e, m, prompt, w, h, refUrl, avoidText) => {
+        wire.push({ route: 'edits', prompt, refUrl, avoidText }); return 'data:image/png;base64,E';
+      };
+      API._xaiImage = async (e, m, prompt) => { wire.push({ route: 'generations', prompt }); return 'data:image/png;base64,P'; };
+      const refOpts = () => ({ appearance: SHEET43, reference: 'data:image/jpeg;base64,REF', faceShown: true, heat: 2 });
+
+      await API._generateImage(GROK, 'my legs on the couch', refOpts());
+      ok(wire.length === 1 && wire[0].route === 'edits', 'route: a body word carries the reference to /edits');
+      ok(!/Her face stays out of the picture/.test(wire[0].avoidText),
+        'route: …with the face exclusion dropped, because the face is live');
+
+      wire.length = 0;
+      await API._generateImage(GROK, 'the bowl of ramen on the counter', refOpts());
+      ok(wire.length === 1 && wire[0].route === 'generations',
+        'route: a scene photo does NOT post her photograph as the source for a picture she is not in');
+      ok(/Nobody is in the frame/.test(wire[0].prompt), 'route: …and the scene framing is unchanged');
+
+      /* Bedrock: the reference cannot ride, so the face must not turn on. */
+      wire.length = 0;
+      let bedrockPrompt = null;
+      API._timedFetch = async (url, init) => {
+        bedrockPrompt = JSON.parse(init.body);
+        return { ok: true, json: async () => ({ images: ['AA'] }) };
+      };
+      await API._generateImage(NOVA, 'my legs on the couch', refOpts());
+      ok(wire.length === 0, 'route: a Bedrock entry never reaches either xAI route');
+      const btext = bedrockPrompt.textToImageParams.text;
+      ok(!/Her face is in the picture/.test(btext) && /head is outside the picture/.test(btext),
+        'route: a Bedrock render stays faceless — nothing is anchoring her face there');
+      ok(!btext.includes('same woman as in the reference photo') && btext.includes(SHEET43.slice(0, 40)),
+        'route: …and falls back to the sheet, which IS the authority when no reference can ride');
+
+      /* The quality gate reads what the pipeline RESOLVED, so a fallback
+         cannot leave it checking for the wrong thing. */
+      let sawForbidden = null;
+      API._screenPhoto = async (s, d, ff) => { sawForbidden = ff; return { flagged: false, reason: '' }; };
+      API._generateImage = async (entry, desc, o) => { if (o.resolved) o.resolved.faceShown = true; return 'data:image/png;base64,X'; };
+      await API.generateScreenedImage(GROK, { pool: [] }, 'desc', {});
+      ok(sawForbidden === false, 'gate: a face the pipeline actually rendered is not flagged as a defect');
+      API._generateImage = async (entry, desc, o) => { if (o.resolved) o.resolved.faceShown = false; return 'data:image/png;base64,X'; };
+      await API.generateScreenedImage(GROK, { pool: [] }, 'desc', { faceShown: true, reference: 'data:x' });
+      ok(sawForbidden === true,
+        'gate: a send that fell back to a faceless framing is checked for faces again (the contract the fallback broke)');
+      API._generateImage = async () => 'data:image/png;base64,X';
+      await API.generateScreenedImage(GROK, { pool: [] }, 'desc', { faceShown: true, reference: 'data:x' });
+      ok(sawForbidden === true, 'gate: a receipt nothing wrote means forbidden — the safe direction (invariant 8)');
+    } catch (e) {
+      ok(false, 'once-over: async block crashed mid-run', e && e.message);
+    } finally {
+      API._xaiImageEdit = realEdit43; API._xaiImage = realPlain43;
+      API._generateImage = realGen43; API._screenPhoto = realScreen43;
+      API._timedFetch = realFetch43;
     }
   })());
 }
