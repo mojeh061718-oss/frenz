@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.52';
+const APP_JS_VERSION = '10.53';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -778,6 +778,16 @@ async function renderPhotosList() {
 
     const state = document.createElement('div');
     state.className = 'pr-state';
+    // Measured, and the reason this screen says it at all: a reference
+    // showing a face puts one in her photos whatever the framing asks for.
+    // The editor carried this caution; the screen people actually use did
+    // not (v10.53).
+    if (hasRef && !shown) {
+      const warn = document.createElement('div');
+      warn.className = 'pr-facewarn warn small';
+      warn.textContent = 'Her face is set to stay out of frame — if this photo shows her face, her pictures will have one anyway.';
+      body.appendChild(warn);
+    }
     state.textContent = hasRef
       ? (shown
         ? 'Locked, face can be shown. Her written appearance is ignored while a photo is set.'
@@ -1013,6 +1023,7 @@ async function useBuiltReference() {
      these dials is nobody. */
   try {
     const dataUrl = await downscaleImageFile(dataUrlToBlob(builtCandidate));
+    if (!await warnIfFaceMismatch(friend.profile, dataUrl)) return;
     applyReferenceTo(friend.profile, dataUrl);
     friend.profile.bodyDials = buildDials();
     friend.profile.refColouring = $('#bd-colouring').value.trim();
@@ -1122,6 +1133,32 @@ ClaudeAPI._recodePhoto = (dataUrl) =>
 function applyReferenceTo(profile, dataUrl) {
   if (dataUrl) profile.referenceImage = dataUrl;
   else delete profile.referenceImage;
+}
+
+/* The face-vs-policy contradiction, caught at lock time (v10.53).
+
+   Measured: a reference showing a face puts one in her photos no matter
+   what the framing asks for — the prompt says "her head is outside the
+   picture entirely" and the picture wins. The warning for this already
+   existed, but as passive `<small>` text in the friend editor only, and it
+   evidently went unread. So the app looks at the actual photo now and says
+   something specific about it, at the one moment it can still be changed.
+
+   Returns true to PROCEED. Fails open in every direction — no vision model,
+   a screening that dies, an unparseable answer — because this exists to
+   inform the owner's decision, not to gate it. He can see his own photo;
+   being wrongly blocked from locking it would be the worse failure. */
+async function warnIfFaceMismatch(profile, dataUrl) {
+  if (!profile || profile.photoFace === 'shown') return true;
+  let hasFace = null;
+  try { hasFace = await ClaudeAPI.screenReferenceFace(Settings.get(), dataUrl); } catch (_) { hasFace = null; }
+  if (hasFace !== true) return true;
+  return confirm(
+    `That photo shows her face, but ${profile.name || 'she'} is set to keep her face out of frame.\n\n`
+    + 'A reference with a visible face puts one in her pictures whatever the framing asks for — this is measured, not a guess. '
+    + 'Either pick a photo where her face is covered, turned away or cropped out, or switch her to "Face can be shown".\n\n'
+    + 'Lock it anyway?'
+  );
 }
 
 const REF_ACK_KEY = 'frenz-ref-ack';
@@ -1249,7 +1286,13 @@ async function saveFriendFromForm(e) {
      merged, so a large data URL round-tripping through it is how the field
      would get clobbered by an unrelated edit. Applied after both branches so
      it covers create and edit alike. */
-  if (pendingReference.dirty) applyReferenceTo(friend.profile, pendingReference.dataUrl);
+  if (pendingReference.dirty) {
+    // Checked against the profile being SAVED, not the stored one — the
+    // photoFace select and the picture can both change in one visit, and
+    // the pair that matters is the pair about to be written.
+    if (pendingReference.dataUrl && !await warnIfFaceMismatch(friend.profile, pendingReference.dataUrl)) return;
+    applyReferenceTo(friend.profile, pendingReference.dataUrl);
+  }
   try {
     await DB.saveFriend(friend);
   } catch (err) {
@@ -3235,6 +3278,7 @@ function init() {
       try {
         const dataUrl = await downscaleImageFile(file);
         const fresh = await DB.getFriend(id);
+        if (!await warnIfFaceMismatch(fresh.profile, dataUrl)) return;
         applyReferenceTo(fresh.profile, dataUrl);
         await savePhotoRow(fresh, 'Reference locked — her pictures hold this look now.');
       } catch (err) {

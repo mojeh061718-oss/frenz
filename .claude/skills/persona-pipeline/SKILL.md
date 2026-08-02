@@ -723,6 +723,33 @@ the fixtures were wrong before.
   - A self-timer she set up and stood back for is deliberate by definition,
     so it joins the camera-aware register; "caught the way she actually
     stands" would contradict the framing (invariant 5).
+- **A face in the reference beats the framing, so catch it at LOCK time
+  (v10.53).** Owner report: photoFace set to hidden, and testlook still
+  rendered her face. The prompt path was provably correct — pov pool, "her
+  head is outside the picture entirely", the face exclusion in the avoid
+  clause — and proven live: with a FACELESS reference the render is
+  genuinely headless; with a face-bearing one the face intrudes anyway. That
+  is the v10.33 finding restated with fresh evidence: **a face-forward
+  reference does not nudge the framing, it wins.**
+  - No prompt can fix it, and the warning that existed was passive `<small>`
+    text in the friend editor only — not on the Reference photos screen,
+    not on the build screen, and evidently unread. So the app LOOKS at the
+    picture now: `screenReferenceFace` asks one plain question with its own
+    tiny system prompt (borrowing the defect gate's would be wrong — that
+    one also flags fingers and text, so a flag there would not mean what
+    this needs it to mean). Verified live: face-visible candidate → true,
+    phone-over-face candidate → false, headless render → false.
+  - **Fails to NULL, never to a block.** No vision model, a dead screening,
+    an unparseable answer — all proceed silently. This informs the owner's
+    decision; it does not gate it. He can see his own photo, and being
+    wrongly blocked from locking one is the worse failure. Note this runs
+    invariant 8 the OTHER way from the render-side face rule, deliberately,
+    because the asymmetry is reversed here.
+  - Wired into all THREE lock paths — editor save, photos screen, build
+    screen — and asserted by call count, because a path that skips it is a
+    path where this bug returns. The editor checks the profile being SAVED,
+    not the stored one: the photoFace select and the picture can both change
+    in one visit and the pair that matters is the pair about to be written.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

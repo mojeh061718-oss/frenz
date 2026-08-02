@@ -4630,6 +4630,74 @@ console.log('\n== v10.52: the outfit shot stops being a mirror selfie ==');
     'outfit: the timer shot is camera-aware, not "caught unposed" (invariant 5)');
 }
 
+console.log('\n== v10.53: a face in the reference is caught at lock time ==');
+{
+  /* Owner report: photoFace is hidden and testlook still renders her face.
+     Measured — the prompt path is provably correct (pov pool, "her head is
+     outside the picture entirely", and the face exclusion in the avoid
+     clause), and with a FACELESS reference the render is genuinely headless.
+     With a face-bearing reference the face intrudes anyway. That is the
+     sharpest finding of the whole photo workstream, already in SKILL.md: a
+     face-forward reference does not nudge the framing, it WINS.
+
+     So no prompt change can fix it, and the existing warning was passive
+     `<small>` text in the friend editor only — not on the Reference photos
+     screen, not on the build screen, and evidently not read. The app now
+     LOOKS at the picture and says something specific about it. */
+  ok(typeof API.screenReferenceFace === 'function', 'reflock: the engine can check a reference for a face');
+  ok(typeof API._REF_FACE_SYSTEM === 'string' && /face/i.test(API._REF_FACE_SYSTEM),
+    'reflock: it asks one plain question about a face');
+  ok(/JSON/i.test(API._REF_FACE_SYSTEM) && /\bface\b/.test(API._REF_FACE_SYSTEM),
+    'reflock: …and demands a parseable answer');
+  /* Fail OPEN, and this direction is deliberate: an unscreenable photo must
+     never block the owner from locking one. The check exists to inform a
+     decision, not to gate it (invariant 8 runs the other way here — the
+     harm of a wrongly-blocked upload is worse than a warned-but-allowed
+     one, because the owner can SEE their own photo). */
+  global.__asyncChecks = global.__asyncChecks || [];
+  const prior53 = global.__asyncChecks.slice();
+  global.__asyncChecks.push((async () => {
+    await Promise.allSettled(prior53);
+    const realPlain = API._plainCompletion;
+    try {
+      API._plainCompletion = async () => '{"face": true}';
+      ok(await API.screenReferenceFace({ pool: [] }, 'data:image/jpeg;base64,AA') === true,
+        'reflock: a face in the picture reads true');
+      API._plainCompletion = async () => '{"face": false}';
+      ok(await API.screenReferenceFace({ pool: [] }, 'data:image/jpeg;base64,AA') === false,
+        'reflock: a faceless picture reads false');
+      API._plainCompletion = async () => { throw new Error('no vision model'); };
+      ok(await API.screenReferenceFace({ pool: [] }, 'data:image/jpeg;base64,AA') === null,
+        'reflock: a screening that dies returns null — unknown, never a blocked upload');
+      API._plainCompletion = async () => 'not json at all';
+      ok(await API.screenReferenceFace({ pool: [] }, 'data:image/jpeg;base64,AA') === null,
+        'reflock: an unparseable answer is unknown too');
+      ok(await API.screenReferenceFace({ pool: [] }, '') === null, 'reflock: no image is unknown');
+    } catch (e) {
+      ok(false, 'reflock: async block crashed mid-run', e && e.message);
+    } finally { API._plainCompletion = realPlain; }
+  })());
+
+  const appSrc53 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  const htmlSrc53 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  /* ONE checker, called from every path that can lock a reference — the
+     editor, the photos screen, and the build screen. A path that skips it is
+     a path where this bug comes straight back. */
+  ok(/async function warnIfFaceMismatch/.test(appSrc53), 'reflock: one shared check');
+  const calls = (appSrc53.match(/warnIfFaceMismatch\(/g) || []).length;
+  ok(calls >= 4, 'reflock: every lock path calls it (definition + 3 sites), found ' + calls);
+  const wfn = appSrc53.slice(appSrc53.indexOf('async function warnIfFaceMismatch'),
+    appSrc53.indexOf('async function warnIfFaceMismatch') + 900);
+  ok(/photoFace === 'shown'\) return true/.test(wfn),
+    'reflock: a face-shown persona is never warned — there is no contradiction to warn about');
+  ok(/hasFace !== true\) return true/.test(wfn),
+    'reflock: unknown or faceless proceeds silently — it informs, it never gates');
+  // The same caution now appears where references are actually managed.
+  ok(/pr-facewarn|face-warn/.test(appSrc53) || /facewarn/i.test(appSrc53),
+    'reflock: the photos screen carries the caution too, not just the editor');
+  ok(/id="f-ref-facewarn"/.test(htmlSrc53), 'reflock: the editor caution survives (counter-rule)');
+}
+
 Promise.allSettled(global.__asyncChecks || []).then(() => {
   console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
     + (intendedRed ? ', ' + intendedRed + ' intended-red (expected \u2014 see RED* lines)' : ''));

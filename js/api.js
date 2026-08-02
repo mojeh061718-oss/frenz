@@ -3957,6 +3957,39 @@ const ClaudeAPI = {
       return { flagged: parsed.flagged, reason: String(parsed.reason || '').slice(0, 200) };
     } catch { return null; }
   },
+  /* Does this reference show her face? (v10.53)
+
+     The owner set photoFace to hidden and testlook still rendered a face.
+     The prompt path was provably correct — pov pool, "her head is outside
+     the picture entirely", and the face exclusion in the avoid clause — and
+     with a FACELESS reference the render is genuinely headless. With a
+     face-bearing one the face intrudes anyway, which is the sharpest
+     finding of this whole workstream: a face-forward reference does not
+     nudge the framing, it WINS.
+
+     No prompt can fix that, so the app looks at the picture instead and
+     says something specific about it at the moment it would be locked. One
+     plain question, its own tiny system prompt rather than borrowing the
+     defect gate's (which also flags fingers and text, so a flag there would
+     not mean what this needs it to mean).
+
+     Fails to NULL, never to a block: an unscreenable photo must not stop
+     the owner locking one. This informs a decision, it does not gate it. */
+  _REF_FACE_SYSTEM: 'You are looking at one photo that will be used as a visual reference for a fictional character. Answer ONE question: is a human face visible in it, clearly enough that you could recognise the person again? A face covered by a phone, turned away, cropped out of frame, or too small or blurred to identify does NOT count. Reply with ONLY JSON: {"face": true or false}.',
+  async screenReferenceFace(settings, dataUrl) {
+    if (!dataUrl) return null;
+    try {
+      const text = await this._plainCompletion(settings, this._REF_FACE_SYSTEM, [
+        { type: 'text', text: 'Is a recognisable face visible?' },
+        { type: 'image_url', image_url: { url: dataUrl } }
+      ]);
+      if (!text) return null;
+      const parsed = this._looseParse(text);
+      if (!parsed || typeof parsed.face !== 'boolean') return null;
+      return parsed.face;
+    } catch { return null; }
+  },
+
   /* Pure policy, so the whole decision table is assertable headlessly.
      8000ms floor mirrors the ladder's own re-frame floor above. */
   _photoGateDecision(verdict, attempt, budgetLeftMs) {

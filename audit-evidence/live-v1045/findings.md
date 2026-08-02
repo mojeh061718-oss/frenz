@@ -140,3 +140,26 @@ Note on heat 0: `_imageHeat` returns 1 whenever comfort is deep, so heat 0
 only occurs in a thread that is genuinely cold — which is why she declines
 there. Heat and closeness are correlated by construction; that is the design,
 not a leak.
+
+## 8. v10.52 / v10.53 — the two phone-and-face reports
+
+**"All the photos show an iPhone."** Measured before changing anything: the
+pov path was CLEAN, 0 phones in 4 renders. Neither the iPhone-naming camera
+register nor a phone-bearing reference caused it (both tested, both cleared
+— a phone-over-face reference did not bleed a phone into a pov render). It
+was the face-live mirror pool, which `_MIRROR_RE` routes every outfit / fit
+check / getting ready message to. Two wording rounds lost to the training
+prior; restating reflection-only as composition added an impossible SECOND
+foreground phone 2/2. Fixed by removing the mirror, not the phone: a
+self-timer full-length, clean 3/3.
+
+**"Face out of frame still renders her face."** Same faceless prompt, two
+references:
+
+| reference | render |
+|---|---|
+| face visible | face intrudes at the frame edge |
+| phone-over-face | genuinely headless |
+
+The prompt was never wrong. `screenReferenceFace` now checks at lock time,
+verified live: face-visible → true, phone-over-face → false, headless → false.
