@@ -4420,6 +4420,92 @@ console.log('\n== v10.49: an undelivered photo is a moment, not a hole ==');
     'photofail: the line becomes the notification preview, like any other bubble');
 }
 
+console.log('\n== v10.50: the real quality ceiling — 2k render, stored sanely ==');
+{
+  /* `resolution: '1k'` was hardcoded from the first xAI commit and never
+     questioned. Measured against the live API (both routes, both model
+     slugs): '2k' is accepted and is a different tier — PNG 1584x2816
+     against JPEG 720x1280, i.e. 4.5MP vs 0.92MP, 4.8x the pixels, lossless
+     instead of lossy. '4k' is rejected by the API (422, "expected 1k or
+     2k"), so 2k IS the ceiling; there is nothing above this to reach for.
+
+     The catch is weight: 5.4-6.5MB per render. A photo lands in IndexedDB
+     as a base64 data URL and in every (uncompressed) backup export, so
+     shipping the PNG would be ~9MB per picture. Re-encoded to JPEG q90 at
+     FULL resolution it is 851KB — every pixel kept, 3.4x today's storage
+     for 4.8x the detail. That is the trade, and it is the same reasoning
+     that sized the reference dials at v10.33, with different numbers
+     because the constraints differ. */
+  ok(API.PHOTO_RESOLUTION === '2k', 'quality: renders ask for 2k, the API ceiling');
+  ok(API.PHOTO_MAX_EDGE >= 2816, 'quality: storage keeps every pixel the model rendered (' + API.PHOTO_MAX_EDGE + ')');
+  ok(API.PHOTO_MIME === 'image/jpeg' && API.PHOTO_QUALITY >= 0.85 && API.PHOTO_QUALITY <= 0.95,
+    'quality: stored as JPEG at a high but not wasteful quality');
+  /* The reference dials are SEPARATE and must stay small: a reference rides
+     the wire in EVERY edit request, where a photo is stored once. Same
+     mechanism, opposite pressure — collapsing them would either bloat every
+     request or throw away the render. */
+  ok(API.REFERENCE_MAX_EDGE === 1024 && API.REFERENCE_MAX_EDGE < API.PHOTO_MAX_EDGE,
+    'quality: the reference stays small — it rides every request, a photo is stored once');
+
+  const apiSrc50 = fs.readFileSync(path.join(ROOT, 'js/api.js'), 'utf8');
+  ok((apiSrc50.match(/resolution:\s*this\.PHOTO_RESOLUTION/g) || []).length === 2,
+    'quality: BOTH routes ask for it — the edit route is the one most photos take');
+  // The literal '1k' survives ONLY in the comment that explains why it is
+  // gone; what must not survive is the code pattern.
+  ok(!/resolution:\s*'1k'/.test(apiSrc50) && !/resolution:\s*"1k"/.test(apiSrc50),
+    'quality: no hardcoded 1k left in the request body');
+
+  /* The re-encoder is a hook the app installs, like _onImageDecline: canvas
+     lives in the page, not the engine. It must fail OPEN — a photo that
+     arrived is worth more than a photo stored at the ideal size. */
+  ok('_recodePhoto' in API, 'quality: the engine has a slot for the page-side re-encoder');
+  global.__asyncChecks = global.__asyncChecks || [];
+  const prior50 = global.__asyncChecks.slice();
+  global.__asyncChecks.push((async () => {
+    await Promise.allSettled(prior50);
+    const realRecode = API._recodePhoto, realGen = API._generateImage, realScreen = API._screenPhoto;
+    try {
+      API._recodePhoto = null;
+      ok(await API._finishPhoto('data:image/png;base64,AA') === 'data:image/png;base64,AA',
+        'quality: no re-encoder installed -> the photo passes through untouched');
+      API._recodePhoto = async () => 'data:image/jpeg;base64,SMALL';
+      ok(await API._finishPhoto('data:image/png;base64,BIG') === 'data:image/jpeg;base64,SMALL',
+        'quality: an installed re-encoder is used');
+      API._recodePhoto = async () => { throw new Error('canvas died'); };
+      ok(await API._finishPhoto('data:image/png;base64,BIG') === 'data:image/png;base64,BIG',
+        'quality: a re-encoder that throws ships the original — fail open, always');
+      API._recodePhoto = async () => null;
+      ok(await API._finishPhoto('data:image/png;base64,BIG') === 'data:image/png;base64,BIG',
+        'quality: a re-encoder returning nothing ships the original too');
+
+      /* Order matters: the gate screens with a VISION call, so it must see
+         the re-encoded JPEG, never the multi-megabyte PNG. */
+      let screened = null;
+      API._recodePhoto = async () => 'data:image/jpeg;base64,RECODED';
+      API._generateImage = async () => 'data:image/png;base64,HUGE';
+      API._screenPhoto = async (s, d) => { screened = d; return { flagged: false, reason: '' }; };
+      const out = await API.generateScreenedImage({ imageModel: 'grok-imagine-image' }, { pool: [] }, 'desc', {});
+      ok(screened === 'data:image/jpeg;base64,RECODED',
+        'quality: the gate screens the re-encoded photo, not the raw PNG (a vision call on 6MB is waste)');
+      ok(out === 'data:image/jpeg;base64,RECODED', 'quality: …and the re-encoded photo is what ships');
+    } catch (e) {
+      ok(false, 'quality: async block crashed mid-run', e && e.message);
+    } finally {
+      API._recodePhoto = realRecode; API._generateImage = realGen; API._screenPhoto = realScreen;
+    }
+  })());
+
+  const appSrc50 = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+  ok(/ClaudeAPI\._recodePhoto\s*=/.test(appSrc50), 'quality: the app installs the re-encoder at boot');
+  /* One decoder/encoder, two callers (photos and references) with their own
+     dials — the alternative is two canvas paths that drift. */
+  ok(/function recodeImage/.test(appSrc50), 'quality: one shared canvas re-encoder');
+  ok(/recodeImage\([\s\S]{0,80}?REFERENCE_MAX_EDGE/.test(appSrc50),
+    'quality: the reference path routes through it with the reference dials');
+  ok(/recodeImage\([\s\S]{0,80}?PHOTO_MAX_EDGE/.test(appSrc50),
+    'quality: the photo path routes through it with the photo dials');
+}
+
 Promise.allSettled(global.__asyncChecks || []).then(() => {
   console.log('\n---\n' + pass + ' passed, ' + fail + ' failed'
     + (intendedRed ? ', ' + intendedRed + ' intended-red (expected \u2014 see RED* lines)' : ''));

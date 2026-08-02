@@ -3,7 +3,7 @@
 /* Bumped with the index.html badge and sw.js CACHE. If this ever disagrees
    with the badge, the shell is a mixed-version chimera — the failure the
    atomic SW cache exists to prevent — and Settings will say so out loud. */
-const APP_JS_VERSION = '10.49';
+const APP_JS_VERSION = '10.50';
 
 const AVATAR_COLORS = ['#7c6cff', '#4dc6a8', '#ff8fb3', '#ffb454', '#5aa9ff', '#ff5d73', '#9b59b6', '#2ecc71'];
 
@@ -1065,7 +1065,13 @@ let editorHasReference = false;
    iPhone uploads from arriving rotated; the Image fallback relies on the
    browser's own auto-orientation. Throws sentences, not codes: the message
    goes straight into a toast. */
-async function downscaleImageFile(file) {
+/* ONE decoder/encoder, two callers with their own dials (v10.50). A
+   reference wants to be SMALL — it rides the wire in every edit request. A
+   photo wants to keep everything — it is encoded once and stored, and since
+   v10.50 the render arrives as a 1584x2816 PNG that must not be shipped
+   whole (~9MB of base64 per picture). Same canvas, opposite pressure; two
+   copies of this would drift. */
+async function recodeImage(file, maxEdge, mime, quality) {
   if (!file || !/^image\//.test(file.type || '')) {
     throw new Error("That file isn't an image this app can read. HEIC photos may need converting to JPEG first.");
   }
@@ -1088,13 +1094,26 @@ async function downscaleImageFile(file) {
     } finally { URL.revokeObjectURL(url); }
   }
   if (!w || !h) throw new Error("That image couldn't be decoded — try a JPEG or PNG.");
-  const fit = ClaudeAPI._fitDimensions(w, h, ClaudeAPI.REFERENCE_MAX_EDGE);
+  const fit = ClaudeAPI._fitDimensions(w, h, maxEdge);
   const canvas = document.createElement('canvas');
   canvas.width = fit.w; canvas.height = fit.h;
   canvas.getContext('2d').drawImage(src, 0, 0, fit.w, fit.h);
   if (src.close) src.close();
-  return canvas.toDataURL(ClaudeAPI.REFERENCE_MIME, ClaudeAPI.REFERENCE_QUALITY);
+  return canvas.toDataURL(mime, quality);
 }
+
+/* The reference caller: small, because it rides every edit request. */
+function downscaleImageFile(file) {
+  return recodeImage(file, ClaudeAPI.REFERENCE_MAX_EDGE, ClaudeAPI.REFERENCE_MIME, ClaudeAPI.REFERENCE_QUALITY);
+}
+
+/* The photo caller, installed on the engine at boot (v10.50). Since the
+   render arrives as a full-resolution PNG, this is what keeps a picture
+   storable: every pixel kept, JPEG-encoded, ~851KB instead of ~6.5MB.
+   Fails open by contract — _finishPhoto ships the original if this throws,
+   because a photo that arrived beats a photo stored at the ideal size. */
+ClaudeAPI._recodePhoto = (dataUrl) =>
+  recodeImage(dataUrlToBlob(dataUrl), ClaudeAPI.PHOTO_MAX_EDGE, ClaudeAPI.PHOTO_MIME, ClaudeAPI.PHOTO_QUALITY);
 
 /* THE single writer of referenceImage. Two UIs reach it — the friend editor
    (staged, committed by the form's save) and the Reference photos screen

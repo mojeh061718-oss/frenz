@@ -629,6 +629,35 @@ the fixtures were wrong before.
     her. What this codebase does not do, and did not add here, is re-word a
     request to get the same output past an answer the provider already gave.
     That rule is stated at `_xaiImageWithRecovery` and it still holds.
+- **The real quality ceiling was never asked for (v10.50).** `resolution:
+  '1k'` had been hardcoded since the first xAI commit and nobody had
+  questioned it. Measured live across both routes and both model slugs:
+  **`'2k'` is accepted and is a different tier** — PNG 1584x2816 against
+  JPEG 720x1280, 4.5MP vs 0.92MP, lossless instead of lossy, with readable
+  fine detail (individual hairs, fabric weave, pores) that simply is not
+  present at 1k. `'4k'` is rejected by the API ("expected `1k` or `2k`"), so
+  **2k IS the ceiling** — there is nothing above this to reach for, which is
+  worth knowing before anyone goes looking again.
+  - The cost is weight: 5.4-6.5MB per render. A photo lands in IndexedDB as
+    base64 and in every uncompressed backup export, so shipping the PNG
+    would be ~9MB a picture. Re-encoded to JPEG q90 at FULL resolution it is
+    **~800KB** (measured on real renders): every pixel kept, 3.4x today's
+    storage against 4.8x the detail. Latency ~6s → ~12s, comfortably inside
+    `PHOTO_BUDGET_MS` even with the gate's re-roll.
+  - `PHOTO_*` dials are deliberately SEPARATE from `REFERENCE_*`. A
+    reference rides the wire in every edit request and must stay small; a
+    photo is encoded once and stored and must keep everything. Same
+    mechanism, opposite pressure — collapsing them would either bloat every
+    request or throw the render away.
+  - Canvas lives in the page, so the re-encoder is a hook the app installs
+    (`_recodePhoto`, same contract as `_onImageDecline`). It **fails open in
+    every direction** — missing hook, throwing hook, hook returning nothing
+    all ship the original, because a photo that arrived beats a photo stored
+    at the ideal size.
+  - Re-encode happens BEFORE the quality gate screens: the gate spends a
+    vision call on the image, and sending it a 6.5MB PNG is pure waste.
+  - `recodeImage` is now one shared canvas path with two callers and two
+    dial sets. Two copies would drift.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

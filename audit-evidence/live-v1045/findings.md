@@ -89,3 +89,32 @@ Probe honesty: the 0/8 run (`why.js`) had not defined the page-global
 defines it. The app itself always had the section; position at the
 generation point — not absence — was the failure, which the 5/5 with zero
 regens confirms.
+
+## 6. v10.50 — the quality ceiling, measured
+
+`resolution` was hardcoded to `'1k'` since the first xAI commit. Sweeping
+model slug x resolution across BOTH routes:
+
+| model | resolution | returned |
+|---|---|---|
+| grok-imagine-image | 1k | JPEG 720x1280, 227KB, 6.2s |
+| grok-imagine-image | 2k | PNG 1584x2816, 5.3MB, 13.2s |
+| grok-imagine-image-quality | 1k | JPEG 720x1280, 312KB, 5.3s |
+| grok-imagine-image-quality | 2k | PNG 1584x2816, 6.2MB, 16.9s |
+| either | 4k | **HTTP 422 — "expected `1k` or `2k`"** |
+
+So 2k is the ceiling; there is nothing above it. The edit route accepts it
+too (verified separately), which matters because that is the path most
+photos take.
+
+Storage, measured by re-encoding a real 2k render:
+
+| stored as | size |
+|---|---|
+| PNG as returned | 6.5MB (~9MB base64) — not shippable |
+| **JPEG q90, full 1584x2816** | **~800KB** (~1.1MB base64) |
+| JPEG q90 downscaled to 2048 edge | 448KB |
+| JPEG q90 downscaled to 1536 edge | 264KB |
+
+Shipped: render 2k, store full-resolution JPEG q90. Every pixel kept, 3.4x
+the storage of the old 1k JPEG for 4.8x the pixels off a better render.

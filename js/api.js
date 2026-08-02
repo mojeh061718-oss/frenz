@@ -3051,6 +3051,40 @@ const ClaudeAPI = {
   REFERENCE_MAX_EDGE: 1024,
   REFERENCE_MIME: 'image/jpeg',
   REFERENCE_QUALITY: 0.85,
+
+  /* Photo dials (v10.50), and they are SEPARATE from the reference dials
+     above on purpose: a reference rides the wire in every single edit
+     request, where a photo is encoded once and stored. Same mechanism,
+     opposite pressure — one wants to be small, the other wants to keep
+     everything.
+
+     The 1k resolution had been hardcoded since the first xAI commit and
+     never questioned. Measured live against both routes and both model
+     slugs: '2k' is accepted and is a different tier — PNG 1584x2816 against
+     JPEG 720x1280, 4.5MP vs 0.92MP, lossless instead of lossy. '4k' is
+     rejected by the API ("expected `1k` or `2k`"), so 2k IS the ceiling and
+     there is nothing above this to reach for.
+
+     The cost is weight: 5.4-6.5MB per render, which lands in IndexedDB as
+     base64 and in every uncompressed backup export — ~9MB a picture, which
+     is not shippable. Re-encoded to JPEG q90 at FULL resolution it is
+     851KB: every pixel the model rendered, kept, for 3.4x today's storage
+     against 4.8x the detail. Latency goes ~6s to ~17s, comfortably inside
+     PHOTO_BUDGET_MS even with the gate's re-roll. */
+  PHOTO_RESOLUTION: '2k',
+  PHOTO_MAX_EDGE: 2816,     // = the full 2k render; never throw pixels away
+  PHOTO_MIME: 'image/jpeg',
+  PHOTO_QUALITY: 0.9,
+  /* Canvas lives in the page, not the engine, so the re-encoder is a hook
+     the app installs — same contract as _onImageDecline/_onImageScreen.
+     Fails OPEN in every direction: a photo that arrived is worth more than
+     a photo stored at the ideal size, so a missing hook, a throwing hook
+     and a hook returning nothing all ship the original. */
+  _recodePhoto: null,
+  async _finishPhoto(url) {
+    if (!url || !this._recodePhoto) return url;
+    try { return (await this._recodePhoto(url)) || url; } catch (_) { return url; }
+  },
   /* Pure so the harness can assert the whole table headlessly — the canvas
      plumbing that consumes this lives in app.js and is source-asserted only.
      NEVER upscales: an upscaled reference is a blurry reference, strictly
@@ -3507,7 +3541,10 @@ const ClaudeAPI = {
 
   generateImage(entry, description, opts) {
     // Every route out of here is bounded, including the re-framing ladder.
-    return this.withBudget(this.PHOTO_BUDGET_MS, () => this._generateImage(entry, description, opts));
+    // Re-encoded at the PUBLIC entry, not inside _generateImage, because
+    // that recurses on the edit->plain fallback and would encode twice.
+    return this.withBudget(this.PHOTO_BUDGET_MS, () =>
+      this._generateImage(entry, description, opts).then(u => this._finishPhoto(u)));
   },
   async _generateImage(entry, description, opts) {
     const o = opts || {};
@@ -3806,7 +3843,7 @@ const ClaudeAPI = {
           n: 1,
           response_format: 'b64_json',
           aspect_ratio: this._nearestAspect(width, height),
-          resolution: '1k',
+          resolution: this.PHOTO_RESOLUTION,
           respect_moderation: false
         })
       }, this.TIMEOUTS.image, 'The image');
@@ -3919,7 +3956,9 @@ const ClaudeAPI = {
          symmetric). */
       const o = opts || {};
       const resolved = {};
-      const first = await this._generateImage(entry, description, Object.assign({}, o, { resolved }));
+      // Re-encode BEFORE screening: the gate spends a vision call on this
+      // image, and sending it the raw multi-megabyte PNG is pure waste.
+      const first = await this._finishPhoto(await this._generateImage(entry, description, Object.assign({}, o, { resolved })));
       const faceForbidden = !resolved.faceShown;
       // Fail-open is enforced HERE, structurally — not delegated to
       // _screenPhoto's own internal catch. A screening that dies for any
@@ -3929,7 +3968,7 @@ const ClaudeAPI = {
       if (v && this._onImageScreen) { try { this._onImageScreen(v, 0); } catch (_) { /* ledger never breaks a send */ } }
       if (this._photoGateDecision(v, 0, this._budgetLeft()) !== 'reroll') return first;
       let second;
-      try { second = await this._generateImage(entry, description, Object.assign({}, o, { resolved })); }
+      try { second = await this._finishPhoto(await this._generateImage(entry, description, Object.assign({}, o, { resolved }))); }
       catch (_) { return first; }   // a dead re-roll falls back to the flagged original, never to nothing
       let v2 = null;
       try { v2 = await this._screenPhoto(settings, second, faceForbidden); } catch (_) { v2 = null; }
@@ -3964,7 +4003,7 @@ const ClaudeAPI = {
           n: 1,
           response_format: 'b64_json',
           aspect_ratio: this._nearestAspect(width, height),
-          resolution: '1k',
+          resolution: this.PHOTO_RESOLUTION,
           // Account-level parameter, sent on the key's own behalf. xAI still
           // applies whatever policy it applies server-side — this asks, it
           // does not override — so a decline can still come back and the
