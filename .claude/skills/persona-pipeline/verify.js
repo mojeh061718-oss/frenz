@@ -1248,6 +1248,7 @@ console.log('\n== templates: style sentence 1 packs register + rhythm + ONE sign
   const sig = {
     kelly: /rat(es|ing) things out of ten/i,
     bre: /keysmash/i,
+    courtny: /comma-spliced|drawl/i,
     samantha: /stretched letters|laughing emoji/i,
     anna: /parenthetical asides/i,
     tay: /nerd reference/i
@@ -4774,6 +4775,71 @@ console.log('\n== v10.54: hidden means hidden — and the suite to prove it from
   ok(/raw: true/.test(suiteFn), 'suite: raw and unscreened, like every debug lens');
   ok(/_now\(\)/.test(suiteFn), 'suite: every render re-rolls the salt, so cycling actually cycles');
   ok(!/DB\.addMessage|addEvent/.test(suiteFn), 'suite: out of band — nothing lands in the thread or the ledger');
+}
+
+console.log('\n== v10.55: Courtny — twenty years, married to John, texting from the guest bedroom ==');
+{
+  const c = Personas.byId('courtny');
+  ok(!!c, 'courtny: exists');
+  ok(c.age === 38 && c.gender === 'woman' && c.type === 'close_friend' && !c.established,
+    'courtny: 38, close friend — `established` is the romantic-longknown flag and stays off');
+  ok(c.photoCandor === 'open',
+    'courtny: open candour — tan-line photos without ceremony ARE her; the guarded rarity clause is not');
+  ok(c.templateRev === 1, 'courtny: first revision');
+
+  /* The greeting is the authored scene entry: John + the guest bedroom,
+     funny. The tease is NOT in the greeting — roundabout means it never
+     leads; it arrives sideways later, via the act. */
+  ok(Array.isArray(c.greeting) && c.greeting.length >= 3 && c.greeting.length <= 4, 'courtny: greeting is a burst');
+  const cg = c.greeting.join(' ');
+  ok(/john/i.test(cg), 'courtny: the greeting is about John');
+  ok(/guest (bed)?room/i.test(cg), 'courtny: …and the guest bedroom she prefers anyway');
+  ok(!/naked|\bbra\b|flirt|tan line/i.test(cg),
+    'courtny: the greeting itself is clean — the tease never goes first');
+
+  /* The opening act: direction, not script, Bre's contract. */
+  ok(c.opening && c.opening.until === 40 && c.opening.text.length > 400,
+    'courtny: opening act exists and self-retires where reveals begin');
+  const act = c.opening.text;
+  ok(/John/.test(act) && /funny|joke|comedy/i.test(act), 'courtny: the John complaint plays FIRST and plays funny');
+  ok(/sideways|roundabout/i.test(act), 'courtny: the tease arrives sideways, named as doctrine');
+  ok(/play(s|ed)? it off|deny|deniab/i.test(act), 'courtny: she plays it off — the denial is part of the game');
+  ok(/never explicit|stops|edge/i.test(act), 'courtny: the ceiling is the house ceiling');
+  ok(/exit|gracefully|steers away|goes quiet/i.test(act), 'courtny: the graceful exit if he does not pick it up');
+  ok(/married|John.*reason|not a plan/i.test(act), 'courtny: the marriage is named as the frame — this is play, not a plan');
+
+  /* Body facts, in the sheet the photos render from. Faceless and
+     moderation-clean by the global scans; these are the HER-specific facts. */
+  ok(/thick|round|full/i.test(c.appearance) && /(backside|seat|bottom)/i.test(c.appearance),
+    'courtny: the bottom half she is proud of is IN the sheet');
+  ok(/small chest/i.test(c.appearance), 'courtny: the small chest is a sheet fact, stated plainly');
+  ok(/tan line/i.test(c.appearance), 'courtny: tan lines are her identity marker — and her favourite photo excuse');
+  ok(/fit|toned|strong/i.test(c.appearance), 'courtny: rather fit, on the record');
+
+  /* Character facts with counter-rules. */
+  const persona = c.personality + ' ' + c.plist;
+  ok(/twenty years|20 years/i.test(persona + c.backstory), 'courtny: twenty years, off and on');
+  ok(/off[- ]and[- ]on|off and on/i.test(persona + c.backstory), 'courtny: …the off-and-on is authored, not implied');
+  ok(/TMI/i.test(persona), 'courtny: the TMI register is named');
+  ok(/roundabout/i.test(persona) && /not the first thing|never leads|never the first/i.test(persona),
+    'courtny: teasing is roundabout AND not her opening move — both halves authored');
+  ok(/has none|i have none/i.test(persona), 'courtny: the boob deflection is her exact line');
+  ok(/cannabis|smokes|stoned|high/i.test(c.interests + ' ' + persona), 'courtny: the near-daily smoke is real');
+  ok(/flow/i.test(persona), 'courtny: the relaxed flow state is authored');
+  ok(/plays it off|play it off|deniab/i.test(persona), 'courtny: the play-it-off is a trait, not just a scene note');
+
+  ok(typeof c.unsaidSeed === 'string' && c.unsaidSeed.length > 20, 'courtny: something unsaid, seeded');
+  ok(Array.isArray(c.reveals) && c.reveals.length === 2 && c.reveals[0].after === 40 && c.reveals[1].after === 80,
+    'courtny: two reveals on the standard ladder');
+  ok((c.seedMemories || []).some(m => /spank bank/i.test(m.text)),
+    'courtny: the spank-bank joke is shared HISTORY — a memory, not a move');
+  ok(Array.isArray(c.beats) && c.beats.length === 12, 'courtny: twelve beats');
+  const kidBeats = c.beats.filter(b => /kid|school|son|daughter|bus|homework/i.test(b)).length;
+  ok(kidBeats >= 1 && kidBeats <= 4,
+    'courtny: kids are the weather, not the topic — the Samantha rule (' + kidBeats + '/12 kid-led)');
+  ok((c.textures || []).length >= 6, 'courtny: enough textures to rotate');
+  ok(c.sliders && c.sliders.closeness >= 85, 'courtny: twenty years reads as high closeness');
+  ok(c.sliders.attraction <= 50, 'courtny: attraction seeds moderate — the thread has somewhere to go');
 }
 
 Promise.allSettled(global.__asyncChecks || []).then(() => {

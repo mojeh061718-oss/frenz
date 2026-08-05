@@ -1178,8 +1178,20 @@ const ClaudeAPI = {
     // day-roll (agent-run finding: the die said no the morning after the
     // most texting-worthy night of her life). Waking hours only — the need
     // to resolve doesn't make anyone text at 4am.
+    // The significance test is the override's OWN (v10.55). It used to
+    // borrow significantNote, whose authored 1.5-day floor exists so the
+    // PROMPT does not dredge the night up while it is still fresh in an
+    // ongoing exchange — but here that floor defeated the exact case in the
+    // comment above: the morning after is well inside 1.5 days, so the
+    // override never fired for it and the assertion covering it had been
+    // passing on the day-roll's luck. The gap gates above already prevent
+    // same-evening nagging; what matters here is only that the significant
+    // conversation was the LAST one and is not ancient.
+    const sig = friend.state && friend.state.lastSignificant;
+    const sigLive = !!(sig && sig.ts && (t - sig.ts) / 86400000 <= 10
+      && !(lastMsg.ts && sig.ts < lastMsg.ts - 6 * 3600000));
     if (hour >= 8 && hour < 22
-        && (this.unresolvedNote(friend) || this.significantNote(friend, lastMsg.ts))) return true;
+        && (this.unresolvedNote(friend) || sigLive)) return true;
     // Roll every day of the silence, not just today. The die is per-day-key,
     // but only "now" was ever rolled — so four days away collapsed to one
     // 45% chance on arrival, and a skipped-ahead week could land in total
@@ -1245,11 +1257,16 @@ const ClaudeAPI = {
      outrank this; a normal conversation after the significant one clears it
      (the moment was metabolized); inside the first day it stays quiet too —
      that is still the same conversation breathing, not a silence. */
-  significantNote(friend, lastMsgTs) {
+  significantNote(friend, lastMsgTs, now) {
     const s = friend && friend.state && friend.state.lastSignificant;
     if (!s || !s.ts) return null;
     if (this.unresolvedNote(friend)) return null;
-    const days = (this._now() - s.ts) / 86400000;
+    // The caller's clock, not the wall clock (v10.55). openerDue runs
+    // entirely on its `now` argument; this one _now() inside the chain made
+    // the significant-night override drift against the rest of the decision
+    // whenever the two clocks differed — visible as a time-of-day flake in
+    // the harness, and a real divergence under any time offset.
+    const days = ((now === undefined ? this._now() : now) - s.ts) / 86400000;
     if (days < 1.5 || days > 10) return null;
     // Only when the significant conversation WAS the last one: if they have
     // talked since (a later conversation ended the silence), it's been lived

@@ -783,6 +783,28 @@ the fixtures were wrong before.
   cycles through is what the app would send. Out of band: nothing lands in
   a thread or the ledger. The composer testlook commands remain for power
   use.
+- **The opener's significant-night override rolls its own significance test
+  (v10.55).** Found adding Courtny: the "significant last night overrides
+  the opener dice" assertion had been passing on DAY-ROLL LUCK — the
+  override borrowed `significantNote`, whose authored 1.5-day floor exists
+  so the PROMPT does not dredge the night up while it is fresh, and that
+  floor excluded the exact morning-after case the override was built for
+  (30h fixture < 36h floor → dice → hash of the day-key). The override now
+  has its own recency test (last conversation, ≤10 days); the note keeps
+  its floor. Also fixed while there: `significantNote` reads the caller's
+  clock, not `_now()` — one wall-clock read inside a fixed-`now` decision
+  chain is a time-of-day flake in the harness and a real divergence under
+  a time offset. Harness law: an assertion whose truth depends on the
+  day-key hash is not an assertion.
+- **Courtny (v10.55)** — sixth companion template, close_friend, open
+  candour. The authored shape worth preserving: the tease is roundabout AND
+  never her opening move (both halves in the plist), the denial is part of
+  the game, the John complaint is COMEDY not wound (the wound is reveal
+  material at 40/80), kids are weather (≤4/12 beats, the Samantha rule),
+  the boob deflection is her exact line ("i have none"), and the spank-bank
+  joke is seeded as shared HISTORY, not a move. Greeting carries John + the
+  guest bedroom only — asserted clean of the tease, because roundabout that
+  leads is not roundabout.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s
