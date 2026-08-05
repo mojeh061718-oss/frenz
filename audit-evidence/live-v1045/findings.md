@@ -170,3 +170,19 @@ photoFace hidden + a reference that SHOWS a face. Before: the reference rode
 and the face leaked (2/2, section 8). After: `referenceFor` keeps it home,
 the sheet renders her, and the render is headless per the app's own contract
 (cropped above the mouth) — 2/2 (`GATE54-*.jpg`).
+
+## 10. v10.55 — Courtny, look and play verified live
+
+Sheet-authority renders (no reference locked): `CY-sheet.jpg` — fit build,
+toned arms, strong thighs, small chest, crisp tan lines, hair in a knot,
+face behind the phone. `CY-couch-flirty.jpg` (heat 1) — warm lamp, tan
+lines at hip and shoulder, face cropped above the mouth per contract. Both
+first try, no declines.
+
+Play, four turns past the greeting on "paint me the scene": all three takes
+stayed in the guest-room bit (sheets from the dryer, window cracked for the
+bowl, John's door shut down the hall) with at most one sideways notch
+("nothing else going on") — the roundabout doctrine holding, the tease not
+leading. The "good sheets" beat anchored all three takes of the same turn:
+that is the per-day beat roll being deterministic, expected for same-
+position regens.
