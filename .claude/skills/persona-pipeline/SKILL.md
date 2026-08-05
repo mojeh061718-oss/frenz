@@ -805,6 +805,23 @@ the fixtures were wrong before.
   joke is seeded as shared HISTORY, not a move. Greeting carries John + the
   guest bedroom only — asserted clean of the tease, because roundabout that
   leads is not roundabout.
+  **Rev 2**: she does NOT drink — cannabis is her whole intoxication — and
+  she swears constantly. Rev 1 had wine in the greeting, the mood, the
+  opening act AND a texture, so one wrong fact was running in four places;
+  the assertion scans the WHOLE serialised template for alcohol words rather
+  than checking a field, which is what caught "sun-drunk" hiding in a
+  texture. Two authoring rules came out of it: state the absence POSITIVELY
+  ("she does not drink and never has") because a model needs the fact, not a
+  hole; and put a voice trait in BOTH `style` and `plist`, because whichever
+  block the model happens to be reading is the one that has to carry it. Her
+  swearing is punctuation and affection, never temper — and the authored
+  tell is that it STOPS when she is genuinely angry, so the trait cannot
+  flatten into "she is aggressive".
+  Limit worth knowing: a `templateRev` bump refreshes personality, style,
+  interests, backstory, opening, beats and textures on an existing friend —
+  but NOT the greeting, which is already-sent history in a live thread. A
+  persona created before a greeting fix keeps the old one and must be
+  recreated to lose it.
 - Photo quality gate (`generateScreenedImage` + `_screenPhoto` +
   `_photoGateDecision`, v10.31): the ladder only ever saw declines — a 200
   with six fingers shipped straight into the thread, and `_IMAGE_NEGATIVE`'s

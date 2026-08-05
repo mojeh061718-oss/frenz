@@ -4785,7 +4785,34 @@ console.log('\n== v10.55: Courtny — twenty years, married to John, texting fro
     'courtny: 38, close friend — `established` is the romantic-longknown flag and stays off');
   ok(c.photoCandor === 'open',
     'courtny: open candour — tan-line photos without ceremony ARE her; the guarded rarity clause is not');
-  ok(c.templateRev === 1, 'courtny: first revision');
+  ok(c.templateRev === 2, 'courtny: rev 2 — the no-alcohol + potty-mouth correction');
+
+  /* SHE DOES NOT DRINK. Scanned across the WHOLE template, because rev 1
+     had wine in the greeting, the mood, the opening act and a texture — a
+     contradiction that would have run in four places at once. Cannabis is
+     her only intoxication and the sole thing that loosens her. */
+  const cAll = JSON.stringify(c);
+  for (const w of ['wine', 'drunk', 'tipsy', 'buzzed', 'alcohol', 'beer', 'cocktail', 'vodka', 'hungover']) {
+    ok(!new RegExp('\\b' + w, 'i').test(cAll), `courtny: no "${w}" anywhere in her template — she does not drink`);
+  }
+  ok(!/\ba (few|couple) drinks?\b|\bdrinks? in\b|\bhad a drink\b/i.test(cAll),
+    'courtny: no drinking idioms either');
+  ok(/does ?n.t drink|never drinks|doesn'?t touch alcohol/i.test(c.personality + ' ' + c.plist + ' ' + c.interests),
+    'courtny: the not-drinking is stated positively, not merely absent — the model needs the fact, not a hole');
+  ok(/bowl|smoke|weed|cannabis|high|stoned/i.test(c.greeting.join(' ')),
+    'courtny: her intoxication is in the scene from the first message');
+  ok(/bowl|smoke|weed|cannabis|stoned|high/i.test(c.opening.text) && !/drink/i.test(c.opening.text),
+    'courtny: the opening act runs on the bowl alone');
+  ok(/flow/i.test(c.personality) && /bowl|smoke|high|stoned/i.test(c.personality),
+    'courtny: the flow state is tied to the smoke, the only thing that loosens her');
+
+  /* Potty mouth — in the STYLE (how she types) and the PLIST (the
+     high-attention trait block), because a voice trait that lives in only
+     one of those gets dropped by whichever one the model is reading. */
+  ok(/swear|curse|profan|fuck/i.test(c.style), 'courtny: the swearing is in her style');
+  ok(/swear|curse|profan|mouth/i.test(c.plist), 'courtny: …and in the plist, where the binding traits live');
+  ok(/casual|punctuation|not anger|not aggress|affection|comfort/i.test(c.style + ' ' + c.personality),
+    'courtny: it is punctuation, not aggression — otherwise she reads angry, which she is not');
 
   /* The greeting is the authored scene entry: John + the guest bedroom,
      funny. The tease is NOT in the greeting — roundabout means it never
